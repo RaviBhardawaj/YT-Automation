@@ -2,23 +2,13 @@
 
 A local web app that researches a niche, finds and ranks topics with evidence, writes original scripts, voices them with a local TTS engine, renders Shorts (9:16) and long-form (16:9) videos with FFmpeg, makes thumbnails, runs a quality gate, and uploads to your YouTube channel — on a schedule, with your approval.
 
-Everything runs on this Mac. External services are optional and only used when you add their key.
+Everything runs on your own Mac or Windows PC. External services are optional and only used when you add their key.
 
-## Start
+## Install and start
 
-```bash
-./run.sh
-```
+**Mac:** `install/install-mac.sh --service` · **Windows:** `powershell -ExecutionPolicy Bypass -File install\install-windows.ps1 -Service`
 
-Opens http://127.0.0.1:8765. The first visit walks you through the channel interview (one question at a time); answers are stored in `data/studio.db`.
-
-To keep it running in the background at login (optional):
-
-```bash
-scripts/install_launch_agent.sh
-```
-
-Remove with `scripts/install_launch_agent.sh remove`.
+Then open http://127.0.0.1:8765. Full guide, including moving to another computer: [docs/INSTALL.md](docs/INSTALL.md).
 
 ## How a video is made
 
@@ -48,7 +38,7 @@ A monthly AI spending limit (Settings › AI) blocks any paid call that could cr
 ## Safety design
 
 - The server binds to 127.0.0.1. It checks the Host header (blocks DNS rebinding), requires a CSRF token and same-origin on every state change, and sends a strict CSP.
-- Keys live in the macOS Keychain (service `yt-automation-studio`). Logs redact credentials.
+- Keys live in the macOS Keychain or Windows Credential Manager (service `yt-automation-studio`). Logs redact credentials.
 - Model output is validated with Pydantic and is never executed or put on a command line. FFmpeg filter graphs contain only app-computed numbers, and all on-screen text is rasterised by Pillow first.
 - Outbound fetches refuse private/loopback addresses, cap sizes, and honour robots.txt for web pages.
 

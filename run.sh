@@ -3,13 +3,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PY=/opt/homebrew/bin/python3.12
+PY=$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12
 [[ -x "$PY" ]] || PY=$(command -v python3.12 || true)
 if [[ -z "$PY" ]]; then
-  echo "Python 3.12 is required: brew install python@3.12"; exit 1
+  echo "Python 3.12 is required: run install/install-mac.sh first"; exit 1
 fi
 command -v ffmpeg >/dev/null || { echo "FFmpeg is required: brew install ffmpeg"; exit 1; }
-[[ -e /opt/homebrew/lib/libraqm.dylib ]] || echo "Note: for correct Hindi text rendering run: brew install libraqm"
 
 if [[ ! -x .venv/bin/python ]]; then
   echo "Creating virtual environment…"

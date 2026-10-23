@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 APP_NAME = "YT Automation Studio"
@@ -26,7 +27,12 @@ AUDIT_DIR = DATA_DIR / "audit"                  # per-episode audit artifacts
 # espeak-ng (used by Piper and Kokoro) keeps its data path in a fixed-size buffer and
 # silently falls back to a compiled-in path when the real one is too long. We keep a
 # copy of each engine's data under this short path.
-SHORT_CACHE_DIR = Path.home() / "Library" / "Caches" / "YTAutomationStudio"
+if sys.platform == "darwin":
+    SHORT_CACHE_DIR = Path.home() / "Library" / "Caches" / "YTAutomationStudio"
+elif sys.platform == "win32":
+    SHORT_CACHE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "YTStudio"
+else:
+    SHORT_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "ytstudio"
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("STUDIO_PORT", "8765"))
