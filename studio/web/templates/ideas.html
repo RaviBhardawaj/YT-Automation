@@ -1,71 +1,91 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="head">
-  <div><h1>Ideas</h1><div class="muted">Ranked topics with evidence. Scores add up measured signals, estimates and AI judgement — each part is labelled.</div></div>
-  <div class="row" id="gen">
-    <select name="count" data-type="number" style="width:auto"><option value="6">6 ideas</option><option value="10" selected>10 ideas</option><option value="15">15 ideas</option></select>
-    {% for f in formats %}<label class="small"><input type="checkbox" name="fmt_{{ f }}" checked> {{ f }}</label>{% endfor %}
-    <button class="primary" data-post="/api/ideas/generate" data-collect="#gen" data-done="Topic research started" {{ 'disabled' if not niche }}>Research new ideas</button>
-  </div>
+  <div><h1>Ideas</h1><div class="muted">Ideas belong to a channel and follow its niche, language and style. Creative channels get original story concepts; factual channels get evidence-backed topics.</div></div>
 </div>
-{% if not niche %}<div class="note warn">Approve a niche first on the <a href="/niches">Niches</a> page.</div>{% endif %}
-{% if running %}<div class="note" data-autorefresh="15">Topic research is running (collecting evidence, generating and ranking ideas). This page refreshes automatically.</div>{% endif %}
 
-<div class="tabs">
-  {% for k, l in [('open','Open'),('used','In production / produced'),('rejected','Rejected'),('all','All')] %}
-  <a href="/ideas?status={{ k }}" class="{{ 'on' if filter == k }}">{{ l }}</a>{% endfor %}
-</div>
+{% if ch %}
+<form class="card tight" id="gen" style="margin-bottom:14px">
+  <div class="row">
+    <b>Generate for {{ ch.name }}</b>
+    <select name="count" data-type="number" style="width:auto"><option value="5">5 ideas</option><option value="10" selected>10 ideas</option><option value="15">15 ideas</option></select>
+    <label class="small"><input type="checkbox" name="fmt_long" {{ 'checked' if ch.formats in ('long','both') }}> long</label>
+    <label class="small"><input type="checkbox" name="fmt_short" {{ 'checked' if ch.formats in ('short','both') }}> short</label>
+    <input name="focus" placeholder="Optional focus, e.g. Diwali episodes, school life, haunted village" style="flex:1;min-width:220px">
+    <button class="primary" data-post="/api/channels/{{ ch.id }}/ideas" data-collect="#gen" data-done="Idea generation started">Generate ideas</button>
+  </div>
+</form>
+{% else %}
+<div class="note">Pick a channel in the filter to generate ideas for it.</div>
+{% endif %}
+{% if running %}<div class="note" data-autorefresh="15">Idea generation is running. This page refreshes automatically.</div>{% endif %}
+
+<form method="get" action="/ideas" class="card tight" style="margin-bottom:14px">
+  <div class="row">
+    <select name="channel" data-autosubmit style="width:auto"><option value="all">All channels</option>
+      {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if filters.channel == c.id|string }}>{{ c.name }}</option>{% endfor %}</select>
+    <select name="niche" data-autosubmit style="width:auto"><option value="">Any niche</option>
+      {% for n in niches %}<option {{ 'selected' if filters.niche == n }}>{{ n }}</option>{% endfor %}</select>
+    <select name="format" data-autosubmit style="width:auto"><option value="">Any format</option>
+      {% for f in ['long','short'] %}<option {{ 'selected' if filters.format == f }}>{{ f }}</option>{% endfor %}</select>
+    <select name="language" data-autosubmit style="width:auto"><option value="">Any language</option>
+      {% for l in languages %}<option {{ 'selected' if filters.language == l }}>{{ l }}</option>{% endfor %}</select>
+    <select name="style" data-autosubmit style="width:auto"><option value="">Any style</option>
+      {% for st in styles %}<option {{ 'selected' if filters.style == st }}>{{ st }}</option>{% endfor %}</select>
+    <select name="kind" data-autosubmit style="width:auto"><option value="">Any type</option>
+      {% for k, l in [('ai_original','AI original'),('evergreen','Evergreen'),('inspired','Research-inspired'),('trend','Trending'),('request','From a request')] %}<option value="{{ k }}" {{ 'selected' if filters.kind == k }}>{{ l }}</option>{% endfor %}</select>
+    <select name="fresh" data-autosubmit style="width:auto"><option value="">Any age</option>
+      {% for k, l in [('1','Today'),('7','Last 7 days'),('30','Last 30 days'),('90','Last 90 days')] %}<option value="{{ k }}" {{ 'selected' if filters.fresh == k }}>{{ l }}</option>{% endfor %}</select>
+    <select name="status" data-autosubmit style="width:auto">
+      {% for k, l in [('open','Open'),('saved','Saved'),('approved','Approved'),('used','In production / used'),('rejected','Rejected'),('all','All')] %}<option value="{{ k }}" {{ 'selected' if filters.status == k }}>{{ l }}</option>{% endfor %}</select>
+    <select name="sort" data-autosubmit style="width:auto">
+      {% for k, l in [('score','Best score'),('new','Newest'),('old','Oldest'),('title','Title A–Z')] %}<option value="{{ k }}" {{ 'selected' if filters.sort == k }}>{{ l }}</option>{% endfor %}</select>
+    <input name="q" value="{{ filters.q }}" placeholder="Search titles" style="width:180px">
+    <button type="submit" class="sm">Search</button>
+    <a class="btn sm" href="/ideas?channel={{ filters.channel or 'all' }}">Reset</a>
+  </div>
+  <div class="muted small" style="margin-top:6px">{{ total }} idea(s){% if pages > 1 %} · page {{ page_no }} of {{ pages }}{% endif %}</div>
+</form>
 
 {% for t in topics %}
 <div class="card" style="margin-bottom:12px">
   <div class="spread">
     <div style="min-width:0">
       <div class="row"><span class="score">{{ '%.0f' % t.score }}<small>/100</small></span>
-        <b style="font-size:15px">{{ t.title }}</b> <span class="chip">{{ t.format }}</span>
-        {% if t.status != 'idea' %}<span class="chip info">{{ t.status|replace('_',' ') }}</span>{% endif %}</div>
-      <div class="muted small" style="margin-top:4px"><b>Angle:</b> {{ t.angle }} · <b>Why now:</b> {{ t.why_now }}</div>
-      <div class="small" style="margin-top:2px"><b>Hook idea:</b> {{ t.hook_idea }}</div>
-    </div>
-    <div class="row">
-      {% if t.status in ('idea','approved') %}
-      <button class="primary sm" data-post="/api/topics/{{ t.id }}/produce" data-confirm="Produce this video in Hindi (India audience)?">Produce (Hindi)</button>
-      <button class="sm" data-post="/api/topics/{{ t.id }}/produce_international" data-confirm="Produce this video in English for international viewers?">English (international)</button>
-      {% if t.status == 'idea' %}<button class="sm" data-post="/api/topics/{{ t.id }}/approve" data-done="Approved — the daily plan will pick it first">Approve</button>{% endif %}
-      <button class="sm danger" data-post="/api/topics/{{ t.id }}/reject">Reject</button>
-      {% endif %}
+        <a href="/ideas/{{ t.id }}"><b style="font-size:15px">{{ t.title }}</b></a> <span class="chip">{{ t.format }}</span>
+        {% if t.style %}<span class="chip">{{ t.style }}</span>{% endif %}
+        <span class="chip info">{{ {'ai_original':'AI original','evergreen':'evergreen','inspired':'research-inspired','trend':'trending','request':'request'}.get(t.idea_kind, t.idea_kind) }}</span>
+        {% if t.saved %}<span class="chip ok">saved</span>{% endif %}
+        {% if t.status not in ('idea',) %}<span class="chip warn">{{ t.status|replace('_',' ') }}</span>{% endif %}</div>
+      <div class="muted small" style="margin-top:4px">{{ t.channel_name or 'No channel' }} · {{ t.language or t.channel_language or '—' }} · {{ t.created_at|dt }}
+        {% if t.source_url %} · <a href="{{ t.source_url }}" target="_blank" rel="noopener">source</a>{% if t.source_date %} ({{ t.source_date }}){% endif %}{% endif %}</div>
+      <div class="small" style="margin-top:4px">{{ t.summary or t.angle }}</div>
+      {% if t.hook_idea %}<div class="small muted" style="margin-top:2px"><b>Hook:</b> {{ t.hook_idea }}</div>{% endif %}
     </div>
   </div>
-  <details><summary>Score breakdown, claims & evidence</summary>
-    <div class="grid g2">
-      <table>
-        {% for k, b in t.breakdown.items() %}
-        <tr><td>{{ k|replace('_',' ') }}</td><td><b>{{ b.points }}</b>/{{ b.max }}</td>
-          <td><span class="chip {{ 'ok' if b.kind == 'measured' else 'info' if b.kind == 'estimate' else 'warn' }}">{{ b.kind }}</span> <span class="small muted">{{ b.basis }}</span></td></tr>
-        {% endfor %}
-      </table>
-      <div>
-        {% if t.gap.measured %}
-        <div class="small"><b>Competition sample</b> (YouTube): {{ t.gap.sampled }} videos, median {{ '{:,}'.format(t.gap.median_views) }} views, {{ t.gap.recent_90d }} from last 90 days — <i>{{ t.gap.reading }}</i>.
-          Closest existing title similarity: {{ t.gap.closest_title_similarity }}</div>
-        <ul class="evidence">{% for ex in t.gap.examples %}<li><a href="{{ ex.url }}" target="_blank" rel="noopener">{{ ex.title }}</a> · {{ '{:,}'.format(ex.views) }} views</li>{% endfor %}</ul>
-        {% elif t.gap.note %}<div class="small muted">Competition not measured: {{ t.gap.note }}</div>{% endif %}
-        {% if t.claims %}<b class="small">Claims</b><ul class="small">{% for c in t.claims %}<li><span class="chip {{ 'ok' if c.kind == 'fact' else 'info' if c.kind == 'estimate' else 'warn' }}">{{ c.kind }}</span> {{ c.text }}{% if c.evidence_id %} [{{ c.evidence_id }}]{% endif %}</li>{% endfor %}</ul>{% endif %}
-      </div>
-    </div>
-    <ul class="evidence">{% for e in t.evidence %}<li>[{{ e.id }}] <span class="chip">{{ e.source_type }}</span> <a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.title or e.url }}</a>
-      <span class="muted">{{ e.published_at[:10] if e.published_at else 'date unknown' }}</span>{% if e.metrics.views %} · {{ '{:,}'.format(e.metrics.views) }} views{% endif %}</li>
-      {% else %}<li class="muted">No evidence cited — treat as an untested idea.</li>{% endfor %}</ul>
-  </details>
+  <div class="row" style="margin-top:10px">
+    {% if t.status in ('idea','approved') and t.channel_id %}
+    <button class="primary sm" data-post="/api/topics/{{ t.id }}/video" data-confirm="Make a video from this idea for {{ t.channel_name }}?">Generate video</button>
+    <button class="sm" data-post="/api/topics/{{ t.id }}/long">Create long</button>
+    <button class="sm" data-post="/api/topics/{{ t.id }}/short">Create Short</button>
+    {% endif %}
+    {% if t.status != 'rejected' %}
+    <button class="sm" data-post="/api/topics/{{ t.id }}/{{ 'unsave' if t.saved else 'save' }}">{{ 'Unsave' if t.saved else 'Save' }}</button>
+    {% if t.channel_id %}<button class="sm" data-post="/api/topics/{{ t.id }}/variations" data-reload="no">Variations</button>{% endif %}
+    <button class="sm danger" data-post="/api/topics/{{ t.id }}/reject">Reject</button>
+    {% else %}<button class="sm" data-post="/api/topics/{{ t.id }}/restore">Restore</button>{% endif %}
+    <a class="btn sm" href="/ideas/{{ t.id }}">Open</a>
+  </div>
 </div>
 {% else %}
-<div class="card empty">No ideas here yet.</div>
+<div class="card empty">No ideas match these filters.{% if ch %} Use “Generate ideas” above.{% endif %}</div>
 {% endfor %}
 
-{% if runs %}
-<div class="card" style="margin-top:16px">
-  <h2>Recent research runs</h2>
-  <table>{% for r in runs %}<tr><td class="muted small">{{ r.created_at|dt }}</td><td>{{ r.subject }}</td><td>{{ r.notes or r.status }}</td>
-    <td class="small">{% for k, v in r.sources.items() %}<span class="chip {{ 'ok' if v is number else '' }}" title="{{ v }}">{{ k }}{% if v is number %}: {{ v }}{% endif %}</span> {% endfor %}</td></tr>{% endfor %}</table>
+{% if pages > 1 %}
+<div class="row" style="justify-content:center;margin-top:12px">
+  {% if page_no > 1 %}<a class="btn sm" href="/ideas?{{ qs }}&page_no={{ page_no - 1 }}">← Previous</a>{% endif %}
+  <span class="muted small">Page {{ page_no }} / {{ pages }}</span>
+  {% if page_no < pages %}<a class="btn sm" href="/ideas?{{ qs }}&page_no={{ page_no + 1 }}">Next →</a>{% endif %}
 </div>
 {% endif %}
 {% endblock %}

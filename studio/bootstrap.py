@@ -19,6 +19,8 @@ def init(start_background: bool = False) -> None:
         from .finance import marketdata, rules
         rules.seed()
         marketdata.seed_sources()
+        from . import channels
+        channels.ensure_default()           # the original setup becomes studio channel #1 (with its history)
         from . import scheduler, tasks  # noqa: F401  (registers task handlers)
         from .media import tts
         try:
@@ -26,6 +28,7 @@ def init(start_background: bool = False) -> None:
         except Exception:
             logging.getLogger(__name__).exception("could not prepare espeak data")
         scheduler.ensure_defaults()
+        scheduler.sync_channels()
         _done = True
     if start_background:
         from . import scheduler, worker

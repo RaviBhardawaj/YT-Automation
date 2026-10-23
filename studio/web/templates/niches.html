@@ -30,10 +30,10 @@
   {% if a.error %}<div class="note err">AI assessment unavailable: {{ a.error }}</div>{% endif %}
   {% if m %}
   <div class="grid g4" style="margin-top:14px">
-    <div class="card tight stat"><div class="l">YouTube median views</div><div class="n">{{ '{:,}'.format(m.youtube_median_views) if m.youtube_median_views is not none else '—' }}</div><div class="muted small">{{ m.youtube_sampled }} videos sampled{% if m.youtube_recent_90d is not none %}, {{ m.youtube_recent_90d }} from last 90 days{% endif %}</div></div>
-    <div class="card tight stat"><div class="l">Wikipedia views (30d)</div><div class="n">{{ '{:,}'.format(m.wiki_views_30d) if m.wiki_views_30d else '—' }}</div><div class="muted small">{% if m.wiki_trend_pct is not none %}trend {{ m.wiki_trend_pct }}% vs previous 30d{% else %}no trend data{% endif %}</div></div>
+    <div class="card tight stat"><div class="l">YouTube median views</div><div class="n">{{ '{:,}'.format(m.youtube_median_views) if m.youtube_median_views is number else '—' }}</div><div class="muted small">{{ m.youtube_sampled }} videos sampled{% if m.youtube_recent_90d is not none %}, {{ m.youtube_recent_90d }} from last 90 days{% endif %}</div></div>
+    <div class="card tight stat"><div class="l">Wikipedia views (30d)</div><div class="n">{{ '{:,}'.format(m.wiki_views_30d) if m.wiki_views_30d else '—' }}</div><div class="muted small">{% if m.wiki_trend_pct is number %}trend {{ m.wiki_trend_pct }}% vs previous 30d{% else %}no trend data{% endif %}</div></div>
     <div class="card tight stat"><div class="l">News items (7 days)</div><div class="n">{{ m.news_items_7d if m.news_items_7d is not none else '—' }}</div><div class="muted small">Google News RSS, capped at 100</div></div>
-    <div class="card tight stat"><div class="l">Views per subscriber</div><div class="n">{{ m.youtube_median_views_per_sub if m.youtube_median_views_per_sub is not none else '—' }}</div><div class="muted small">median; &gt;1 suggests videos travel beyond their subscribers</div></div>
+    <div class="card tight stat"><div class="l">Views per subscriber</div><div class="n">{{ m.youtube_median_views_per_sub if m.youtube_median_views_per_sub is number else '—' }}</div><div class="muted small">median; &gt;1 suggests videos travel beyond their subscribers</div></div>
   </div>
   <div class="small muted" style="margin-top:6px">Measured from source APIs on {{ n.created_at|dt }}. Sources: {% for k, v in m.sources.items() %}<span class="chip {{ 'ok' if v is number else 'warn' }}">{{ k }}: {{ v }}</span> {% endfor %}</div>
   {% endif %}

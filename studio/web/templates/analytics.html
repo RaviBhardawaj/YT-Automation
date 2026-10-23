@@ -12,9 +12,9 @@
     <tr><td><a href="/productions/{{ v.production_id }}">{{ v.title }}</a> <a class="small" href="https://youtu.be/{{ v.video_id }}" target="_blank" rel="noopener">↗</a>
       {% if m.privacy %}<span class="chip">{{ m.privacy }}</span>{% endif %}</td><td>{{ v.format }}</td>
       <td>{{ '{:,}'.format(m.views or 0) }}</td><td>{{ m.likes or 0 }}</td>
-      <td>{{ '%.0f%%' % m.averageViewPercentage if m.averageViewPercentage is not none else '—' }}</td>
-      <td>{{ '%.0f min' % m.estimatedMinutesWatched if m.estimatedMinutesWatched is not none else '—' }}</td>
-      <td>{{ m.subscribersGained if m.subscribersGained is not none else '—' }}</td><td class="muted small">{{ v.fetched_at|dt }}</td></tr>
+      <td>{{ '%.0f%%' % m.averageViewPercentage if m.averageViewPercentage is number else '—' }}</td>
+      <td>{{ '%.0f min' % m.estimatedMinutesWatched if m.estimatedMinutesWatched is number else '—' }}</td>
+      <td>{{ m.subscribersGained if m.subscribersGained is number else '—' }}</td><td class="muted small">{{ v.fetched_at|dt }}</td></tr>
     {% endfor %}
   </table>
   <p class="muted small">Numbers come directly from the YouTube Data and Analytics APIs. Small samples are noisy: the ideation step sees your best and weakest videos only as weak hints, never as proof.</p>

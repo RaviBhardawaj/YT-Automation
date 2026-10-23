@@ -333,6 +333,71 @@ MIGRATIONS: list[str] = [
     ALTER TABLE market_bars_v5 RENAME TO market_bars;
     CREATE INDEX idx_bars_dataset ON market_bars(dataset_id, trade_date, ts);
     """,
+    # v6: one studio, many channels — every channel has its own niche, settings, characters, ideas, library,
+    # schedule and YouTube authorization
+    """
+    CREATE TABLE channels (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        niche TEXT NOT NULL DEFAULT '',
+        sub_niche TEXT NOT NULL DEFAULT '',
+        audience TEXT NOT NULL DEFAULT '',
+        language TEXT NOT NULL DEFAULT 'Hindi',
+        tone TEXT NOT NULL DEFAULT '',
+        styles TEXT NOT NULL DEFAULT '[]',
+        workflow TEXT NOT NULL DEFAULT 'auto',            -- auto | animated_story | factual | nifty_daily
+        formats TEXT NOT NULL DEFAULT 'both',             -- long | short | both
+        long_minutes REAL NOT NULL DEFAULT 8,
+        short_seconds INTEGER NOT NULL DEFAULT 50,
+        shorts_per_episode INTEGER NOT NULL DEFAULT 4,
+        instructions TEXT NOT NULL DEFAULT '',
+        restrictions TEXT NOT NULL DEFAULT '',
+        research_required INTEGER NOT NULL DEFAULT 0,
+        branding TEXT NOT NULL DEFAULT '{}',
+        voice TEXT NOT NULL DEFAULT '{}',
+        schedule_enabled INTEGER NOT NULL DEFAULT 0,
+        schedule_time TEXT NOT NULL DEFAULT '18:00',
+        schedule_days TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
+        timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+        auto_publish INTEGER NOT NULL DEFAULT 0,
+        publish_privacy TEXT NOT NULL DEFAULT 'private',
+        youtube_channel_id TEXT,
+        youtube_title TEXT,
+        status TEXT NOT NULL DEFAULT 'active',            -- active | paused
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE characters (
+        id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT '',
+        design TEXT NOT NULL DEFAULT '{}',
+        personality TEXT NOT NULL DEFAULT '',
+        voice TEXT NOT NULL DEFAULT '{}',
+        catchphrases TEXT NOT NULL DEFAULT '[]',
+        relationships TEXT NOT NULL DEFAULT '',
+        rules TEXT NOT NULL DEFAULT '',
+        reference_path TEXT,
+        status TEXT NOT NULL DEFAULT 'approved',          -- approved | draft
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_characters_channel ON characters(channel_id);
+    ALTER TABLE productions ADD COLUMN channel_id INTEGER;
+    ALTER TABLE productions ADD COLUMN request TEXT;
+    ALTER TABLE topics ADD COLUMN channel_id INTEGER;
+    ALTER TABLE topics ADD COLUMN idea_kind TEXT NOT NULL DEFAULT 'ai_original';
+    ALTER TABLE topics ADD COLUMN style TEXT;
+    ALTER TABLE topics ADD COLUMN language TEXT;
+    ALTER TABLE topics ADD COLUMN summary TEXT;
+    ALTER TABLE topics ADD COLUMN source_url TEXT;
+    ALTER TABLE topics ADD COLUMN source_date TEXT;
+    ALTER TABLE topics ADD COLUMN saved INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE schedules ADD COLUMN channel_id INTEGER;
+    CREATE INDEX idx_topics_channel ON topics(channel_id, created_at);
+    CREATE INDEX idx_productions_channel ON productions(channel_id, created_at);
+    """,
 ]
 
 

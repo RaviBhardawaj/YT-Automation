@@ -80,9 +80,10 @@ document.addEventListener("submit", async e => {
   const btn = f.querySelector("button[type=submit]");
   if (btn) btn.disabled = true;
   try {
-    await api(f.dataset.form, collect(f));
-    toast(f.dataset.done || "Saved");
-    if (f.dataset.reload !== "no") setTimeout(() => location.reload(), 600);
+    const j = await api(f.dataset.form, collect(f));
+    toast(f.dataset.done || j.detail || "Saved");
+    if (j.next) setTimeout(() => { location.href = j.next; }, 500);
+    else if (f.dataset.reload !== "no") setTimeout(() => location.reload(), 600);
   } catch (err) { toast(err.message, "err"); }
   finally { if (btn) btn.disabled = false; }
 });
@@ -338,3 +339,9 @@ if (wiz) {
   }
   render();
 }
+
+// GET filter forms submit as soon as a select changes -----------------------------
+document.addEventListener("change", e => {
+  const el = e.target.closest("[data-autosubmit]");
+  if (el && el.form) el.form.submit();
+});

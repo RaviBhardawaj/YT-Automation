@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><div class="muted small"><a href="/channels">← Channels</a></div><h1>{{ ch.name }}</h1>
+    <div class="muted small">{{ ch.niche }} · {{ ch.language }} · {{ ch.workflow|replace('_',' ') }} · {{ ch.formats }}</div></div>
+  <div class="row">
+    {% if ch.status == 'active' %}<button data-post="/api/channels/{{ ch.id }}" data-body='{"status":"paused"}' data-confirm="Pause this channel? Its schedule and auto-publishing stop.">Pause channel</button>
+    {% else %}<button class="primary" data-post="/api/channels/{{ ch.id }}" data-body='{"status":"active"}'>Resume channel</button>{% endif %}
+    <a class="btn" href="/ideas?channel={{ ch.id }}">Ideas ({{ ideas_n }})</a>
+    <a class="btn" href="/productions?channel={{ ch.id }}">Library</a>
+  </div>
+</div>
+{% if ch.status != 'active' %}<div class="note warn">This channel is paused: no scheduled videos and no auto-publishing.</div>{% endif %}
+
+<div class="grid g4" style="margin-bottom:16px">
+  {% for k, l in [('today','Created today'),('in_production','In production'),('review','Ready for review'),('published','Published'),('ready','Approved / uploading'),('failed','Failed'),('shorts','Shorts'),('total','Total videos')] %}
+  <div class="card tight stat"><div class="n">{{ counts[k] }}</div><div class="l">{{ l }}</div></div>{% endfor %}
+</div>
+
+<div class="tabs">
+  {% for k, l in [('overview','Create & recent'),('settings','Channel settings'),('characters','Characters (' ~ characters|length ~ ')'),('youtube','YouTube & publishing')] %}
+  <a href="/channels/{{ ch.id }}?tab={{ k }}" class="{{ 'on' if tab == k }}">{{ l }}</a>{% endfor %}
+</div>
+
+{% if tab == 'overview' %}
+<form class="card" data-form="/api/channels/{{ ch.id }}/create">
+  <h2>Create a video</h2>
+  <div class="muted small" style="margin-bottom:8px">Describe what you want. Your request decides the content; the channel settings fill in anything you don't say.</div>
+  <textarea name="request" rows="3" placeholder="e.g. Create a scary animated horror story about a haunted railway station, 6 minutes, in Hindi"></textarea>
+  <div class="row" style="margin-top:8px">
+    <select name="format" style="width:auto"><option value="">Format: decide from request</option><option value="long">Long video</option><option value="short">Short only</option><option value="both">Long + Shorts</option></select>
+    <button class="primary" type="submit">Create video</button>
+    {% if ch.workflow == 'nifty_daily' %}<span class="muted small">Leave the request empty to make today's NIFTY daily episode.</span>{% endif %}
+  </div>
+</form>
+
+<div class="card" style="margin-top:16px">
+  <div class="spread"><h2>Recent videos</h2><a class="small" href="/productions?channel={{ ch.id }}">Full library</a></div>
+  <table>
+    <tr><th>#</th><th>Title</th><th>Format</th><th>Status</th><th>YouTube</th><th>Updated</th><th></th></tr>
+    {% for p in productions %}
+    <tr><td>{{ p.id }}</td><td><a href="/productions/{{ p.id }}">{{ p.title }}</a>{% if p.parent_id %} <span class="chip">Short of #{{ p.parent_id }}</span>{% endif %}
+        {% if p.error %}<div class="small muted">{{ p.error[:120] }}</div>{% endif %}</td>
+      <td>{{ p.format }}</td><td>{% include "_status.html" %}</td>
+      <td>{% if p.youtube_video_id %}<a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a>{% else %}—{% endif %}</td>
+      <td class="small muted">{{ p.updated_at|dt }}</td><td>{% include "_jobctl.html" %}</td></tr>
+    {% else %}<tr><td colspan="7" class="empty">No videos yet.</td></tr>{% endfor %}
+  </table>
+</div>
+
+{% elif tab == 'settings' %}
+<form class="card" data-form="/api/channels/{{ ch.id }}" data-done="Channel saved">
+  <div class="grid g3">
+    <label class="f"><span>Channel name</span><input name="name" value="{{ ch.name }}" required></label>
+    <label class="f"><span>Niche</span><input name="niche" value="{{ ch.niche }}"></label>
+    <label class="f"><span>Sub-niche</span><input name="sub_niche" value="{{ ch.sub_niche or '' }}"></label>
+    <label class="f"><span>Audience</span><input name="audience" value="{{ ch.audience or '' }}"></label>
+    <label class="f"><span>Language</span><select name="language">{% for l in languages %}<option {{ 'selected' if ch.language == l }}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Tone</span><input name="tone" value="{{ ch.tone or '' }}"></label>
+    <label class="f"><span>Workflow</span><select name="workflow">{% for k, l in workflows.items() %}<option value="{{ k }}" {{ 'selected' if ch.workflow == k }}>{{ k|replace('_',' ') }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Formats</span><select name="formats">{% for k, l in [('both','Long + Shorts'),('long','Long only'),('short','Shorts only')] %}<option value="{{ k }}" {{ 'selected' if ch.formats == k }}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Styles (comma separated)</span><input name="styles" data-type="list" value="{{ ch.styles|join(', ') }}"></label>
+    <label class="f"><span>Long video length (minutes)</span><input name="long_minutes" data-type="number" type="number" step="0.5" min="1" max="30" value="{{ ch.long_minutes }}"></label>
+    <label class="f"><span>Short length (seconds)</span><input name="short_seconds" data-type="number" type="number" min="15" max="180" value="{{ ch.short_seconds }}"></label>
+    <label class="f"><span>Shorts per long episode</span><input name="shorts_per_episode" data-type="number" type="number" min="0" max="8" value="{{ ch.shorts_per_episode }}"></label>
+  </div>
+  <label class="f"><span>Channel instructions</span><textarea name="instructions" rows="3">{{ ch.instructions or '' }}</textarea></label>
+  <label class="f"><span>Restrictions (never do)</span><textarea name="restrictions" rows="2">{{ ch.restrictions or '' }}</textarea></label>
+  <label class="small"><input type="checkbox" name="research_required" {{ 'checked' if ch.research_required }}> Research sources required (factual videos)</label>
+  <h3>Daily schedule</h3>
+  {% if ch.workflow == 'nifty_daily' %}
+  <div class="note small">This channel's daily video is the NIFTY episode at 3:40 PM on trading days — manage it on the <a href="/schedule">Schedule</a> page.</div>
+  {% else %}
+  <div class="row">
+    <label class="small"><input type="checkbox" name="schedule_enabled" {{ 'checked' if ch.schedule_enabled }}> Make one video every scheduled day</label>
+    <label class="small">at <input name="schedule_time" value="{{ ch.schedule_time or '10:00' }}" style="width:80px"></label>
+    <label class="small">days (0=Mon … 6=Sun) <input name="schedule_days" data-type="list" value="{{ ch.schedule_days|join(',') }}" style="width:140px" placeholder="0,1,2,3,4,5,6"></label>
+  </div>
+  <div class="muted small">The schedule uses the channel's best saved or approved idea, generates new ideas when the list runs low, and never makes two scheduled videos for the same day.</div>
+  {% endif %}
+  <div style="margin-top:12px"><button class="primary" type="submit">Save channel</button></div>
+</form>
+
+{% elif tab == 'characters' %}
+<div class="grid g3">
+  {% for c in characters %}
+  <div class="card">
+    {% if c.reference_path %}<img class="thumb" src="{{ media_url(c.reference_path) }}" alt="{{ c.name }}" style="width:100%">{% endif %}
+    <div class="spread" style="margin-top:8px"><b>{{ c.name }}</b> <span class="chip {{ 'ok' if c.status == 'approved' else 'warn' }}">{{ c.status }}</span></div>
+    <div class="muted small">C{{ c.id }} · {{ c.role or 'character' }} · voice {{ c.voice.voice_id }} ({{ c.voice.engine }})</div>
+    <div class="small" style="margin-top:4px">{{ c.personality }}</div>
+    {% if c.catchphrases %}<div class="small muted">“{{ c.catchphrases|join('”, “') }}”</div>{% endif %}
+    <div class="muted small">{{ c.design.gender }}, {{ c.design.age }}, {{ c.design.body }} · {{ c.design.outfit }}/{{ c.design.outfit2 }} · {{ c.design.hair }} {{ c.design.hair_colour }} · {{ c.design.accessory }}</div>
+    <div class="row" style="margin-top:8px">
+      {% if c.status != 'approved' %}<button class="sm" data-post="/api/characters/{{ c.id }}/approve">Approve</button>{% endif %}
+      {% if c.status != 'retired' %}<button class="sm danger" data-post="/api/characters/{{ c.id }}/retire" data-confirm="Retire {{ c.name }}? New episodes will not use this character.">Retire</button>{% endif %}
+    </div>
+  </div>
+  {% else %}<div class="card empty">No characters yet. Animated episodes add the characters they introduce automatically; you can also add one below.</div>{% endfor %}
+</div>
+<form class="card" style="margin-top:16px" data-form="/api/channels/{{ ch.id }}/characters" data-done="Character added">
+  <h2>Add a character</h2>
+  <div class="grid g3">
+    <label class="f"><span>Name</span><input name="name" required></label>
+    <label class="f"><span>Role</span><input name="role" placeholder="e.g. hero, best friend, villain"></label>
+    <label class="f"><span>Voice (Sarvam speaker)</span><select name="voice_id"><option value="">Pick automatically</option>{% for v in voices %}<option>{{ v }}</option>{% endfor %}</select></label>
+    {% for k, opts in options.items() %}
+    <label class="f"><span>{{ k|replace('_',' ') }}</span><select name="design::{{ k }}">{% for o in opts %}<option>{{ o }}</option>{% endfor %}</select></label>
+    {% endfor %}
+  </div>
+  <label class="f"><span>Personality</span><input name="personality"></label>
+  <label class="f"><span>Catchphrases (comma separated)</span><input name="catchphrases"></label>
+  <label class="f"><span>Relationships</span><input name="relationships"></label>
+  <label class="f"><span>Rules (always / never)</span><input name="rules"></label>
+  <button class="primary" type="submit">Add character</button>
+</form>
+
+{% elif tab == 'youtube' %}
+<div class="grid g2">
+  <div class="card">
+    <h2>YouTube account</h2>
+    {% if connected %}
+    <div class="note ok">Connected to <b>{{ ch.youtube_title or 'a YouTube channel' }}</b>{% if ch.youtube_channel_id %} <span class="mono">({{ ch.youtube_channel_id }})</span>{% endif %}. Every upload first checks that the authorized account is still this channel.</div>
+    <div class="row"><button data-post="/api/channels/{{ ch.id }}/youtube/verify" data-reload="no">Verify destination</button>
+      <button class="danger" data-post="/api/channels/{{ ch.id }}/youtube/disconnect" data-confirm="Disconnect YouTube for {{ ch.name }}?">Disconnect</button></div>
+    {% elif not oauth_ready %}
+    <div class="note warn">Add your Google OAuth client first in <a href="/settings?tab=youtube">Settings → YouTube</a>. All channels share it; each channel signs in separately.</div>
+    {% else %}
+    <div class="muted small" style="margin-bottom:8px">Sign in with Google and choose the YouTube channel (or brand account) for <b>{{ ch.name }}</b>. This login is stored only for this studio channel.</div>
+    <button class="primary" data-post="/api/channels/{{ ch.id }}/youtube/connect" data-navigate>Connect YouTube</button>
+    {% endif %}
+  </div>
+  <form class="card" data-form="/api/channels/{{ ch.id }}" data-done="Publishing settings saved">
+    <h2>Publishing</h2>
+    <label class="small"><input type="checkbox" name="auto_publish" {{ 'checked' if ch.auto_publish }}> Publish automatically when a video passes its checks</label>
+    <label class="f" style="margin-top:8px"><span>Privacy when publishing</span><select name="publish_privacy">{% for v in ['public','unlisted','private'] %}<option {{ 'selected' if ch.publish_privacy == v }}>{{ v }}</option>{% endfor %}</select></label>
+    <div class="muted small">Long episodes upload first; their Shorts wait for the episode's video ID so they can link back to it.</div>
+    <button class="primary" type="submit" style="margin-top:8px">Save</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

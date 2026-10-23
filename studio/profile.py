@@ -49,9 +49,14 @@ def language_for(audience: str) -> str:
     return (settings.get("channel.audience_languages") or {}).get(audience) or "Hindi"
 
 
+def _channel() -> dict[str, Any] | None:
+    from . import channels
+    return channels.current()
+
+
 def language() -> str:
-    """Language of the video being produced right now (set per production), else the India default."""
-    return _current_language.get() or language_for("india")
+    """Language of the video being produced right now (set per production), else its channel's, else India's."""
+    return _current_language.get() or (_channel() or {}).get("language") or language_for("india")
 
 
 @contextmanager
@@ -64,11 +69,18 @@ def using_language(lang: str | None) -> Iterator[None]:
 
 
 def formats() -> list[str]:
+    ch = _channel()
+    if ch:
+        from . import channels
+        return channels.formats(ch)
     f = answers().get("formats", "shorts")
     return {"shorts": ["short"], "long": ["long"], "both": ["short", "long"]}.get(f, ["short"])
 
 
 def styles() -> list[str]:
+    ch = _channel()
+    if ch and ch.get("styles"):
+        return ch["styles"]
     a = answers()
     s = [x for x in a.get("styles", ["educational"]) if x != "other"]
     if a.get("style_other"):
@@ -77,6 +89,9 @@ def styles() -> list[str]:
 
 
 def audience() -> str:
+    ch = _channel()
+    if ch and ch.get("audience"):
+        return ch["audience"]
     a = answers()
     age = {"kids": "children under 13", "teens": "teenagers", "adults": "adults", "all": "a general audience"}.get(
         a.get("audience_age", "all"), "a general audience")
@@ -105,6 +120,13 @@ def per_day(fmt: str) -> float:
 
 
 def summary_text() -> str:
+    ch = _channel()
+    if ch:
+        return (f"Channel: {ch['name']}. Niche: {ch['niche']}" + (f" ({ch['sub_niche']})" if ch.get("sub_niche") else "")
+                + f". Language: {language()}. Formats: {', '.join(formats())}. Audience: {audience()}. "
+                f"Style: {', '.join(styles()) or 'per request'}. Tone: {ch.get('tone') or 'natural'}."
+                + (f" Channel instructions: {ch['instructions']}" if ch.get("instructions") else "")
+                + (f" Restrictions: {ch['restrictions']}" if ch.get("restrictions") else ""))
     a = answers()
     return (f"Language: {language()}. Formats: {', '.join(formats())}. Audience: {audience()}. "
             f"Style: {', '.join(styles())}. Niche: {a.get('niche') or '(to be researched)'}.")

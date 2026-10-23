@@ -42,6 +42,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=config.APP_NAME, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
+# Productions of different kinds store different optional details: a missing one renders blank, never a 500.
+import jinja2  # noqa: E402
+templates.env.undefined = jinja2.ChainableUndefined
 
 
 @app.middleware("http")
@@ -137,14 +140,26 @@ templates.env.globals["static_v"] = _static_version()
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    if not profile.complete():
-        return RedirectResponse("/setup", status_code=303)
-    prods = db.q("SELECT id, title, format, status, stage, updated_at, test_mode FROM productions ORDER BY id DESC LIMIT 8")
-    niche = db.q1("SELECT * FROM niches WHERE status='approved' ORDER BY approved_at DESC LIMIT 1")
-    ideas = db.q("SELECT id, title, format, score FROM topics WHERE status IN ('idea','approved') ORDER BY score DESC LIMIT 6")
-    return page(request, "dashboard.html", productions=prods, niche=niche, ideas=ideas,
-                providers=providers.status_all(), profile_text=profile.summary_text(),
-                schedules=db.q("SELECT * FROM schedules ORDER BY id"))
+    from .. import channels as chmod
+    cid = _channel_arg(request, request.query_params.get("channel"))
+    w, a = ("WHERE p.channel_id=?", (cid,)) if cid else ("", ())
+    prods = db.q(f"SELECT p.id, p.title, p.format, p.status, p.stage, p.updated_at, p.test_mode, p.parent_id, "
+                 f"c.name AS channel_name FROM productions p LEFT JOIN channels c ON c.id=p.channel_id {w} "
+                 f"ORDER BY p.id DESC LIMIT 10", a)
+    ideas = db.q(f"SELECT id, title, format, score FROM topics WHERE status IN ('idea','approved') "
+                 f"{'AND channel_id=?' if cid else 'AND channel_id IS NOT NULL'} ORDER BY saved DESC, score DESC LIMIT 6", a)
+    chans = chmod.all_channels()
+    for c in chans:
+        c["counts"] = chmod.counts(c["id"])
+        c["connected"] = oauth.connected(c["id"])
+        sched = db.q1("SELECT next_run_at, enabled FROM schedules WHERE channel_id=? AND task_type IN "
+                      "('channel_daily','nifty_daily_episode') AND enabled=1 ORDER BY next_run_at LIMIT 1", (c["id"],))
+        c["next_run"] = sched["next_run_at"] if sched else None
+    ch = chmod.get(cid)
+    resp = page(request, "dashboard.html", productions=prods, ideas=ideas, channels=chans, ch=ch,
+                totals=chmod.counts(cid), providers=providers.status_all(),
+                schedules=db.q("SELECT * FROM schedules WHERE enabled=1 ORDER BY next_run_at"))
+    return _with_cookie(resp, cid) if request.query_params.get("channel") is not None else resp
 
 
 @app.get("/setup", response_class=HTMLResponse)
@@ -165,32 +180,121 @@ def niches_page(request: Request):
     return page(request, "niches.html", niches=rows, running=bool(running), answers=profile.answers())
 
 
+IDEA_STATUS = {"open": "t.status IN ('idea','approved')", "saved": "t.saved=1 AND t.status NOT IN ('rejected')",
+               "approved": "t.status='approved'", "used": "t.status IN ('producing','in_production','produced')",
+               "rejected": "t.status='rejected'", "all": "1=1"}
+IDEA_SORT = {"score": "t.score DESC, t.id DESC", "new": "t.id DESC", "old": "t.id ASC", "title": "t.title COLLATE NOCASE"}
+PAGE_SIZE = 20
+
+
 @app.get("/ideas", response_class=HTMLResponse)
-def ideas_page(request: Request, status: str = "open"):
-    where = {"open": "status IN ('idea','approved')", "all": "1=1", "rejected": "status='rejected'",
-             "used": "status IN ('in_production','produced')"}.get(status, "status IN ('idea','approved')")
-    rows = db.q(f"SELECT * FROM topics WHERE {where} ORDER BY score DESC, id DESC LIMIT 200")
+def ideas_page(request: Request, channel: str = "", niche: str = "", format: str = "", language: str = "",
+               style: str = "", kind: str = "", fresh: str = "", status: str = "open", sort: str = "score",
+               q: str = "", page_no: int = 1):
+    from .. import channels as chmod
+    cid = _channel_arg(request, channel)
+    where, args = [IDEA_STATUS.get(status, IDEA_STATUS["open"])], []
+    if cid:
+        where.append("t.channel_id=?"); args.append(cid)
+    if niche:
+        where.append("c.niche=?"); args.append(niche)
+    if format in ("long", "short"):
+        where.append("t.format=?"); args.append(format)
+    if language:
+        where.append("COALESCE(t.language, c.language)=?"); args.append(language)
+    if style:
+        where.append("t.style=?"); args.append(style)
+    if kind:
+        where.append("t.idea_kind=?"); args.append(kind)
+    if fresh in ("1", "7", "30", "90"):
+        where.append("t.created_at>=?"); args.append(db.iso_in(-int(fresh) * 86400))
+    if q.strip():
+        where.append("(t.title LIKE ? OR t.angle LIKE ? OR t.summary LIKE ?)"); args += [f"%{q.strip()}%"] * 3
+    sql = f"FROM topics t LEFT JOIN channels c ON c.id=t.channel_id WHERE {' AND '.join(where)}"
+    total = db.q1(f"SELECT COUNT(*) AS n {sql}", tuple(args))["n"]
+    pages = max(1, -(-total // PAGE_SIZE))
+    page_no = max(1, min(page_no, pages))
+    rows = db.q(f"SELECT t.*, c.name AS channel_name, c.niche AS channel_niche, c.language AS channel_language {sql} "
+                f"ORDER BY {IDEA_SORT.get(sort, IDEA_SORT['score'])} LIMIT ? OFFSET ?",
+                tuple(args) + (PAGE_SIZE, (page_no - 1) * PAGE_SIZE))
     for r in rows:
         r["breakdown"] = db.loads(r["score_breakdown"], {}) or {}
         r["claims"] = db.loads(r["claims"], []) or []
         r["gap"] = db.loads(r["gap"], {}) or {}
         ids = db.loads(r["evidence_ids"], []) or []
         r["evidence"] = engine.load_evidence(f"id IN ({','.join('?' for _ in ids)})", tuple(ids)) if ids else []
-    running = db.q1("SELECT id FROM tasks WHERE type='ideation' AND status IN ('pending','running')")
-    runs = db.q("SELECT * FROM research_runs WHERE kind='ideation' ORDER BY id DESC LIMIT 5")
-    for r in runs:
-        r["sources"] = db.loads(r["sources_used"], {}) or {}
-    niche = db.q1("SELECT * FROM niches WHERE status='approved' ORDER BY approved_at DESC LIMIT 1")
-    return page(request, "ideas.html", topics=rows, running=bool(running), runs=runs, niche=niche, filter=status,
-                formats=profile.formats())
+    running = db.q("SELECT id, payload FROM tasks WHERE type IN ('channel_ideas','ideation') AND status IN ('pending','running')")
+    all_ch = chmod.all_channels()
+    filters = {"channel": str(cid or ""), "niche": niche, "format": format, "language": language, "style": style,
+               "kind": kind, "fresh": fresh, "status": status, "sort": sort, "q": q}
+    from urllib.parse import urlencode
+    qs = urlencode({k: v for k, v in filters.items() if v})
+    resp = page(request, "ideas.html", topics=rows, running=bool(running), channels=all_ch, ch=chmod.get(cid),
+                filters=filters, total=total, pages=pages, page_no=page_no, qs=qs,
+                niches=sorted({c["niche"] for c in all_ch if c["niche"]}),
+                languages=sorted({r["l"] for r in db.q("SELECT DISTINCT COALESCE(t.language, c.language) AS l FROM topics t "
+                                                       "LEFT JOIN channels c ON c.id=t.channel_id") if r["l"]}),
+                styles=chmod.STYLES)
+    return _with_cookie(resp, cid) if channel != "" else resp
+
+
+@app.get("/ideas/{tid}", response_class=HTMLResponse)
+def idea_page(request: Request, tid: int):
+    from .. import channels as chmod, jobs
+    t = db.q1("SELECT * FROM topics WHERE id=?", (tid,))
+    if not t:
+        raise HTTPException(404)
+    t["breakdown"] = db.loads(t["score_breakdown"], {}) or {}
+    t["claims"] = db.loads(t["claims"], []) or []
+    t["gap"] = db.loads(t["gap"], {}) or {}
+    ids = db.loads(t["evidence_ids"], []) or []
+    t["evidence"] = engine.load_evidence(f"id IN ({','.join('?' for _ in ids)})", tuple(ids)) if ids else []
+    ch = chmod.get(t.get("channel_id"))
+    plan = jobs.plan_for(ch["id"], "", t) if ch else None
+    made = db.q("SELECT id, title, format, status, kind, youtube_video_id FROM productions WHERE topic_id=? ORDER BY id DESC",
+                (tid,))
+    return page(request, "idea.html", t=t, ch=ch, plan=plan, made=made)
+
+
+LIB_STATUS = {
+    "active": "p.status NOT IN ('awaiting_approval','uploaded','approved','failed','needs_attention','needs_review',"
+              "'rejected','test_passed','paused')",
+    "review": "p.status IN ('awaiting_approval','needs_review')", "published": "p.status='uploaded'",
+    "approved": "p.status IN ('approved','uploading')", "failed": "p.status IN ('failed','needs_attention','paused_budget')",
+    "paused": "p.status='paused'", "rejected": "p.status='rejected'", "all": "1=1"}
 
 
 @app.get("/productions", response_class=HTMLResponse)
-def productions_page(request: Request):
-    rows = db.q("SELECT * FROM productions ORDER BY id DESC LIMIT 200")
+def productions_page(request: Request, channel: str = "", status: str = "all", format: str = "", kind: str = "",
+                     q: str = "", page_no: int = 1):
+    from .. import channels as chmod
+    cid = _channel_arg(request, channel)
+    where, args = [LIB_STATUS.get(status, "1=1")], []
+    if cid:
+        where.append("p.channel_id=?"); args.append(cid)
+    if format in ("long", "short"):
+        where.append("p.format=?"); args.append(format)
+    if kind == "episodes":
+        where.append("p.parent_id IS NULL")
+    elif kind == "shorts_of":
+        where.append("p.parent_id IS NOT NULL")
+    if q.strip():
+        where.append("(p.title LIKE ? OR CAST(p.id AS TEXT)=?)"); args += [f"%{q.strip()}%", q.strip()]
+    sql = f"FROM productions p LEFT JOIN channels c ON c.id=p.channel_id WHERE {' AND '.join(where)}"
+    total = db.q1(f"SELECT COUNT(*) AS n {sql}", tuple(args))["n"]
+    pages = max(1, -(-total // 30))
+    page_no = max(1, min(page_no, pages))
+    rows = db.q(f"SELECT p.*, c.name AS channel_name {sql} ORDER BY p.id DESC LIMIT 30 OFFSET ?",
+                tuple(args) + ((page_no - 1) * 30,))
     for r in rows:
         r["qa"] = db.loads(r["qa"], {}) or {}
-    return page(request, "productions.html", productions=rows, formats=profile.formats())
+        r["tl"] = db.loads(r["timeline"], {}) or {}
+    from urllib.parse import urlencode
+    filters = {"channel": str(cid or ""), "status": status, "format": format, "kind": kind, "q": q}
+    resp = page(request, "productions.html", productions=rows, formats=profile.formats(), channels=chmod.all_channels(),
+                ch=chmod.get(cid), filters=filters, total=total, pages=pages, page_no=page_no,
+                qs=urlencode({k: v for k, v in filters.items() if v}))
+    return _with_cookie(resp, cid) if channel != "" else resp
 
 
 @app.get("/productions/{pid}", response_class=HTMLResponse)
@@ -498,8 +602,16 @@ async def api_complete(request: Request):
 @app.post("/api/niches/research")
 async def api_niche_research(request: Request):
     data = await body(request)
-    raw = data.get("candidates") or str(data.get("candidates_raw", "")).splitlines()
-    cands = [str(c).strip()[:120] for c in raw if str(c).strip()][:6]
+    text = str(data.get("candidates_raw", ""))
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    # A pasted brief or prompt (long, markdown headings, long sentences) is ONE niche, not one niche per line —
+    # splitting it turned prompt headings like "## YOUR ROLE" into fake niches.
+    if not data.get("candidates") and (len(text) > 400 or any(ln.startswith("#") or len(ln) > 120 for ln in lines)):
+        title = next((ln.lstrip("#* ").strip() for ln in lines if ln.lstrip("#* ").strip()), "Custom niche")[:120]
+        cands = [title]
+    else:
+        raw = data.get("candidates") or lines
+        cands = [str(c).strip()[:120] for c in raw if str(c).strip()][:6]
     tid = worker.enqueue("niche_research", {"candidates": cands}, dedupe=True, max_attempts=2)
     return ok(task_id=tid)
 
@@ -532,11 +644,48 @@ async def api_ideas(request: Request):
     return ok(task_id=tid)
 
 
+@app.post("/api/channels/{cid}/ideas")
+async def api_channel_ideas(request: Request, cid: int):
+    from .. import channels as chmod
+    ch = chmod.get(cid)
+    if not ch:
+        return bad("not found", 404)
+    data = await body(request)
+    fmts = [f for f in ("long", "short") if data.get(f"fmt_{f}")] or chmod.formats(ch)
+    tid = worker.enqueue("channel_ideas", {"channel_id": cid, "count": max(3, min(20, int(data.get("count") or 10))),
+                                           "formats": fmts, "focus": str(data.get("focus") or "")[:300]},
+                         dedupe=True, max_attempts=2)
+    return ok(task_id=tid, detail=f"Generating ideas for {ch['name']}…")
+
+
 @app.post("/api/topics/{tid}/{action}")
-def api_topic(tid: int, action: str):
+async def api_topic(request: Request, tid: int, action: str):
     t = db.q1("SELECT * FROM topics WHERE id=?", (tid,))
     if not t:
         return bad("not found", 404)
+    if action in ("video", "long", "short", "both"):
+        from .. import jobs
+        if not t.get("channel_id"):
+            return bad("This idea is not assigned to a channel.")
+        try:
+            res = jobs.create(t["channel_id"], "", idea_id=tid, fmt=None if action == "video" else action)
+        except ValueError as e:
+            return bad(str(e))
+        pids = res.get("production_ids") or []
+        return ok(next=f"/productions/{pids[0]}" if pids else "/queue")
+    if action in ("save", "unsave"):
+        db.update("topics", tid, {"saved": int(action == "save"), "updated_at": db.iso()})
+        return ok(detail="Saved" if action == "save" else "Removed from saved")
+    if action == "variations":
+        if not t.get("channel_id"):
+            return bad("This idea is not assigned to a channel.")
+        worker.enqueue("channel_ideas", {"channel_id": t["channel_id"], "count": 4, "formats": [t["format"]],
+                                         "focus": f"variations of: {t['title']} — {(t.get('summary') or t.get('angle') or '')[:200]}"},
+                       max_attempts=2)
+        return ok(detail="Generating 4 variations…")
+    if action == "restore":
+        db.update("topics", tid, {"status": "idea", "updated_at": db.iso()})
+        return ok()
     if action in ("approve", "reject"):
         db.update("topics", tid, {"status": "approved" if action == "approve" else "rejected", "updated_at": db.iso()})
         return ok()
@@ -974,3 +1123,188 @@ async def api_upload(request: Request, kind: str):
         dest.write_bytes(raw)
         return ok(name=name)
     return bad("unknown upload kind")
+
+
+# ------------------------------------------------------------------ channels (multi-channel studio)
+
+def _channel_arg(request: Request, channel: str | int | None) -> int | None:
+    """?channel=N wins; otherwise the channel last chosen in the selector (cookie); 0/'all' = every channel."""
+    from .. import channels
+    raw = channel if channel not in (None, "") else request.cookies.get("channel", "")
+    if str(raw) in ("0", "all", ""):
+        return None
+    try:
+        cid = int(raw)
+    except ValueError:
+        return None
+    return cid if channels.get(cid) else None
+
+
+def _with_cookie(resp: HTMLResponse, cid: int | None) -> HTMLResponse:
+    resp.set_cookie("channel", str(cid or 0), samesite="strict", httponly=True, max_age=365 * 86400)
+    return resp
+
+
+@app.get("/channels", response_class=HTMLResponse)
+def channels_page(request: Request):
+    from .. import channels
+    rows = channels.all_channels()
+    for c in rows:
+        c["counts"] = channels.counts(c["id"])
+        c["connected"] = oauth.connected(c["id"])
+    return page(request, "channels.html", channels=rows, workflows=channels.WORKFLOWS, styles=channels.STYLES,
+                languages=channels.LANGUAGES)
+
+
+@app.get("/channels/{cid}", response_class=HTMLResponse)
+def channel_page(request: Request, cid: int, tab: str = "overview"):
+    from .. import channels
+    from ..creative import characters
+    ch = channels.get(cid)
+    if not ch:
+        raise HTTPException(404)
+    chars = characters.for_channel(cid)
+    recent = db.q("SELECT id, title, format, kind, status, stage, updated_at, youtube_video_id, parent_id, error "
+                  "FROM productions WHERE channel_id=? ORDER BY id DESC LIMIT 12", (cid,))
+    resp = page(request, "channel.html", ch=ch, counts=channels.counts(cid), connected=oauth.connected(cid),
+                oauth_ready=oauth.configured(), characters=chars, productions=recent, tab=tab,
+                workflows=channels.WORKFLOWS, styles=channels.STYLES, languages=channels.LANGUAGES,
+                options=characters.OPTIONS, voices=sorted({v for vs in characters.VOICES.values() for v in vs}),
+                ideas_n=db.q1("SELECT COUNT(*) AS n FROM topics WHERE channel_id=? AND status IN ('idea','approved')",
+                              (cid,))["n"])
+    return _with_cookie(resp, cid)
+
+
+@app.post("/api/channels")
+async def api_channel_create(request: Request):
+    from .. import channels, scheduler
+    try:
+        cid = channels.create(await body(request))
+    except (ValueError, TypeError) as e:
+        return bad(str(e))
+    scheduler.sync_channels()
+    logs.event("info", "channels", f"Channel #{cid} created")
+    return ok(next=f"/channels/{cid}")
+
+
+@app.post("/api/channels/{cid}")
+async def api_channel_update(request: Request, cid: int):
+    from .. import channels, scheduler
+    if not channels.get(cid):
+        return bad("not found", 404)
+    try:
+        channels.update(cid, await body(request))
+    except (ValueError, TypeError) as e:
+        return bad(str(e))
+    scheduler.sync_channels()
+    return ok()
+
+
+@app.post("/api/channels/{cid}/youtube/{action}")
+def api_channel_youtube(cid: int, action: str):
+    from .. import channels
+    if not channels.get(cid):
+        return bad("not found", 404)
+    try:
+        if action == "connect":
+            return ok(url=oauth.auth_url(cid))
+        if action == "disconnect":
+            oauth.disconnect(cid)
+            db.ex("UPDATE channels SET youtube_channel_id=NULL, youtube_title=NULL WHERE id=?", (cid,))
+            return ok()
+        if action == "verify":
+            info = oauth.verify_destination(cid)
+            return ok(detail=f"Uploads for this studio channel go to “{info.get('title')}” ({info.get('id')}).")
+    except oauth.AuthError as e:
+        return bad(str(e))
+    return bad("unknown action")
+
+
+@app.post("/api/channels/{cid}/create")
+async def api_channel_job(request: Request, cid: int):
+    from .. import jobs
+    data = await body(request)
+    try:
+        res = jobs.create(cid, str(data.get("request") or ""), idea_id=data.get("idea_id") or None,
+                          fmt=data.get("format") or None)
+    except ValueError as e:
+        return bad(str(e))
+    pids = res.get("production_ids") or []
+    plan = res.get("plan") or {}
+    detail = (f"Queued: {plan.get('content_type')} · {plan.get('format')} · {plan.get('language')} "
+              f"({'animated story' if plan.get('animated') else 'researched video'})") if plan else "Daily episode queued"
+    return ok(production_ids=pids, task_id=res.get("task_id"), detail=detail,
+              next=f"/productions/{pids[0]}" if pids else "/queue")
+
+
+@app.post("/api/channels/{cid}/plan")
+async def api_channel_plan(request: Request, cid: int):
+    """Preview how a request will be interpreted, without queuing anything."""
+    from .. import channels, jobs
+    if not channels.get(cid):
+        return bad("not found", 404)
+    return ok(plan=jobs.plan_for(cid, str((await body(request)).get("request") or "")))
+
+
+@app.post("/api/channels/{cid}/characters")
+async def api_character_create(request: Request, cid: int):
+    from .. import channels
+    from ..creative import characters
+    if not channels.get(cid):
+        return bad("not found", 404)
+    data = await body(request)
+    name = str(data.get("name") or "").strip()
+    if not name:
+        return bad("character name is required")
+    voice = None
+    if data.get("voice_id"):
+        voice = {"engine": "sarvam", "voice_id": str(data["voice_id"]), "pace": 1.0}
+    charid = characters.create(cid, name, data.get("design") or {}, role=str(data.get("role") or ""),
+                               personality=str(data.get("personality") or ""),
+                               catchphrases=[s.strip() for s in str(data.get("catchphrases") or "").split(",") if s.strip()],
+                               relationships=str(data.get("relationships") or ""), rules=str(data.get("rules") or ""),
+                               voice=voice)
+    return ok(id=charid)
+
+
+@app.post("/api/characters/{charid}/{action}")
+def api_character_action(charid: int, action: str):
+    from ..creative import characters
+    c = characters.get(charid)
+    if not c:
+        return bad("not found", 404)
+    if action in ("approve", "retire"):
+        db.update("characters", charid, {"status": "approved" if action == "approve" else "retired",
+                                         "updated_at": db.iso()})
+        return ok()
+    if action == "redraw":
+        characters.render_reference(charid)
+        return ok()
+    return bad("unknown action")
+
+
+@app.post("/api/productions/{pid}/job/{action}")
+def api_job_control(pid: int, action: str):
+    from .. import jobs
+    if not db.q1("SELECT id FROM productions WHERE id=?", (pid,)):
+        return bad("not found", 404)
+    try:
+        if action == "pause":
+            return ok(detail="Paused" if jobs.pause(pid) else "Nothing queued to pause (a running stage finishes first)")
+        if action == "resume":
+            return ok(detail="Resumed" if jobs.resume(pid) else "Nothing paused")
+        if action == "cancel":
+            jobs.cancel(pid)
+            return ok(detail="Cancelled")
+        if action == "retry":
+            jobs.retry(pid)
+            return ok(detail="Retrying from the failed stage")
+        if action == "shorts":
+            from ..creative import workflow
+            p = pipeline.load(pid)
+            if p.get("kind") != "story" or p["format"] != "long" or p["status"] in ("queued",) or not p["timeline"]:
+                return bad("Shorts can be cut from a finished long animated episode")
+            return ok(detail=f"{len(workflow.make_shorts(pid))} Short(s) queued")
+    except ValueError as e:
+        return bad(str(e))
+    return bad("unknown action")

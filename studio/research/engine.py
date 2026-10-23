@@ -359,9 +359,31 @@ def score_topic(idea: TopicIdea, ev_by_id: dict[int, dict[str, Any]], gap: dict[
     return total, breakdown
 
 
+def _channel_fields(ch: dict[str, Any] | None, idea: Any, ev_by_id: dict[int, Any], language: str) -> dict[str, Any]:
+    if not ch:
+        return {}
+    cited = [ev_by_id[i] for i in idea.evidence_ids if i in ev_by_id]
+    dated = sorted((e for e in cited if e.get("published_at")), key=lambda e: e["published_at"], reverse=True)
+    fresh = bool(dated) and (db.parse_iso(dated[0]["published_at"]) or datetime.min.replace(tzinfo=timezone.utc)) > \
+        datetime.now(timezone.utc) - timedelta(days=21)
+    src = (dated or cited or [{}])[0]
+    return {"channel_id": ch["id"], "idea_kind": "trend" if fresh else "inspired" if cited else "evergreen",
+            "style": next(iter(ch.get("styles") or []), None), "language": language, "summary": idea.angle,
+            "source_url": src.get("url"), "source_date": (src.get("published_at") or "")[:10] or None}
+
+
 def run_ideation(payload: dict[str, Any]) -> dict[str, Any]:
-    niche = db.q1("SELECT * FROM niches WHERE id=?", (payload["niche_id"],)) if payload.get("niche_id") else \
-        db.q1("SELECT * FROM niches WHERE status='approved' ORDER BY approved_at DESC LIMIT 1")
+    ch = None
+    if payload.get("channel_id"):                     # studio channel: its own niche, language and audience
+        from .. import channels
+        ch = channels.get(int(payload["channel_id"]))
+        niche = {"id": None, "name": ch["niche"] or ch["name"],
+                 "description": "; ".join(x for x in (ch["sub_niche"], ch["audience"] and f"audience: {ch['audience']}",
+                                                      ch["instructions"]) if x),
+                 "search_queries": db.dumps([q for q in (ch["niche"], ch["sub_niche"], payload.get("focus")) if q])}
+    else:
+        niche = db.q1("SELECT * FROM niches WHERE id=?", (payload["niche_id"],)) if payload.get("niche_id") else \
+            db.q1("SELECT * FROM niches WHERE status='approved' ORDER BY approved_at DESC LIMIT 1")
     if not niche:
         raise ValueError("No approved niche yet — approve one on the Niches page first.")
     count = int(payload.get("count", 10))
@@ -413,7 +435,7 @@ def run_ideation(payload: dict[str, Any]) -> dict[str, Any]:
             "score": score, "score_breakdown": db.dumps(breakdown), "claims": db.dumps(claims),
             "evidence_ids": db.dumps([i for i in dict.fromkeys(idea.evidence_ids) if i in ev_by_id]),
             "gap": db.dumps(gap or {}), "search_query": idea.search_query, "norm_title": dedup.normalize(idea.title),
-            "created_at": db.iso(), "updated_at": db.iso()})
+            "created_at": db.iso(), "updated_at": db.iso(), **_channel_fields(ch, idea, ev_by_id, language)})
         batch.append((tid, idea.title))
         created.append(tid)
     finish_run(run_id, f"{len(created)} ideas, {dupes} duplicates skipped (by {meta['provider']}/{meta['model']})", used)

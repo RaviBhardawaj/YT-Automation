@@ -29,9 +29,24 @@ SCOPES = [
 SCOPE_CAPTIONS = "https://www.googleapis.com/auth/youtube.force-ssl"
 REDIRECT_URI = f"{config.BASE_URL}/oauth/google/callback"
 
-_pending: dict[str, tuple[str, float]] = {}
-_token: dict[str, Any] = {"access": None, "expires": 0.0}
+_pending: dict[str, tuple[str, float, int | None]] = {}
+_tokens: dict[int | None, dict[str, Any]] = {}          # access-token cache per studio channel
 _lock = threading.Lock()
+
+
+def _cid(channel_id: int | None = None) -> int | None:
+    """The studio channel whose YouTube authorization to use (explicit, else the one being worked on, else #1)."""
+    from .. import channels
+    return channel_id or channels.current_id() or 1
+
+
+def _secret(channel_id: int | None = None) -> str:
+    from .. import channels
+    return channels.refresh_token_secret(_cid(channel_id))
+
+
+def _cache(channel_id: int | None = None) -> dict[str, Any]:
+    return _tokens.setdefault(_cid(channel_id), {"access": None, "expires": 0.0})
 
 
 class AuthError(Exception):
@@ -57,11 +72,11 @@ def configured() -> bool:
     return bool(settings.get("youtube.client_id")) and settings.has_secret("google_oauth_client_secret")
 
 
-def connected() -> bool:
-    return settings.has_secret("google_refresh_token")
+def connected(channel_id: int | None = None) -> bool:
+    return settings.has_secret(_secret(channel_id))
 
 
-def auth_url() -> str:
+def auth_url(channel_id: int | None = None) -> str:
     if not configured():
         raise AuthError("Add your OAuth client first.")
     state = secrets.token_urlsafe(24)
@@ -71,11 +86,11 @@ def auth_url() -> str:
     with _lock:
         for k in [k for k, (_, t) in _pending.items() if now - t > 900]:
             _pending.pop(k, None)
-        _pending[state] = (verifier, now)
+        _pending[state] = (verifier, now, _cid(channel_id))
     scopes = SCOPES + ([SCOPE_CAPTIONS] if settings.get("youtube.upload_captions") else [])
     return AUTH_URL + "?" + urlencode({
         "client_id": settings.get("youtube.client_id"), "redirect_uri": REDIRECT_URI, "response_type": "code",
-        "scope": " ".join(scopes), "access_type": "offline", "prompt": "consent", "include_granted_scopes": "true",
+        "scope": " ".join(scopes), "access_type": "offline", "prompt": "select_account consent", "include_granted_scopes": "true",
         "state": state, "code_challenge": challenge, "code_challenge_method": "S256",
     })
 
@@ -95,20 +110,22 @@ def handle_callback(code: str, state: str) -> dict[str, Any]:
     if not tok.get("refresh_token"):
         raise AuthError("Google did not return a refresh token. Remove the app's access at "
                         "myaccount.google.com/permissions and connect again.")
-    settings.set_secret("google_refresh_token", tok["refresh_token"])
+    cid = entry[2]
+    settings.set_secret(_secret(cid), tok["refresh_token"])
     settings.set("youtube.granted_scopes", tok.get("scope", "").split())
     with _lock:
-        _token.update(access=tok["access_token"], expires=time.time() + int(tok.get("expires_in", 3600)) - 60)
-    channel = fetch_channel()
-    logs.event("info", "youtube", f"Connected YouTube channel: {channel.get('title')}")
-    return channel
+        _cache(cid).update(access=tok["access_token"], expires=time.time() + int(tok.get("expires_in", 3600)) - 60)
+    channel = fetch_channel(cid)
+    logs.event("info", "youtube", f"Studio channel #{cid} connected to YouTube channel: {channel.get('title')}")
+    return {**channel, "studio_channel_id": cid}
 
 
-def access_token() -> str:
+def access_token(channel_id: int | None = None) -> str:
+    cache = _cache(channel_id)
     with _lock:
-        if _token["access"] and time.time() < _token["expires"]:
-            return _token["access"]
-    refresh = settings.secret("google_refresh_token")
+        if cache["access"] and time.time() < cache["expires"]:
+            return cache["access"]
+    refresh = settings.secret(_secret(channel_id))
     if not refresh:
         raise AuthError("YouTube is not connected.")
     r = httpx.post(TOKEN_URL, data={"client_id": settings.get("youtube.client_id"),
@@ -117,30 +134,32 @@ def access_token() -> str:
     if r.status_code != 200:
         err = r.json().get("error", "") if r.headers.get("content-type", "").startswith("application/json") else ""
         if err == "invalid_grant":
-            settings.delete_secret("google_refresh_token")
+            settings.delete_secret(_secret(channel_id))
             raise AuthError("YouTube authorization was revoked or expired. Please connect again.")
         raise AuthError(f"Could not refresh YouTube access ({r.status_code}).")
     tok = r.json()
     with _lock:
-        _token.update(access=tok["access_token"], expires=time.time() + int(tok.get("expires_in", 3600)) - 60)
-        return _token["access"]
+        cache.update(access=tok["access_token"], expires=time.time() + int(tok.get("expires_in", 3600)) - 60)
+        return cache["access"]
 
 
-def request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+def request(method: str, url: str, channel_id: int | None = None, **kwargs: Any) -> httpx.Response:
     headers = kwargs.pop("headers", {})
+    timeout = kwargs.pop("timeout", 60)
     for attempt in range(2):
-        r = httpx.request(method, url, headers={**headers, "Authorization": f"Bearer {access_token()}"},
-                          timeout=kwargs.pop("timeout", 60), **kwargs)
+        r = httpx.request(method, url, headers={**headers, "Authorization": f"Bearer {access_token(channel_id)}"},
+                          timeout=timeout, **kwargs)
         if r.status_code == 401 and attempt == 0:
             with _lock:
-                _token["access"] = None
+                _cache(channel_id)["access"] = None
             continue
         return r
     return r
 
 
-def fetch_channel() -> dict[str, Any]:
-    r = request("GET", "https://www.googleapis.com/youtube/v3/channels",
+def fetch_channel(channel_id: int | None = None) -> dict[str, Any]:
+    cid = _cid(channel_id)
+    r = request("GET", "https://www.googleapis.com/youtube/v3/channels", channel_id=cid,
                 params={"part": "snippet,statistics,status", "mine": "true"})
     items = r.json().get("items", []) if r.status_code == 200 else []
     if not items:
@@ -149,18 +168,44 @@ def fetch_channel() -> dict[str, Any]:
     channel = {"id": c["id"], "title": c["snippet"]["title"], "url": f"https://www.youtube.com/channel/{c['id']}",
                "subscribers": c.get("statistics", {}).get("subscriberCount"),
                "videos": c.get("statistics", {}).get("videoCount"), "fetched_at": db.iso()}
-    settings.set("youtube.channel", channel)
+    if cid == 1:
+        settings.set("youtube.channel", channel)
+    db.ex("UPDATE channels SET youtube_channel_id=?, youtube_title=?, updated_at=? WHERE id=?",
+          (channel["id"], channel["title"], db.iso(), cid))
     return channel
 
 
-def disconnect() -> None:
-    token = settings.secret("google_refresh_token")
+def verify_destination(channel_id: int) -> dict[str, Any]:
+    """Before any upload: the authorized account must be the YouTube channel this studio channel is linked to."""
+    from .. import channels
+    ch = channels.get(channel_id)
+    if not ch:
+        raise AuthError(f"studio channel #{channel_id} not found")
+    if not connected(channel_id):
+        raise AuthError(f"'{ch['name']}' has no YouTube authorization — connect it on the Channels page.")
+    r = request("GET", "https://www.googleapis.com/youtube/v3/channels", channel_id=channel_id,
+                params={"part": "snippet", "mine": "true"})
+    items = r.json().get("items", []) if r.status_code == 200 else []
+    if not items:
+        raise AuthError(f"could not read the YouTube channel for '{ch['name']}' (HTTP {r.status_code})")
+    actual = items[0]["id"]
+    if ch.get("youtube_channel_id") and actual != ch["youtube_channel_id"]:
+        raise AuthError(f"authorized account is YouTube channel {actual}, but '{ch['name']}' is linked to "
+                        f"{ch['youtube_channel_id']} — refusing to upload to the wrong channel")
+    return {"id": actual, "title": items[0]["snippet"]["title"]}
+
+
+def disconnect(channel_id: int | None = None) -> None:
+    cid = _cid(channel_id)
+    token = settings.secret(_secret(cid))
     if token:
         try:
             httpx.post(REVOKE_URL, params={"token": token}, timeout=15)
         except httpx.HTTPError:
             pass
-    settings.delete_secret("google_refresh_token")
-    settings.set("youtube.channel", {})
+    settings.delete_secret(_secret(cid))
+    if cid == 1:
+        settings.set("youtube.channel", {})
+    db.ex("UPDATE channels SET youtube_channel_id=NULL, youtube_title=NULL, updated_at=? WHERE id=?", (db.iso(), cid))
     with _lock:
-        _token.update(access=None, expires=0.0)
+        _cache(cid).update(access=None, expires=0.0)

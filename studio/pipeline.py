@@ -66,7 +66,7 @@ def assets_for(pid: int) -> list[dict[str, Any]]:
 # ------------------------------------------------------------------ creation
 
 def create(topic_id: int | None = None, fmt: str | None = None, *, test_mode: bool = False,
-           sample: bool = False, audience: str = "india") -> int:
+           sample: bool = False, audience: str = "india", extra: dict[str, Any] | None = None) -> int:
     from . import worker
     if audience not in profile.AUDIENCES:
         raise ValueError(f"audience must be one of {list(profile.AUDIENCES)}")
@@ -83,7 +83,7 @@ def create(topic_id: int | None = None, fmt: str | None = None, *, test_mode: bo
     pid = db.insert("productions", {"topic_id": topic_id, "format": fmt, "title": title, "status": "queued",
                                     "stage": stage, "package": db.dumps(pkg), "test_mode": int(test_mode),
                                     "audience": audience, "language": language,
-                                    "created_at": db.iso(), "updated_at": db.iso()})
+                                    "created_at": db.iso(), "updated_at": db.iso(), **(extra or {})})
     if topic:
         db.update("topics", topic["id"], {"status": "in_production", "updated_at": db.iso()})
     worker.enqueue("production", {"production_id": pid}, production_id=pid, max_attempts=4)
@@ -430,6 +430,13 @@ def stage_qa(p: dict[str, Any]) -> str | None:
     if not result["passed"]:
         failing = "; ".join(c["name"] for c in result["checks"] if not c["ok"] and c["severity"] == "fail")
         raise NeedsAttention(f"Quality checks failed: {failing}")
+    from . import channels
+    chan = channels.get(p.get("channel_id"))
+    if chan and chan.get("auto_publish") and chan.get("status") == "active" and oauth.connected(chan["id"]) \
+            and result["auto_publish_ok"] and not p["test_mode"]:
+        approve(p["id"], privacy=chan.get("publish_privacy") or "private", publish_at=None,
+                by="auto (channel auto-publish)")
+        return None
     auto = (settings.get("publish.mode") == "auto_after_validation" and result["auto_publish_ok"]
             and oauth.connected() and not p["test_mode"])
     if auto:
@@ -458,6 +465,9 @@ def stages_for(kind: str) -> tuple[list[str], dict[str, str], dict[str, Any]]:
     if kind == "fib_lesson":
         from .finance import lessons as fin_lessons
         return fin_lessons.STAGES, fin_lessons.STATUS, {**STAGE_FN, **fin_lessons.STAGE_FN}
+    if kind in ("story", "story_short"):
+        from .creative import workflow as story
+        return (story.STAGES if kind == "story" else story.SHORT_STAGES), story.STATUS, story.STAGE_FN
     return STAGES, STATUS, STAGE_FN
 
 
@@ -466,7 +476,10 @@ def run_production(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, A
     p = load(pid)
     if p["status"] in TERMINAL and p["status"] not in ("paused_budget",):
         return {"skipped": f"status is {p['status']}"}
-    with profile.using_language(p.get("language") or profile.language_for(p.get("audience") or "india")):
+    from . import channels
+    lang = p.get("language") or (channels.get(p.get("channel_id")) or {}).get("language") or \
+        profile.language_for(p.get("audience") or "india")
+    with channels.using(p.get("channel_id") or 1), profile.using_language(lang):
         return _run_stages(pid, p)
 
 
@@ -534,6 +547,14 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
 
 
 def run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
+    from . import channels
+    p = load(int(payload["production_id"]))
+    with channels.using(p.get("channel_id") or 1):          # this channel's YouTube authorization only
+        return _run_upload(payload, task)
+
+
+def _run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
+    from . import channels
     from .youtube import oauth, upload
     pid = int(payload["production_id"])
     p = load(pid)
@@ -544,13 +565,18 @@ def run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
         save(pid, status="uploaded", error=None)
         return {"skipped": f"already uploaded as https://youtu.be/{p['youtube_video_id']}"}
     if not oauth.connected():
-        save(pid, status="approved", error="YouTube is not connected — connect in Settings › YouTube, then retry upload.")
-        raise NeedsAttention("YouTube is not connected")
+        save(pid, status="approved", error="This channel's YouTube account is not connected — connect it on the "
+                                            "Channels page, then retry the upload.")
+        raise NeedsAttention("YouTube is not connected for this channel")
+    try:                                    # verify the destination channel before anything is sent
+        dest = oauth.verify_destination(channels.current_id() or 1)
+    except oauth.AuthError as e:
+        save(pid, status="approved", error=f"Upload not started: {e}")
+        raise NeedsAttention(f"Upload not started: {e}") from e
     _nc_voice_guard(p, p["privacy"] or "private")
-    if p.get("kind") == "nifty_short" and p.get("parent_id"):
+    if p.get("kind") in ("nifty_short", "story_short") and p.get("parent_id"):
         # The full episode goes out first; the Short follows and links to it
         from . import worker
-        from .finance import shorts as fin_shorts
         parent = load(p["parent_id"])
         if not parent.get("youtube_video_id"):
             stale = p.get("approved_at") and p["approved_at"] < db.iso_in(-24 * 3600)
@@ -562,8 +588,13 @@ def run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
                                                "(checking every 10 minutes).")
             worker.enqueue("upload", {"production_id": pid}, production_id=pid, delay=600, max_attempts=8)
             return {"waiting_for_parent": parent["id"]}
-        p["package"]["final_description"] = fin_shorts.describe(parent, p["episode"], parent.get("youtube_video_id"),
-                                                                (p.get("timeline") or {}).get("voice"))
+        if p["kind"] == "nifty_short":
+            from .finance import shorts as fin_shorts
+            p["package"]["final_description"] = fin_shorts.describe(parent, p["episode"], parent.get("youtube_video_id"),
+                                                                    (p.get("timeline") or {}).get("voice"))
+        else:
+            from .creative import workflow as story
+            p["package"]["final_description"] = story.describe(p, parent.get("youtube_video_id"))
         save(pid, package=p["package"])
     if p.get("kind") in FINANCE_KINDS:
         # Defence in depth: re-run the gate right before anything leaves the machine.
@@ -579,7 +610,9 @@ def run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
     save(pid, status="uploading")
     with profile.using_language(p.get("language")):          # sets YouTube language metadata correctly
         res = upload.upload(p, p["package"], assets_for(pid))
+    res["destination"] = dest
     save(pid, status="uploaded", error=None)
+    logs.event("info", "youtube", f"Uploaded to YouTube channel '{dest['title']}' ({dest['id']})", production_id=pid)
     if p.get("kind") == "nifty_short" and p.get("parent_id"):
         from .finance import shorts as fin_shorts
         fin_shorts.write_manifest(p["parent_id"])
@@ -599,14 +632,16 @@ def reset_to_stage(pid: int, stage: str) -> None:
         raise ValueError(stage)
     work = workdir(pid)
     pos = stages.index(stage)
-    if pos <= stages.index("assets"):
+    if "assets" in stages and pos <= stages.index("assets"):
         db.ex("DELETE FROM assets WHERE production_id=?", (pid,))
-    if pos <= stages.index("voice"):
+    if "voice" in stages and pos <= stages.index("voice"):
         save(pid, timeline={})
-    if pos <= stages.index("render"):
+        shutil.rmtree(work / "voice", ignore_errors=True)       # story dialogue audio is cached per line
+    if "render" in stages and pos <= stages.index("render"):
         shutil.rmtree(work / "clips", ignore_errors=True)
     if stage in ("research", "script", "data"):
-        pkg = {"evidence_ids": p["package"].get("evidence_ids", [])} if stage == "script" and p.get("kind") != "nifty_pivot" else {}
+        pkg = {"evidence_ids": p["package"].get("evidence_ids", [])} if stage == "script" and p.get("kind") not in (
+            "nifty_pivot", "story") else {}
         save(pid, package=pkg)
     save(pid, stage=stage, status="queued", error=None, qa={}, compliance={})
     if p.get("kind") in FINANCE_KINDS:

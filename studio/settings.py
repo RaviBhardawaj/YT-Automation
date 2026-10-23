@@ -6,6 +6,7 @@ secret is set, plus its last four characters.
 from __future__ import annotations
 
 import copy
+import re
 import threading
 from typing import Any
 
@@ -232,7 +233,7 @@ _secret_cache: dict[str, str | None] = {}
 
 
 def secret(name: str) -> str | None:
-    if name not in SECRETS:
+    if not known_secret(name):
         raise KeyError(name)
     with _lock:
         if name in _secret_cache:
@@ -247,7 +248,7 @@ def secret(name: str) -> str | None:
 
 
 def set_secret(name: str, value: str) -> None:
-    if name not in SECRETS:
+    if not known_secret(name):
         raise KeyError(name)
     value = value.strip()
     if not value:
@@ -258,7 +259,7 @@ def set_secret(name: str, value: str) -> None:
 
 
 def delete_secret(name: str) -> None:
-    if name not in SECRETS:
+    if not known_secret(name):
         raise KeyError(name)
     try:
         keyring.delete_password(config.KEYRING_SERVICE, name)
@@ -266,6 +267,11 @@ def delete_secret(name: str) -> None:
         pass
     with _lock:
         _secret_cache[name] = None
+
+
+def known_secret(name: str) -> bool:
+    """Registered secrets, plus one YouTube authorization per studio channel (google_refresh_token__ch<N>)."""
+    return name in SECRETS or bool(re.fullmatch(r"google_refresh_token__ch\d+", name))
 
 
 def has_secret(name: str) -> bool:

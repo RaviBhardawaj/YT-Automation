@@ -52,6 +52,30 @@ def ensure_defaults() -> None:
             db.insert("schedules", row)
 
 
+def sync_channels() -> None:
+    """One daily slot per studio channel (the NIFTY channel keeps its own data-driven 3:40 PM schedule)."""
+    from . import channels
+    for ch in channels.all_channels():
+        if ch["workflow"] == "nifty_daily":
+            continue
+        row = {"name": f"{ch['name']}: daily video", "task_type": "channel_daily",
+               "payload": db.dumps({"channel_id": ch["id"]}), "kind": "daily",
+               "time_of_day": ch.get("schedule_time") or "10:00",
+               "days": db.dumps(ch.get("schedule_days")) if ch.get("schedule_days") else None,
+               "enabled": int(bool(ch.get("schedule_enabled")) and ch.get("status") == "active"),
+               "channel_id": ch["id"]}
+        row["next_run_at"] = next_run(row)
+        cur = db.q1("SELECT id, time_of_day, days, next_run_at, enabled FROM schedules "
+                    "WHERE task_type='channel_daily' AND channel_id=?", (ch["id"],))
+        if not cur:
+            db.insert("schedules", {**row, "created_at": db.iso()})
+        elif (cur["time_of_day"], cur["days"], cur["enabled"]) != (row["time_of_day"], row["days"], row["enabled"]) \
+                or not cur["next_run_at"]:
+            db.update("schedules", cur["id"], row)
+        else:
+            db.update("schedules", cur["id"], {"name": row["name"]})
+
+
 def tick() -> int:
     now = db.iso()
     fired = 0

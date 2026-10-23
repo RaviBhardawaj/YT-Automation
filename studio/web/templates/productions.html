@@ -1,26 +1,52 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="head">
-  <div><h1>Videos</h1><div class="muted">Every production, from research to upload.</div></div>
-  <div class="row"><a class="btn" href="/ideas">Start from an idea</a></div>
+  <div><h1>Library{% if ch %} · {{ ch.name }}{% endif %}</h1><div class="muted">Every video and Short, from request to upload, with its files and status.</div></div>
+  <div class="row">{% if ch %}<a class="btn primary" href="/channels/{{ ch.id }}">Create video</a>{% endif %}<a class="btn" href="/ideas{{ '?channel=' ~ ch.id if ch }}">Ideas</a></div>
 </div>
+{% if task_counts.get('running') %}<div data-autorefresh="20"></div>{% endif %}
+<form method="get" action="/productions" class="card tight" style="margin-bottom:14px">
+  <div class="row">
+    <select name="channel" data-autosubmit style="width:auto"><option value="all">All channels</option>
+      {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if filters.channel == c.id|string }}>{{ c.name }}</option>{% endfor %}</select>
+    <select name="status" data-autosubmit style="width:auto">
+      {% for k, l in [('all','Any status'),('active','In production'),('paused','Paused'),('review','Ready for review'),('approved','Approved / uploading'),('published','Published'),('failed','Failed / needs attention'),('rejected','Rejected / cancelled')] %}<option value="{{ k }}" {{ 'selected' if filters.status == k }}>{{ l }}</option>{% endfor %}</select>
+    <select name="format" data-autosubmit style="width:auto"><option value="">Any format</option>{% for f in ['long','short'] %}<option {{ 'selected' if filters.format == f }}>{{ f }}</option>{% endfor %}</select>
+    <select name="kind" data-autosubmit style="width:auto"><option value="">Episodes and Shorts</option><option value="episodes" {{ 'selected' if filters.kind == 'episodes' }}>Stand-alone / episodes</option><option value="shorts_of" {{ 'selected' if filters.kind == 'shorts_of' }}>Shorts cut from episodes</option></select>
+    <input name="q" value="{{ filters.q }}" placeholder="Search title or #id" style="width:180px"><button type="submit" class="sm">Search</button>
+    <a class="btn sm" href="/productions?channel={{ filters.channel or 'all' }}">Reset</a>
+  </div>
+  <div class="muted small" style="margin-top:6px">{{ total }} video(s){% if pages > 1 %} · page {{ page_no }} of {{ pages }}{% endif %}</div>
+</form>
 <div class="card">
   {% if productions %}
   <table>
-    <tr><th>#</th><th>Title</th><th>Format</th><th>Status</th><th>QA</th><th>YouTube</th><th>Updated</th></tr>
+    <tr><th>#</th><th>Title</th><th>Channel</th><th>Format</th><th>Status</th><th>QA</th><th>Files / YouTube</th><th>Updated</th><th></th></tr>
     {% for p in productions %}
     <tr>
       <td>{{ p.id }}</td>
       <td><a href="/productions/{{ p.id }}">{{ p.title or 'Untitled' }}</a>{% if p.test_mode %} <span class="chip">test</span>{% endif %}
+        {% if p.parent_id %} <span class="chip">Short of <a href="/productions/{{ p.parent_id }}">#{{ p.parent_id }}</a></span>{% endif %}
         {% if p.error %}<div class="small" style="color:var(--warn)">{{ p.error[:140] }}</div>{% endif %}</td>
+      <td class="small">{{ p.channel_name or '—' }}</td>
       <td>{{ p.format }}</td>
       <td>{% include "_status.html" %}</td>
       <td>{% if p.qa.checks is defined %}{% if p.qa.passed %}<span class="chip ok">passed</span>{% else %}<span class="chip err">failed</span>{% endif %}{% else %}—{% endif %}</td>
-      <td>{% if p.youtube_video_id %}<a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a>{% else %}—{% endif %}</td>
+      <td class="small">{% if p.video_path %}<a href="{{ media_url(p.video_path) }}" download>video</a>{% endif %}
+        {% if p.thumbnail_path %} · <a href="{{ media_url(p.thumbnail_path) }}" download>thumbnail</a>{% endif %}
+        {% if p.youtube_video_id %}<br><a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a>{% endif %}</td>
       <td class="muted small">{{ p.updated_at|dt }}</td>
+      <td>{% include "_jobctl.html" %}</td>
     </tr>
     {% endfor %}
   </table>
-  {% else %}<div class="empty">No videos yet.</div>{% endif %}
+  {% else %}<div class="empty">No videos match these filters.</div>{% endif %}
 </div>
+{% if pages > 1 %}
+<div class="row" style="justify-content:center;margin-top:12px">
+  {% if page_no > 1 %}<a class="btn sm" href="/productions?{{ qs }}&page_no={{ page_no - 1 }}">← Previous</a>{% endif %}
+  <span class="muted small">Page {{ page_no }} / {{ pages }}</span>
+  {% if page_no < pages %}<a class="btn sm" href="/productions?{{ qs }}&page_no={{ page_no + 1 }}">Next →</a>{% endif %}
+</div>
+{% endif %}
 {% endblock %}

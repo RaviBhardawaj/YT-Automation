@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><div class="muted small"><a href="/ideas{{ '?channel=' ~ ch.id if ch }}">← Ideas</a></div>
+    <h1>{{ t.title }}</h1>
+    <div class="row"><span class="chip">{{ t.format }}</span>{% if t.style %}<span class="chip">{{ t.style }}</span>{% endif %}
+      <span class="chip info">{{ t.idea_kind }}</span><span class="chip">{{ t.status }}</span>
+      <span class="muted small">{{ ch.name if ch else 'No channel' }} · score {{ '%.0f' % t.score }}/100</span></div></div>
+  <div class="row">
+    {% if t.status in ('idea','approved') and ch %}
+    <button class="primary" data-post="/api/topics/{{ t.id }}/video">Generate video</button>
+    <button data-post="/api/topics/{{ t.id }}/long">Create long</button>
+    <button data-post="/api/topics/{{ t.id }}/short">Create Short</button>
+    {% endif %}
+  </div>
+</div>
+<div class="grid g2">
+  <div class="card">
+    <h2>Idea</h2>
+    <div class="kv">
+      <div>Summary</div><div>{{ t.summary or t.angle or '—' }}</div>
+      <div>Hook</div><div>{{ t.hook_idea or '—' }}</div>
+      <div>Why</div><div>{{ t.why_now or '—' }}</div>
+      <div>Language</div><div>{{ t.language or (ch.language if ch) or '—' }}</div>
+      {% if t.gap.characters %}<div>Characters</div><div>{{ t.gap.characters|join(', ') }}</div>{% endif %}
+      {% if t.source_url %}<div>Source</div><div><a href="{{ t.source_url }}" target="_blank" rel="noopener">{{ t.source_url[:80] }}</a> {{ t.source_date or '' }}</div>{% endif %}
+    </div>
+    {% if plan %}<h3>How it will be made</h3>
+    <div class="small">{{ plan.content_type }} · {{ 'animated story (characters, dialogue, animation)' if plan.animated else 'researched video (sources, visuals, narration)' }} · {{ plan.format }} · {{ plan.language }} — decided by {{ plan.decided_by }}</div>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Score</h2>
+    <table>{% for k, b in t.breakdown.items() %}<tr><td>{{ k|replace('_',' ') }}</td><td><b>{{ b.points }}</b>/{{ b.max }}</td><td><span class="chip">{{ b.kind }}</span> <span class="small muted">{{ b.basis }}</span></td></tr>
+      {% else %}<tr><td class="muted">No breakdown.</td></tr>{% endfor %}</table>
+    {% if t.claims %}<h3>Claims</h3><ul class="small">{% for c in t.claims %}<li><span class="chip">{{ c.kind }}</span> {{ c.text }}</li>{% endfor %}</ul>{% endif %}
+    {% if t.evidence %}<h3>Evidence</h3><ul class="evidence">{% for e in t.evidence %}<li>[{{ e.id }}] <a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.title or e.url }}</a> <span class="muted">{{ e.published_at[:10] if e.published_at else 'date unknown' }}</span></li>{% endfor %}</ul>{% endif %}
+  </div>
+</div>
+<div class="card" style="margin-top:16px">
+  <h2>Videos made from this idea</h2>
+  <table>{% for p in made %}<tr><td>#{{ p.id }}</td><td><a href="/productions/{{ p.id }}">{{ p.title }}</a></td><td>{{ p.format }}</td><td>{% include "_status.html" %}</td>
+    <td>{% if p.youtube_video_id %}<a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">YouTube</a>{% endif %}</td></tr>
+    {% else %}<tr><td class="muted">None yet.</td></tr>{% endfor %}</table>
+</div>
+{% endblock %}

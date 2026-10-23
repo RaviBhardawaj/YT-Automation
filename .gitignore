@@ -24,5 +24,11 @@ token.pickle
 *.db-shm
 *.db-wal
 
+# Local copy of API keys (exported from the Keychain) — NEVER commit
+secrets/
+
+# Claude Code local state
+.claude/scheduled_tasks.lock
+
 # macOS
 .DS_Store

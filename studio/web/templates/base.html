@@ -14,11 +14,12 @@
     <nav class="nav">
       <a href="/" class="{{ 'on' if page == 'dashboard' }}">Dashboard</a>
       <a href="/setup" class="{{ 'on' if page == 'setup' }}">Setup{% if not interview_done %} <span class="badge">!</span>{% endif %}</a>
-      <a href="/niches" class="{{ 'on' if page == 'niches' }}">Niches</a>
-      <a href="/ideas" class="{{ 'on' if page == 'ideas' }}">Ideas</a>
-      <a href="/productions" class="{{ 'on' if page in ('productions', 'production') }}">Videos{% if awaiting %} <span class="badge">{{ awaiting }}</span>{% endif %}</a>
+      <a href="/channels" class="{{ 'on' if page in ('channels', 'channel') }}">Channels</a>
+      <a href="/ideas" class="{{ 'on' if page in ('ideas', 'idea') }}">Ideas</a>
+      <a href="/productions" class="{{ 'on' if page in ('productions', 'production') }}">Library{% if awaiting %} <span class="badge">{{ awaiting }}</span>{% endif %}</a>
       <a href="/queue" class="{{ 'on' if page == 'queue' }}">Queue &amp; logs{% if task_counts.get('failed') %} <span class="badge">{{ task_counts.get('failed') }}</span>{% endif %}</a>
       <a href="/schedule" class="{{ 'on' if page == 'schedule' }}">Schedule</a>
+      <a href="/niches" class="{{ 'on' if page == 'niches' }}">Niche research</a>
       <a href="/compliance" class="{{ 'on' if page == 'compliance' }}">Compliance</a>
       <a href="/analytics" class="{{ 'on' if page == 'analytics' }}">Analytics &amp; costs</a>
       <a href="/settings" class="{{ 'on' if page == 'settings' }}">Settings</a>

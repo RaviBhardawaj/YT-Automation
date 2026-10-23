@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>Channels</h1><div class="muted">One studio, many YouTube channels. Each has its own niche, language, style, characters, ideas, library, schedule and YouTube login.</div></div>
+</div>
+<div class="grid g3">
+  {% for c in channels %}
+  <a class="card" href="/channels/{{ c.id }}" style="color:inherit;text-decoration:none">
+    <div class="spread"><b style="font-size:15px">{{ c.name }}</b>
+      {% if c.status == 'active' %}<span class="chip ok">active</span>{% else %}<span class="chip warn">paused</span>{% endif %}</div>
+    <div class="muted small" style="margin:4px 0 8px">{{ c.niche }} · {{ c.language }} · {{ c.workflow|replace('_',' ') }}</div>
+    <div class="row small">
+      <span class="chip">{{ c.counts.today }} today</span><span class="chip info">{{ c.counts.in_production }} in production</span>
+      <span class="chip ok">{{ c.counts.review }} review</span><span class="chip">{{ c.counts.published }} published</span>
+      {% if c.counts.failed %}<span class="chip err">{{ c.counts.failed }} failed</span>{% endif %}</div>
+    <div class="small" style="margin-top:8px">YouTube: {% if c.connected %}<b>{{ c.youtube_title or 'connected' }}</b>{% else %}<span class="muted">not connected</span>{% endif %}
+      · {{ 'auto-publish ' ~ c.publish_privacy if c.auto_publish else 'manual approval' }}</div>
+  </a>
+  {% endfor %}
+</div>
+
+<form class="card" style="margin-top:16px" data-form="/api/channels" data-done="Channel created">
+  <h2>Add a channel</h2>
+  <div class="grid g3">
+    <label class="f"><span>Channel name</span><input name="name" required placeholder="e.g. Raat Ki Kahaniyan"></label>
+    <label class="f"><span>Niche</span><input name="niche" placeholder="e.g. Hindi animated horror stories"></label>
+    <label class="f"><span>Sub-niche</span><input name="sub_niche" placeholder="e.g. village folklore, haunted houses"></label>
+    <label class="f"><span>Audience</span><input name="audience" placeholder="e.g. Hindi speakers 16–35"></label>
+    <label class="f"><span>Language</span><select name="language">{% for l in languages %}<option>{{ l }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Tone</span><input name="tone" placeholder="e.g. suspenseful, slow-burn"></label>
+    <label class="f"><span>Workflow</span><select name="workflow">{% for k, l in workflows.items() %}{% if k != 'nifty_daily' %}<option value="{{ k }}">{{ k|replace('_',' ') }} — {{ l }}</option>{% endif %}{% endfor %}</select></label>
+    <label class="f"><span>Formats</span><select name="formats"><option value="both">Long + Shorts</option><option value="long">Long only</option><option value="short">Shorts only</option></select></label>
+    <label class="f"><span>Styles (comma separated)</span><input name="styles" data-type="list" placeholder="{{ styles[:4]|join(', ') }}"></label>
+  </div>
+  <label class="f"><span>Channel instructions (what every video must be like)</span><textarea name="instructions" rows="3"></textarea></label>
+  <button class="primary" type="submit">Create channel</button>
+</form>
+{% endblock %}

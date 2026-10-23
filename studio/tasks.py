@@ -118,6 +118,54 @@ def _daily_plan(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     return {"created": created, "waiting_for_ideas": waiting}
 
 
+@worker.handler("channel_ideas")
+def _channel_ideas(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    """Ideas for one studio channel: story concepts for creative channels, evidence-backed topics for factual ones."""
+    from . import channels, jobs
+    ch = channels.get(int(payload["channel_id"]))
+    if not ch:
+        return {"skipped": "channel deleted"}
+    count = max(3, min(20, int(payload.get("count", 10))))
+    fmts = [f for f in payload.get("formats") or [] if f in ("long", "short")] or channels.formats(ch)
+    creative = ch["workflow"] == "animated_story" or (
+        ch["workflow"] == "auto" and jobs.plan_for(ch["id"], payload.get("focus") or "")["workflow"] == "animated_story")
+    with channels.using(ch["id"]), profile.using_language(ch["language"] or "Hindi"):
+        if creative:
+            from .creative import ideas
+            return ideas.generate(ch["id"], count, fmts, focus=payload.get("focus") or "")
+        return engine.run_ideation({"channel_id": ch["id"], "count": count, "formats": fmts,
+                                    "focus": payload.get("focus")})
+
+
+@worker.handler("channel_daily")
+def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    """A channel's scheduled video: its best saved/approved idea, else a fresh idea, else its own brief."""
+    from . import channels, jobs
+    ch = channels.get(int(payload["channel_id"]))
+    if not ch or ch["status"] != "active":
+        return {"skipped": "channel paused or deleted"}
+    from datetime import datetime
+    day = datetime.now().astimezone().date().isoformat()
+    done = db.q1("SELECT id FROM productions WHERE channel_id=? AND json_extract(request, '$.scheduled_for')=? "
+                 "AND status<>'rejected'", (ch["id"], day))
+    if done:
+        return {"skipped": f"today's video already exists (#{done['id']})"}
+    idea = db.q1("SELECT id FROM topics WHERE channel_id=? AND status IN ('approved','idea') "
+                 "ORDER BY (status='approved') DESC, saved DESC, score DESC, id DESC LIMIT 1", (ch["id"],))
+    if idea:
+        res = jobs.create(ch["id"], "", idea_id=idea["id"], actor="schedule", scheduled_for=day)
+    else:
+        brief = f"A new {', '.join(channels.styles(ch)[:2]) or ''} episode for this channel: {ch['niche']}. " \
+                f"{ch['instructions'] or ''}".strip()
+        res = jobs.create(ch["id"], brief, actor="schedule", scheduled_for=day)
+    # keep the idea list topped up for the coming days
+    if db.q1("SELECT COUNT(*) AS n FROM topics WHERE channel_id=? AND status IN ('approved','idea')",
+             (ch["id"],))["n"] < 4:
+        worker.enqueue("channel_ideas", {"channel_id": ch["id"], "count": 8}, dedupe=True, max_attempts=2)
+    logs.event("info", "planner", f"'{ch['name']}' daily video started: {res.get('production_ids')}")
+    return res
+
+
 @worker.handler("fib_lesson_daily")
 def _fib_lesson_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     """Generate the next lesson of the series (approval still required before any upload)."""

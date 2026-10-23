@@ -18,6 +18,8 @@ from studio import config, db, settings  # noqa: E402
 
 config.ensure_dirs()
 db.migrate()
+from studio import channels as _channels  # noqa: E402
+_channels.ensure_default()
 # never read the owner's real Pivot Reversal files from tests
 settings.set("nifty.pivot_project_dir", tempfile.mkdtemp(prefix="pivot-project-empty-"))
 for f in (ROOT / "data" / "brand" / "fonts").glob("*"):          # OFL fonts for rendering checks
@@ -793,7 +795,8 @@ class UploadBlockTests(unittest.TestCase):
                                           "privacy": "public", "approved_at": db.iso(), "test_mode": 0,
                                           "created_at": db.iso(), "updated_at": db.iso()})
         with mock.patch.object(oauth, "connected", return_value=True), mock.patch.object(upload, "upload") as up, \
-                mock.patch.object(worker, "enqueue") as enq:
+                mock.patch.object(worker, "enqueue") as enq, \
+                mock.patch.object(oauth, "verify_destination", return_value={"id": "UC_test", "title": "Test"}):
             res = pipeline.run_upload({"production_id": short}, {})
             up.assert_not_called()
             self.assertEqual(res, {"waiting_for_parent": parent})
