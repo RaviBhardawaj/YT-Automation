@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>Ideas</h1><div class="muted">Ranked topics with evidence. Scores add up measured signals, estimates and AI judgement — each part is labelled.</div></div>
+  <div class="row" id="gen">
+    <select name="count" data-type="number" style="width:auto"><option value="6">6 ideas</option><option value="10" selected>10 ideas</option><option value="15">15 ideas</option></select>
+    {% for f in formats %}<label class="small"><input type="checkbox" name="fmt_{{ f }}" checked> {{ f }}</label>{% endfor %}
+    <button class="primary" data-post="/api/ideas/generate" data-collect="#gen" data-done="Topic research started" {{ 'disabled' if not niche }}>Research new ideas</button>
+  </div>
+</div>
+{% if not niche %}<div class="note warn">Approve a niche first on the <a href="/niches">Niches</a> page.</div>{% endif %}
+{% if running %}<div class="note" data-autorefresh="15">Topic research is running (collecting evidence, generating and ranking ideas). This page refreshes automatically.</div>{% endif %}
+
+<div class="tabs">
+  {% for k, l in [('open','Open'),('used','In production / produced'),('rejected','Rejected'),('all','All')] %}
+  <a href="/ideas?status={{ k }}" class="{{ 'on' if filter == k }}">{{ l }}</a>{% endfor %}
+</div>
+
+{% for t in topics %}
+<div class="card" style="margin-bottom:12px">
+  <div class="spread">
+    <div style="min-width:0">
+      <div class="row"><span class="score">{{ '%.0f' % t.score }}<small>/100</small></span>
+        <b style="font-size:15px">{{ t.title }}</b> <span class="chip">{{ t.format }}</span>
+        {% if t.status != 'idea' %}<span class="chip info">{{ t.status|replace('_',' ') }}</span>{% endif %}</div>
+      <div class="muted small" style="margin-top:4px"><b>Angle:</b> {{ t.angle }} · <b>Why now:</b> {{ t.why_now }}</div>
+      <div class="small" style="margin-top:2px"><b>Hook idea:</b> {{ t.hook_idea }}</div>
+    </div>
+    <div class="row">
+      {% if t.status in ('idea','approved') %}
+      <button class="primary sm" data-post="/api/topics/{{ t.id }}/produce" data-confirm="Produce this video in Hindi (India audience)?">Produce (Hindi)</button>
+      <button class="sm" data-post="/api/topics/{{ t.id }}/produce_international" data-confirm="Produce this video in English for international viewers?">English (international)</button>
+      {% if t.status == 'idea' %}<button class="sm" data-post="/api/topics/{{ t.id }}/approve" data-done="Approved — the daily plan will pick it first">Approve</button>{% endif %}
+      <button class="sm danger" data-post="/api/topics/{{ t.id }}/reject">Reject</button>
+      {% endif %}
+    </div>
+  </div>
+  <details><summary>Score breakdown, claims & evidence</summary>
+    <div class="grid g2">
+      <table>
+        {% for k, b in t.breakdown.items() %}
+        <tr><td>{{ k|replace('_',' ') }}</td><td><b>{{ b.points }}</b>/{{ b.max }}</td>
+          <td><span class="chip {{ 'ok' if b.kind == 'measured' else 'info' if b.kind == 'estimate' else 'warn' }}">{{ b.kind }}</span> <span class="small muted">{{ b.basis }}</span></td></tr>
+        {% endfor %}
+      </table>
+      <div>
+        {% if t.gap.measured %}
+        <div class="small"><b>Competition sample</b> (YouTube): {{ t.gap.sampled }} videos, median {{ '{:,}'.format(t.gap.median_views) }} views, {{ t.gap.recent_90d }} from last 90 days — <i>{{ t.gap.reading }}</i>.
+          Closest existing title similarity: {{ t.gap.closest_title_similarity }}</div>
+        <ul class="evidence">{% for ex in t.gap.examples %}<li><a href="{{ ex.url }}" target="_blank" rel="noopener">{{ ex.title }}</a> · {{ '{:,}'.format(ex.views) }} views</li>{% endfor %}</ul>
+        {% elif t.gap.note %}<div class="small muted">Competition not measured: {{ t.gap.note }}</div>{% endif %}
+        {% if t.claims %}<b class="small">Claims</b><ul class="small">{% for c in t.claims %}<li><span class="chip {{ 'ok' if c.kind == 'fact' else 'info' if c.kind == 'estimate' else 'warn' }}">{{ c.kind }}</span> {{ c.text }}{% if c.evidence_id %} [{{ c.evidence_id }}]{% endif %}</li>{% endfor %}</ul>{% endif %}
+      </div>
+    </div>
+    <ul class="evidence">{% for e in t.evidence %}<li>[{{ e.id }}] <span class="chip">{{ e.source_type }}</span> <a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.title or e.url }}</a>
+      <span class="muted">{{ e.published_at[:10] if e.published_at else 'date unknown' }}</span>{% if e.metrics.views %} · {{ '{:,}'.format(e.metrics.views) }} views{% endif %}</li>
+      {% else %}<li class="muted">No evidence cited — treat as an untested idea.</li>{% endfor %}</ul>
+  </details>
+</div>
+{% else %}
+<div class="card empty">No ideas here yet.</div>
+{% endfor %}
+
+{% if runs %}
+<div class="card" style="margin-top:16px">
+  <h2>Recent research runs</h2>
+  <table>{% for r in runs %}<tr><td class="muted small">{{ r.created_at|dt }}</td><td>{{ r.subject }}</td><td>{{ r.notes or r.status }}</td>
+    <td class="small">{% for k, v in r.sources.items() %}<span class="chip {{ 'ok' if v is number else '' }}" title="{{ v }}">{{ k }}{% if v is number %}: {{ v }}{% endif %}</span> {% endfor %}</td></tr>{% endfor %}</table>
+</div>
+{% endif %}
+{% endblock %}

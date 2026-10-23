@@ -1,0 +1,13 @@
+# YT Automation Studio — Python 3.12 (Apple Silicon tested)
+fastapi==0.159.1
+uvicorn==0.54.0
+Jinja2==3.1.6
+httpx==0.28.1
+pydantic==2.14.1
+anthropic==2.1.0
+Pillow==13.0.0
+keyring==25.7.0
+feedparser==6.0.14
+piper-tts==1.8.0
+kokoro-onnx==0.6.1
+numpy==2.5.4

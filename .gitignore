@@ -1,0 +1,28 @@
+# Python environments and caches
+.venv/
+.venv-parler/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime data: database, logs, rendered videos, voice models, market data, audit files.
+# Personal and regenerable — never committed. Only the bundled OFL fonts are kept.
+data/*
+!data/brand/
+data/brand/*
+!data/brand/fonts/
+
+# Secrets live in the macOS Keychain; never commit credential files if any appear
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+client_secret*.json
+token.pickle
+*.db
+*.db-shm
+*.db-wal
+
+# macOS
+.DS_Store

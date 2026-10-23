@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>Schedule</h1><div class="muted">Recurring jobs run while the app is open (or always, if you install the background service — see README). Missed runs catch up once when the app starts.</div></div></div>
+<div class="card">
+  <h2>Your cadence</h2>
+  <div class="row">{% for f, c in cadence.items() %}<span class="chip info">{{ c.count }} {{ 'Short' if f == 'short' else 'long-form video' }}{{ 's' if c.count != 1 }} per {{ c.period }}</span>{% endfor %}
+    <a class="small" href="/setup">change in Setup</a></div>
+  <p class="muted small">The daily plan starts productions to keep pace with this cadence, limited by “max productions in progress”. Publishing slots: {{ slots|tojson }}.</p>
+</div>
+<div class="card" style="margin-top:16px">
+  <h2>Jobs</h2>
+  <table>
+    <tr><th>Job</th><th>When</th><th>Next run</th><th>Last run</th><th></th></tr>
+    {% for s in schedules %}
+    <tr id="sch-{{ s.id }}">
+      <td><b>{{ s.name }}</b><div class="muted small mono">{{ s.task_type }}</div></td>
+      <td>{% if s.kind == 'daily' %}<input name="time_of_day" value="{{ s.time_of_day }}" style="width:90px"> daily
+          {% else %}every <input type="number" name="interval_minutes" data-type="number" value="{{ s.interval_minutes }}" style="width:90px"> min{% endif %}
+          <label class="small"><input type="checkbox" name="enabled" {{ 'checked' if s.enabled }}> enabled</label></td>
+      <td class="small">{{ s.next_run_at|dt if s.enabled else '—' }}</td><td class="small muted">{{ s.last_run_at|dt }}</td>
+      <td class="row"><button class="sm" data-post="/api/schedules/{{ s.id }}" data-collect="#sch-{{ s.id }}">Save</button>
+        <button class="sm" data-post="/api/schedules/{{ s.id }}" data-body='{"run_now": true}' data-done="Started">Run now</button></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

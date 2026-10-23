@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf" content="{{ csrf }}">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ static_v }}">
+</head>
+<body>
+<div class="layout">
+  <aside class="side">
+    <div class="brand"><div class="logo">▶</div><div>YT Studio<div class="muted small" style="font-weight:400">{{ brand.channel_name or "Automation" }}</div></div></div>
+    <nav class="nav">
+      <a href="/" class="{{ 'on' if page == 'dashboard' }}">Dashboard</a>
+      <a href="/setup" class="{{ 'on' if page == 'setup' }}">Setup{% if not interview_done %} <span class="badge">!</span>{% endif %}</a>
+      <a href="/niches" class="{{ 'on' if page == 'niches' }}">Niches</a>
+      <a href="/ideas" class="{{ 'on' if page == 'ideas' }}">Ideas</a>
+      <a href="/productions" class="{{ 'on' if page in ('productions', 'production') }}">Videos{% if awaiting %} <span class="badge">{{ awaiting }}</span>{% endif %}</a>
+      <a href="/queue" class="{{ 'on' if page == 'queue' }}">Queue &amp; logs{% if task_counts.get('failed') %} <span class="badge">{{ task_counts.get('failed') }}</span>{% endif %}</a>
+      <a href="/schedule" class="{{ 'on' if page == 'schedule' }}">Schedule</a>
+      <a href="/compliance" class="{{ 'on' if page == 'compliance' }}">Compliance</a>
+      <a href="/analytics" class="{{ 'on' if page == 'analytics' }}">Analytics &amp; costs</a>
+      <a href="/settings" class="{{ 'on' if page == 'settings' }}">Settings</a>
+    </nav>
+    <div class="spend">AI spend this month<br><b style="color:var(--text)">${{ '%.2f' % spend }}</b> of ${{ '%.2f' % budget }} limit
+      <div class="bar {{ 'hot' if spend_pct >= 80 }}"><i style="width:{{ spend_pct }}%"></i></div>
+      <div style="margin-top:8px">{{ task_counts.get('running', 0) }} running · {{ task_counts.get('pending', 0) }} queued</div>
+    </div>
+  </aside>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<script src="/static/app.js?v={{ static_v }}"></script>
+</body>
+</html>

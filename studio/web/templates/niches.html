@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>Niches</h1><div class="muted">Compare niches with measured evidence, then approve one. Production starts only after you approve.</div></div>
+</div>
+{% if running %}<div class="note" data-autorefresh="15">Niche research is running — this page refreshes automatically. Each niche queries several sources and an AI synthesis, so allow a few minutes.</div>{% endif %}
+
+<div class="card">
+  <h2>Run niche research</h2>
+  <p class="muted small">Leave empty to let the AI propose 5 niches for your profile, or list your own candidates (one per line) to compare them. Measured numbers come only from the sources below; the AI interprets them and labels its judgements.</p>
+  <div id="nr"><textarea name="candidates_raw" placeholder="e.g.&#10;Space & astronomy facts&#10;Indian history stories&#10;Personal finance basics"></textarea></div>
+  <div class="row" style="margin-top:10px">
+    <button class="primary" data-post="/api/niches/research" data-collect="#nr" data-done="Niche research started">Start research</button>
+    <span class="muted small">Sources: Google News RSS, Wikipedia + pageviews, Ollama web search, YouTube Data API (if key set), your RSS feeds.</span>
+  </div>
+</div>
+
+{% for n in niches %}
+{% set a = n.assessment %}{% set m = n.metrics %}
+<div class="card" style="margin-top:16px">
+  <div class="spread">
+    <div><h2 style="margin:0">{{ n.name }} {% if n.status == 'approved' %}<span class="chip ok">approved</span>{% elif n.status == 'rejected' %}<span class="chip err">rejected</span>{% else %}<span class="chip">candidate</span>{% endif %}
+      <span class="chip">{{ 'your niche' if n.source == 'user' else 'AI-proposed' }}</span></h2>
+      <div class="muted">{{ n.description }}</div></div>
+    <div class="row">
+      {% if n.status != 'approved' %}<button class="primary" data-post="/api/niches/{{ n.id }}/approve" data-confirm="Approve '{{ n.name }}' as the channel niche? Topic research starts immediately.">Approve niche</button>{% endif %}
+      {% if n.status == 'candidate' %}<button data-post="/api/niches/{{ n.id }}/reject">Reject</button>{% endif %}
+    </div>
+  </div>
+  {% if a.error %}<div class="note err">AI assessment unavailable: {{ a.error }}</div>{% endif %}
+  {% if m %}
+  <div class="grid g4" style="margin-top:14px">
+    <div class="card tight stat"><div class="l">YouTube median views</div><div class="n">{{ '{:,}'.format(m.youtube_median_views) if m.youtube_median_views is not none else '—' }}</div><div class="muted small">{{ m.youtube_sampled }} videos sampled{% if m.youtube_recent_90d is not none %}, {{ m.youtube_recent_90d }} from last 90 days{% endif %}</div></div>
+    <div class="card tight stat"><div class="l">Wikipedia views (30d)</div><div class="n">{{ '{:,}'.format(m.wiki_views_30d) if m.wiki_views_30d else '—' }}</div><div class="muted small">{% if m.wiki_trend_pct is not none %}trend {{ m.wiki_trend_pct }}% vs previous 30d{% else %}no trend data{% endif %}</div></div>
+    <div class="card tight stat"><div class="l">News items (7 days)</div><div class="n">{{ m.news_items_7d if m.news_items_7d is not none else '—' }}</div><div class="muted small">Google News RSS, capped at 100</div></div>
+    <div class="card tight stat"><div class="l">Views per subscriber</div><div class="n">{{ m.youtube_median_views_per_sub if m.youtube_median_views_per_sub is not none else '—' }}</div><div class="muted small">median; &gt;1 suggests videos travel beyond their subscribers</div></div>
+  </div>
+  <div class="small muted" style="margin-top:6px">Measured from source APIs on {{ n.created_at|dt }}. Sources: {% for k, v in m.sources.items() %}<span class="chip {{ 'ok' if v is number else 'warn' }}">{{ k }}: {{ v }}</span> {% endfor %}</div>
+  {% endif %}
+  {% if a and not a.error %}
+  <div class="grid g2" style="margin-top:14px">
+    <div>
+      <h3>AI synthesis <span class="chip warn">interpretation, not data</span></h3>
+      <p>{{ a.summary }}</p>
+      <div class="kv">
+        <div>Demand</div><div>{{ a.demand_reading }}</div>
+        <div>Competition</div><div>{{ a.competition_reading }}</div>
+        <div>Production cost</div><div><span class="chip">{{ a.production_cost }}</span> {{ a.production_cost_reason }}</div>
+        <div>Monetization</div><div><span class="chip">{{ a.monetization_potential }}</span> {{ a.monetization_reason }} <span class="muted small">(hypothesis — no earnings are guaranteed)</span></div>
+        <div>Uncertainty</div><div><span class="chip {{ 'err' if a.uncertainty == 'high' else 'warn' if a.uncertainty == 'medium' else 'ok' }}">{{ a.uncertainty }}</span> {{ a.uncertainty_reason }}</div>
+      </div>
+      {% if a.risks %}<h3>Risks</h3><ul>{% for r in a.risks %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+    </div>
+    <div>
+      <h3>Competitors (measured)</h3>
+      {% if m.competitors %}
+      <table><tr><th>Channel</th><th>Subscribers</th><th>Sampled views</th></tr>
+        {% for c in m.competitors %}<tr><td><a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a></td>
+          <td>{{ '{:,}'.format(c.subscribers) if c.subscribers else 'hidden' }}</td><td>{{ '{:,}'.format(c.sample_views) }} ({{ c.sample_videos }} videos)</td></tr>{% endfor %}
+      </table>
+      {% else %}<div class="muted small">Not measured — add a YouTube Data API key (Settings › Credentials) to compare competing channels.</div>{% endif %}
+      <h3>Example topics</h3>
+      <ul>{% for t in a.example_topics %}<li>{{ t }}</li>{% endfor %}</ul>
+      {% if a.claims %}<h3>Claims</h3>
+      <ul class="small">{% for c in a.claims %}<li><span class="chip {{ 'ok' if c.kind == 'fact' else 'info' if c.kind == 'estimate' else 'warn' }}">{{ c.kind }}</span> {{ c.text }}{% if c.evidence_id %} <span class="muted">[{{ c.evidence_id }}]</span>{% endif %}{% if c.note %} <span class="muted">({{ c.note }})</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% if n.evidence %}
+  <details><summary>Evidence ({{ n.evidence|length }} items, with URLs and dates)</summary>
+    <ul class="evidence">{% for e in n.evidence %}<li>[{{ e.id }}] <span class="chip">{{ e.source_type }}</span> <a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.title or e.url }}</a> <span class="muted">{{ e.published_at[:10] if e.published_at else 'date unknown' }}</span>
+      {% if e.metrics.views %} · {{ '{:,}'.format(e.metrics.views) }} views{% endif %}{% if e.metrics.wiki_views_30d %} · {{ '{:,}'.format(e.metrics.wiki_views_30d) }} pageviews/30d{% endif %}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+</div>
+{% else %}
+<div class="card empty" style="margin-top:16px">No niches yet — start research above{% if answers.get('niche') %}, or approve the niche you entered during setup{% endif %}.</div>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:640px">
+  <h1>{{ title }}</h1>
+  <p>{{ message }}</p>
+  {% if link %}<a class="btn primary" href="{{ link }}">Continue</a>{% endif %}
+</div>
+{% endblock %}

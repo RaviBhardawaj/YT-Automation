@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block content %}
+<div data-watch-production="{{ p.id }}" data-status="{{ p.status }}" data-stage="{{ p.stage }}"></div>
+<div class="head">
+  <div style="min-width:0">
+    <div class="muted small"><a href="/productions">Videos</a> / #{{ p.id }} · {{ p.format }}{% if p.test_mode %} · test mode{% endif %}</div>
+    <h1>{{ pkg.title or p.title or 'Untitled' }}</h1>
+    <div class="row">{% include "_status.html" %}
+      {% if topic %}<span class="muted small">from idea “{{ topic.title }}” (score {{ '%.0f' % topic.score }})</span>{% endif %}</div>
+    <div class="stages">{% for s in stages %}{% set idx = stages.index(p.stage) if p.stage in stages else 0 %}
+      <span class="{{ 'now' if active and s == p.stage else 'done' if loop.index0 < idx or not active and p.qa else '' }}">{{ s }}</span>{% endfor %}</div>
+  </div>
+  <div class="row">
+    {% if p.status not in ('uploading','uploaded') %}
+    <span id="restart-wrap"><select name="stage" style="width:auto">{% for s in stages %}<option value="{{ s }}" {{ 'selected' if s == p.stage }}>{{ s }}</option>{% endfor %}</select></span>
+    <button data-post="/api/productions/{{ p.id }}/retry" data-collect="#restart-wrap" data-confirm="Re-run from the selected stage? Later stages will be redone.">Re-run from stage</button>
+    {% endif %}
+    {% if p.status not in ('uploaded','uploading','rejected') %}<button class="danger" data-post="/api/productions/{{ p.id }}/reject" data-confirm="Reject this video?">Reject</button>{% endif %}
+  </div>
+</div>
+
+{% if p.error %}<div class="note {{ 'warn' if p.status in ('needs_attention','paused_budget','approved','awaiting_approval') else 'err' }}">{{ p.error }}</div>{% endif %}
+{% if active %}<div class="note">Working on it: <b>{{ p.status }}</b>. This page updates automatically.</div>{% endif %}
+
+{% if p.kind in ('nifty_pivot', 'fib_lesson', 'nifty_short') and gate.checks %}
+{% if p.kind == 'fib_lesson' and facts %}<div class="note small">Lesson {{ facts.lesson_no }}/7 of “Learn Fibonacci Pivots” · {{ p.language }} · all figures are a hypothetical teaching example (no market data).</div>{% endif %}
+<div class="card" style="margin-bottom:16px">
+  <div class="spread"><h2>Compliance gate</h2>
+    <span class="chip {{ 'err' if gate.status == 'NEEDS_REVIEW' else 'warn' if gate.status != 'CLEARED' else 'ok' }}">{{ gate.status|replace('_',' ') }}</span></div>
+  <div class="small muted">Checked {{ gate.checked_at|dt }} · allowed uploads: {{ gate.allowed_privacy|join(', ') or 'none' }} · {{ gate.note }}</div>
+  <table style="margin-top:8px">{% for c in gate.checks %}<tr>
+    <td>{% if c.ok %}<span class="chip ok">pass</span>{% elif c.severity == 'critical' %}<span class="chip err">FAIL</span>{% else %}<span class="chip warn">review</span>{% endif %}</td>
+    <td>{{ c.no }}. {{ c.name }}<div class="muted small">{{ c.severity }}</div></td><td class="small">{{ c.detail }}</td></tr>{% endfor %}</table>
+</div>
+{% endif %}
+{% if p.kind == 'nifty_short' and parent %}
+<div class="note small">Short cut from episode <a href="/productions/{{ parent.id }}">#{{ parent.id }} — {{ parent.title }}</a>{% set seg = (p.episode or {}).get('segment') %}{% if seg %} · segment “{{ seg.purpose|replace('_',' ') }}” {% if seg.start is not none %}at {{ '%d:%02d'|format(seg.start//60, seg.start%60) }}–{{ '%d:%02d'|format(seg.end//60, seg.end%60) }} of the full video (scenes {{ seg.scenes|join(', ') }}){% else %}written from the episode's verified fact sheet{% endif %}{% endif %}{% if parent.youtube_video_id %} · full episode: <a href="https://youtu.be/{{ parent.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ parent.youtube_video_id }}</a>{% else %} · the description will link the full episode once it is uploaded{% endif %}.</div>
+{% endif %}
+{% if p.kind == 'nifty_pivot' and p.format == 'long' %}
+<div class="card" style="margin-bottom:16px">
+  <div class="spread"><h2>Shorts from this episode</h2>
+    <div class="row"><a class="btn" href="/api/productions/{{ p.id }}/shorts/manifest" target="_blank">Shorts manifest (JSON)</a>
+      {% if p.status in ('awaiting_approval','approved','uploading','uploaded') %}<button data-post="/api/productions/{{ p.id }}/shorts" data-confirm="Cut Shorts from this episode's verified segments now?">Make Shorts</button>{% endif %}</div></div>
+  <p class="muted small">Made automatically once the long video passes its own compliance gate: whole scenes only, re-laid out for 9:16, up to {{ s_shorts_max }} per episode — fewer when fewer self-contained segments exist. Each Short has its own gate, approval and upload record.</p>
+  <table><tr><th>Short</th><th>Segment</th><th>Status</th><th>Gate</th><th>YouTube</th></tr>
+  {% for sh in shorts %}{% set seg = sh.segment|loads({}) %}{% set g = sh.compliance|loads({}) %}<tr>
+    <td><a href="/productions/{{ sh.id }}">#{{ sh.id }} {{ sh.title }}</a></td>
+    <td class="small">{{ seg.purpose|replace('_',' ') }} · {% if seg.start is not none %}{{ '%d:%02d'|format(seg.start//60, seg.start%60) }}–{{ '%d:%02d'|format(seg.end//60, seg.end%60) }}{% else %}from the fact sheet{% endif %}</td>
+    <td>{% with p = sh %}{% include "_status.html" %}{% endwith %}</td>
+    <td>{% if g.status %}<span class="chip {{ 'err' if g.status == 'NEEDS_REVIEW' else 'warn' if g.status != 'CLEARED' else 'ok' }}">{{ g.status|replace('_',' ') }}</span>{% else %}<span class="muted small">not yet</span>{% endif %}</td>
+    <td>{% if sh.youtube_video_id %}<a href="https://youtu.be/{{ sh.youtube_video_id }}" target="_blank" rel="noopener">{{ sh.youtube_video_id }}</a>{% else %}<span class="muted small">—</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted small">No Shorts yet — they are created after this episode's compliance stage.</td></tr>{% endfor %}</table>
+</div>
+{% endif %}
+{% if p.kind in ('nifty_pivot', 'nifty_short') and facts and facts.basis is defined %}
+<div class="grid g2" style="margin-bottom:16px">
+  <div class="card"><h2>Verified data</h2>
+    <div class="kv">
+      <div>Mode</div><div>{{ facts.mode|replace('_',' ') }}</div>
+      <div>Basis session</div><div>{{ facts.basis_label }} — O {{ '{:,.2f}'.format(facts.basis.open) if facts.basis.open is not none else 'n/a' }} · H {{ '{:,.2f}'.format(facts.basis.high) }} · L {{ '{:,.2f}'.format(facts.basis.low) }} · C {{ '{:,.2f}'.format(facts.basis.close) }}</div>
+      {% if facts.review %}<div>Following session</div><div>{{ facts.review_label }} — O {{ '{:,.2f}'.format(facts.review.open) if facts.review.open is not none else 'n/a' }} · H {{ '{:,.2f}'.format(facts.review.high) }} · L {{ '{:,.2f}'.format(facts.review.low) }} · C {{ '{:,.2f}'.format(facts.review.close) }}</div>{% endif %}
+      <div>Dataset</div><div><a href="/compliance?dataset={{ facts.dataset_id }}">#{{ facts.dataset_id }}</a> · {{ facts.data_nature|replace('_','-') }} · retrieved {{ facts.retrieved_label }}<div class="mono muted">sha256 {{ facts.dataset_sha256[:24] }}…</div></div>
+      <div>Levels</div><div>{% for k in facts.pivots.order %}<span class="chip {{ 'warn' if k in ('S2','R2') }}">{{ k }} {{ '{:,.2f}'.format(facts.pivots.levels[k]) }}</span> {% endfor %}</div>
+      <div>Formula</div><div class="small">{{ facts.pivots.formula }}</div>
+      {% if facts.intraday %}<div>Intraday</div><div>{% for tf in facts.intraday.timeframes %}<span class="chip">{{ tf }} · dataset #{{ facts.intraday.dataset_ids[tf] }} · {{ facts.intraday.bars[tf]|length }} bars</span> {% endfor %}
+        {% if facts.intraday.analysis.m15 %}<div class="small">15m S2: {{ facts.intraday.analysis.m15.levels.S2.state|replace('_',' ') }} · P: {{ facts.intraday.analysis.m15.levels.P.state|replace('_',' ') }} · R2: {{ facts.intraday.analysis.m15.levels.R2.state|replace('_',' ') }}</div>{% endif %}</div>{% endif %}
+      {% if facts.mtf %}<div>15-Min / 1-Hour levels</div><div>{% for tf, m in facts.mtf.items() %}<div class="small">{{ tf }} (last {{ m.bars }} bars): {% for k in ('S2','P','R2') %}<span class="chip">{{ k }} {{ '{:,.2f}'.format(m.levels[k]) }}</span> {% endfor %}</div>{% endfor %}</div>{% endif %}
+    </div>
+    <h3>Observations</h3><ul class="small">{% for o in facts.observations %}<li><span class="mono muted">[{{ o.id }}]</span> {{ o.text }}</li>{% endfor %}</ul>
+    <h3>Limitations</h3><ul class="small">{% for x in facts.limitations %}<li>{{ x }}</li>{% endfor %}</ul>
+  </div>
+  <div class="card"><h2>Audit trail for this episode</h2>
+    <div class="events">{% for a in fin_audit %}<div><span class="muted">{{ a.created_at|dt }}</span> · <b>{{ a.event }}</b> · {{ a.actor }} <span class="mono muted">{{ (a.details|tojson)[:160] }}</span></div>{% else %}<div class="muted">No entries.</div>{% endfor %}</div>
+  </div>
+</div>
+{% endif %}
+
+{% if p.video_path %}
+<div class="card">
+  <div class="video-wrap">
+    <video controls preload="metadata" src="{{ media_url(p.video_path) }}" {% if p.format == 'short' %}style="width:315px"{% else %}style="width:640px"{% endif %}></video>
+    <div style="flex:1; min-width:280px">
+      {% if p.thumbnail_path %}<img class="thumb" src="{{ media_url(p.thumbnail_path) }}" alt="thumbnail preview">
+      {% if tl.thumbnail %}<div class="muted small">Thumbnail 1280×720 · contrast {{ tl.thumbnail.contrast }}:1 · {{ '%.2f' % (tl.thumbnail.size_bytes / 1e6) }} MB</div>{% endif %}{% endif %}
+      {% if tl.total_duration %}<div class="kv" style="margin-top:12px">
+        <div>Duration</div><div>{{ '%.1f' % tl.total_duration }} s</div>
+        <div>Voice</div><div>{{ tl.voice.engine }} · {{ tl.voice.voice_id }} <span class="muted small">({{ tl.voice.license }})</span>
+          {% if tl.voice.commercial is sameas false %}<span class="chip err">non-commercial</span>{% endif %}</div>
+        <div>Scenes</div><div>{{ pkg.scenes|length }}</div>
+        {% if p.srt_path %}<div>Subtitles</div><div><a href="{{ media_url(p.srt_path) }}" download>captions.srt</a></div>{% endif %}
+        <div>Generated by</div><div class="small">{{ pkg.generated_by.provider if pkg.generated_by else 'built-in sample' }} {{ pkg.generated_by.model if pkg.generated_by else '' }}</div>
+      </div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if p.qa.checks %}
+<div class="grid g2" style="margin-top:16px">
+  <div class="card">
+    <div class="spread"><h2>Quality checks</h2>{% if p.qa.passed %}<span class="chip ok">passed</span>{% else %}<span class="chip err">failed</span>{% endif %}</div>
+    <table>{% for c in p.qa.checks %}<tr><td>{% if c.ok %}<span class="chip ok">✓</span>{% elif c.severity == 'fail' %}<span class="chip err">✗</span>{% elif c.severity == 'warn' %}<span class="chip warn">!</span>{% else %}<span class="chip">i</span>{% endif %}</td>
+      <td>{{ c.name }}</td><td class="small muted">{{ c.detail }}</td></tr>{% endfor %}</table>
+    {% if p.qa.passed and not p.qa.auto_publish_ok %}<div class="note warn small">Warnings above need a human look — this video is never auto-published.</div>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Publish</h2>
+    {% if p.status == 'awaiting_approval' %}
+      {% if not connected %}<div class="note warn">Connect your YouTube channel in <a href="/settings?tab=youtube">Settings › YouTube</a> first.</div>{% endif %}
+      <div id="approve-form">
+        <label class="f"><span>Visibility</span><select name="privacy">
+          <option value="private" {{ 'disabled' if p.kind in ('nifty_pivot', 'fib_lesson', 'nifty_short') and 'private' not in gate.allowed_privacy|default([]) }}>Private (you publish later in YouTube Studio)</option>
+          {% for v, label in [('scheduled','Scheduled public release'),('unlisted','Unlisted'),('public','Public now')] %}
+          {% set blocked_by_gate = p.kind in ('nifty_pivot', 'fib_lesson', 'nifty_short') and v not in gate.allowed_privacy|default([]) %}
+          {% set nc_voice = (p.timeline or {}).get('voice', {}).get('commercial') is sameas false %}
+          <option value="{{ v }}" {{ 'disabled' if not audit or blocked_by_gate or nc_voice }}>{{ label }}{{ ' — non-commercial voice: private only' if nc_voice else (' — blocked by compliance gate' if blocked_by_gate else (' — needs audited API project' if not audit else '')) }}</option>
+          {% endfor %}
+        </select></label>
+        <label class="f"><span>Release time (for scheduled, your local time)</span><input type="datetime-local" name="publish_at_local"
+          value="{{ pkg.publish_suggestion.local_input if pkg.publish_suggestion else '' }}"></label>
+        <div class="muted small">Suggested: {{ pkg.publish_suggestion.local if pkg.publish_suggestion else '—' }} — {{ pkg.publish_suggestion.basis if pkg.publish_suggestion else '' }}</div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="primary" data-post="/api/productions/{{ p.id }}/approve" data-collect="#approve-form" {{ 'disabled' if not connected }}
+          data-confirm="Upload this video to your YouTube channel with the selected visibility?">Approve &amp; upload</button>
+      </div>
+      {% if not audit %}<div class="note small">YouTube locks videos uploaded through unaudited API projects as private. Once Google approves your project's audit, tick “audit passed” in Settings › YouTube to unlock public and scheduled uploads.</div>{% endif %}
+    {% elif p.status in ('approved','uploading') %}<div class="note">Approved — upload {{ 'in progress' if p.status == 'uploading' else 'queued' }}.</div>
+      {% if p.status == 'approved' %}<button data-post="/api/productions/{{ p.id }}/retry" data-done="Upload re-queued">Retry upload</button>{% endif %}
+    {% elif p.status == 'uploaded' %}<div class="note ok">Uploaded: <a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a> · visibility requested: {{ p.privacy }}{% if p.publish_at %} at {{ p.publish_at|dt }}{% endif %}</div>
+    {% elif p.status == 'test_passed' %}<div class="note ok">Self-test passed. Test videos are never uploaded.</div>
+    {% else %}<div class="muted">Available after all checks pass.</div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if pkg.scenes %}
+<div class="grid g2" style="margin-top:16px">
+  <div class="card">
+    <h2>Metadata</h2>
+    <form data-form="/api/productions/{{ p.id }}/metadata" data-done="Metadata saved">
+      <label class="f"><span>Title ({{ pkg.title|length }}/100)</span><input name="title" value="{{ pkg.title }}" maxlength="100"></label>
+      <label class="f"><span>Tags (comma-separated)</span><input name="tags" value="{{ pkg.tags|join(', ') }}"></label>
+      <label class="f"><span>Description (as uploaded — includes chapters, sources, credits)</span><textarea name="final_description" rows="12">{{ pkg.final_description or pkg.description }}</textarea></label>
+      {% if p.status not in ('uploading','uploaded') %}<button type="submit">Save metadata</button>{% endif %}
+    </form>
+    {% if pkg.thumbnail %}<h3>Thumbnail plan</h3><div class="small"><b>{{ pkg.thumbnail.text }}</b>{% if pkg.thumbnail.concept %} — {{ pkg.thumbnail.concept }}{% endif %}</div>{% endif %}
+    {% if pkg.chapters %}<h3>Chapters</h3><ol class="small">{% for c in pkg.chapters %}<li>{{ c.title }} {% if tl.chapter_times %}<span class="muted">({{ tl.chapter_times[loop.index0] }}s)</span>{% endif %}</li>{% endfor %}</ol>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Fact-checking & review</h2>
+    {% if pkg.originality %}<div class="small">Originality: {{ '%.1f' % (pkg.originality.copied_7gram_ratio * 100) }}% of 7-word phrases match research sources ·
+      closest competitor title similarity {{ pkg.originality.closest_competitor_title_similarity }}
+      {% if pkg.originality.ok %}<span class="chip ok">ok</span>{% else %}<span class="chip warn">review</span>{% endif %}</div>{% endif %}
+    <table class="small" style="margin-top:8px">{% for f in pkg.fact_checks %}<tr><td><span class="chip {{ 'ok' if f.status == 'supported' else 'info' if f.status == 'general_knowledge' else 'warn' }}">{{ f.status|replace('_',' ') }}</span></td>
+      <td>{{ f.claim }}{% if f.evidence_id and f.evidence_id in ev_by_id %}<br><a href="{{ ev_by_id[f.evidence_id].url }}" target="_blank" rel="noopener" class="muted">[{{ f.evidence_id }}] {{ ev_by_id[f.evidence_id].title[:80] }}</a>{% endif %}
+      {% if f.note %}<div class="muted">{{ f.note }}</div>{% endif %}</td></tr>{% endfor %}</table>
+    {% if pkg.review %}<h3>Editor review</h3>
+      <div class="small">{{ pkg.review.overall }}</div>
+      <ul class="small">{% for i in pkg.review.issues %}<li><span class="chip {{ 'err' if i.severity == 'high' else 'warn' if i.severity == 'medium' else '' }}">{{ i.severity }}</span>
+        <b>{{ i.category }}</b>{% if i.scene %} (scene {{ i.scene }}){% endif %}: {{ i.detail }} <span class="muted">→ {{ i.suggestion }}</span></li>{% else %}<li class="muted">No issues raised.</li>{% endfor %}</ul>{% endif %}
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="spread"><h2>Storyboard ({{ pkg.scenes|length }} scenes)</h2><span class="muted small">Hook: {{ pkg.hook }}</span></div>
+  {% set amap = {} %}{% for a in assets %}{% set _ = amap.update({a.scene_index: a}) %}{% endfor %}
+  {% for s in pkg.scenes %}{% set a = amap.get(loop.index0) %}
+  <div class="scene {{ 'long' if p.format == 'long' }}">
+    <div>{% if a and a.kind == 'image' %}<img src="{{ media_url(a.local_path) }}" alt="">{% elif a %}<video src="{{ media_url(a.local_path) }}" muted preload="none" style="width:90px;border-radius:6px"></video>{% else %}<img alt="">{% endif %}</div>
+    <div>
+      <div class="small muted">Scene {{ loop.index }} · {{ s.visual_type }}{% if tl.scenes and tl.scenes[loop.index0] %} · {{ '%.1f' % tl.scenes[loop.index0].duration }}s{% endif %}{% if s.on_screen_text %} · overlay “{{ s.on_screen_text }}”{% endif %}</div>
+      <div>{{ s.narration }}</div>
+      {% if s.caption_text and s.caption_text != s.narration %}<div class="small muted">Captions: {{ s.caption_text }}</div>{% endif %}
+      <div class="small muted">Visual: {{ s.visual_description }} <span class="mono">[{{ s.visual_query }}]</span></div>
+      {% if a %}<div class="small">{% if a.provider == 'procedural' %}<span class="chip">original art</span>{% else %}<span class="chip ok">{{ a.provider }}</span>{% endif %}
+        {{ a.license }}{% if a.page_url %} · <a href="{{ a.page_url }}" target="_blank" rel="noopener">source</a>{% endif %}{% if a.attribution %} · <span class="muted">{{ a.attribution }}</span>{% endif %}</div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="grid g2" style="margin-top:16px">
+  {% if evidence %}<div class="card"><h2>Research sources</h2>
+    <ul class="evidence">{% for e in evidence %}<li>[{{ e.id }}] <span class="chip">{{ e.source_type }}</span> <a href="{{ e.url }}" target="_blank" rel="noopener">{{ e.title or e.url }}</a> <span class="muted">{{ e.published_at[:10] if e.published_at else 'date unknown' }}</span></li>{% endfor %}</ul></div>{% endif %}
+  <div class="card"><h2>Activity</h2>
+    <div class="events">{% for e in events %}<div class="lvl-{{ e.level }}"><span class="muted">{{ e.created_at|dt }}</span> · {{ e.message }}</div>{% else %}<div class="muted">No events yet.</div>{% endfor %}</div>
+    {% if tasks %}<h3>Tasks</h3><table class="small">{% for t in tasks %}<tr><td>#{{ t.id }} {{ t.type }}</td><td>{{ t.status }}</td><td>{{ t.attempts }}/{{ t.max_attempts }}</td><td class="muted">{{ (t.last_error or '')[:160] }}</td></tr>{% endfor %}</table>{% endif %}
+  </div>
+</div>
+{% endblock %}

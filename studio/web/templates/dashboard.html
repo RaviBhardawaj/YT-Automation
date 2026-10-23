@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>Dashboard</h1><div class="muted small">{{ profile_text }}</div></div>
+  <div class="row">
+    <a class="btn" href="/ideas">Ideas</a>
+    <button class="primary" data-post="/api/schedules/{{ (schedules|selectattr('task_type','equalto','daily_plan')|first).id }}" data-body='{"run_now":true}' data-done="Daily plan started">Run today's plan now</button>
+  </div>
+</div>
+
+{% if not niche %}
+<div class="note warn">No approved niche yet. <a href="/niches">Research or approve a niche</a> before production can start.</div>
+{% endif %}
+{% if awaiting %}
+<div class="note ok"><b>{{ awaiting }}</b> video(s) are rendered, checked and waiting for your approval. <a href="/productions">Review them</a>.</div>
+{% endif %}
+
+<div class="grid g3">
+  <div class="card" style="grid-column: span 2">
+    <div class="spread"><h2>Recent videos</h2><a href="/productions" class="small">All videos</a></div>
+    {% if productions %}
+    <table>
+      <tr><th>#</th><th>Title</th><th>Format</th><th>Status</th><th>Updated</th></tr>
+      {% for p in productions %}
+      <tr><td>{{ p.id }}</td><td><a href="/productions/{{ p.id }}">{{ p.title or 'Untitled' }}</a>{% if p.test_mode %} <span class="chip">test</span>{% endif %}</td>
+        <td>{{ p.format }}</td><td>{% include "_status.html" %}</td><td class="muted small">{{ p.updated_at|dt }}</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}<div class="empty">No videos yet. Approve a niche and generate ideas, or run the self-test from Setup.</div>{% endif %}
+  </div>
+  <div class="card" id="live"><div class="muted">Loading live status…</div></div>
+</div>
+
+<div class="grid g3" style="margin-top:16px">
+  <div class="card">
+    <h2>Niche</h2>
+    {% if niche %}<b>{{ niche.name }}</b><div class="muted small">{{ niche.description }}</div>
+    {% else %}<div class="muted">Not chosen yet.</div>{% endif %}
+    <h3>Top ideas</h3>
+    {% for t in ideas %}<div class="spread small" style="margin-bottom:4px"><span>{{ t.title }} <span class="chip">{{ t.format }}</span></span><b>{{ '%.0f' % t.score }}</b></div>
+    {% else %}<div class="muted small">No ideas yet.</div>{% endfor %}
+  </div>
+  <div class="card">
+    <h2>AI providers</h2>
+    {% for pr in providers %}
+    <div class="spread small" style="margin-bottom:6px"><span>{{ pr.label }}<br><span class="muted mono">{{ pr.model }}</span></span>
+      {% if pr.ok %}<span class="chip ok">ready</span>{% else %}<span class="chip" title="{{ pr.detail }}">{{ pr.detail[:28] }}</span>{% endif %}</div>
+    {% endfor %}
+    <a class="btn sm" href="/settings?tab=ai">Configure</a>
+  </div>
+  <div class="card">
+    <h2>Automation</h2>
+    {% for s in schedules %}
+    <div class="spread small" style="margin-bottom:6px"><span>{{ s.name }}</span>
+      <span class="muted">{{ 'next ' ~ (s.next_run_at|dt) if s.enabled else 'off' }}</span></div>
+    {% endfor %}
+    <a class="btn sm" href="/schedule">Edit schedule</a>
+  </div>
+</div>
+{% endblock %}

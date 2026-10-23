@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>Compliance</h1>
+    <div class="muted">NIFTY 50 Fibonacci pivot episodes: rules, data provenance, review decisions and the audit trail.
+      These are guard rails that reduce preventable risk — they are not legal advice and do not establish compliance.</div></div>
+</div>
+
+{% set ov = s['compliance.owner_override'] %}
+{% if ov and ov.active %}
+<div class="note warn">
+  <b>Owner override active</b> since {{ ov.accepted_at|dt }} — daily videos and Shorts may publish publicly while review items stay open.
+  Statement: “{{ ov.statement }}”. Critical checks (wrong or unverified numbers, old data, recommendation or forecast language,
+  missing disclosure, synthetic data) still block every upload. Don’t enable monetization while the Pratham voice (non-commercial licence) is used.
+  <div style="margin-top:8px"><button class="danger" data-post="/api/compliance/override" data-body='{"action":"revoke"}' data-confirm="Revoke the override and stop unattended public publishing?">Revoke override</button></div>
+</div>
+{% endif %}
+{% set blocking = rules|selectattr('blocking')|list %}
+<div class="note {{ 'warn' if blocking else 'ok' }}">
+  {% if blocking and ov and ov.active %}<b>{{ blocking|length }} item(s) still need a qualified reviewer's decision</b> — public release goes ahead under your override:
+    {% for r in blocking %}<span class="chip warn">{{ r.id }}</span> {% endfor %}
+  {% elif blocking %}<b>Public publication is blocked.</b> {{ blocking|length }} critical item(s) need a recorded decision by a qualified reviewer:
+    {% for r in blocking %}<span class="chip warn">{{ r.id }}</span> {% endfor %}
+    Private uploads for your own manual review remain possible once an episode passes every critical check.
+  {% else %}No critical rule is unresolved. Public release still also requires the switch below and a clean gate on each episode.{% endif %}
+</div>
+
+<div class="card">
+  <h2>Publishing switches</h2>
+  <form data-form="/api/settings" data-done="Saved (recorded in the audit log)">
+    <label><input type="checkbox" name="compliance.auto_private_upload" {{ 'checked' if s['compliance.auto_private_upload'] }}>
+      Upload automatically as <b>PRIVATE</b> once a video passes the gate (needs YouTube connected) — you publish from YouTube Studio</label><br>
+    <label><input type="checkbox" name="compliance.public_publishing_enabled" {{ 'checked' if s['compliance.public_publishing_enabled'] }}>
+      Allow public / unlisted / scheduled release of episodes that pass every check — only after the channel's regulatory position and data licence have been reviewed</label><br>
+    <label><input type="checkbox" name="compliance.unattended_publishing" {{ 'checked' if s['compliance.unattended_publishing'] }}>
+      Allow unattended (automatic) publishing of fully cleared episodes — leave off until the gate has been tested on several episodes</label><br>
+    <label><input type="checkbox" name="compliance.finance_lint_all" {{ 'checked' if s['compliance.finance_lint_all'] }}>
+      Apply the financial-recommendation language check to every video, not only NIFTY episodes</label>
+    <div style="margin-top:10px"><button type="submit">Save switches</button></div>
+  </form>
+</div>
+
+<div class="grid g2" style="margin-top:16px">
+  <div class="card"><h2>Trading session &amp; data freshness</h2>
+    <div class="kv">
+      <div>Daily episode is about</div><div><b>{{ session.basis_session }}</b> session → levels for <b>{{ session.next_session }}</b></div>
+      <div>Today</div><div>{{ 'NSE trading day' if session.today_is_trading_day else 'market closed — ' ~ session.today_closed_reason }}</div>
+      <div>Holiday calendar</div><div class="small">{% if session.calendar_verified %}{% for src in session.sources %}<a href="{{ src.url }}" target="_blank" rel="noopener">{{ src.ref }}</a> (checked {{ src.checked }})<br>{% endfor %}{% else %}<span class="chip warn">not verified for this year</span> — weekdays only; add NSE's holiday circular{% endif %}</div>
+      <div>Next holidays</div><div class="small">{% for d, n in upcoming %}{{ d }} {{ n }}{{ '; ' if not loop.last }}{% else %}—{% endfor %}</div>
+    </div>
+    <table style="margin-top:8px"><tr><th>Data</th><th>Latest dataset</th><th>Covers {{ session.basis_session }}?</th></tr>
+      {% for f in freshness %}<tr><td>{{ f.tf }}</td><td class="small">{% if f.ds %}#{{ f.ds.id }} · up to {{ f.ds.last_date[:10] }} · {{ f.ds.source_name }} <span class="chip {{ 'ok' if f.ds.source_status == 'PERMITTED' else 'err' if f.ds.source_status == 'PROHIBITED' else 'warn' }}">{{ f.ds.source_status|replace('_',' ') }}</span>{% else %}<span class="muted">none imported</span>{% endif %}</td>
+        <td>{% if f.covers %}<span class="chip ok">yes</span>{% else %}<span class="chip warn">no</span>{% endif %}</td></tr>{% endfor %}</table>
+    <p class="muted small">No market data is fetched automatically: NSE / NSE Indices terms forbid automated collection and republication, and broker APIs (Angel One, Dhan) and Yahoo's chart endpoint are for personal use. Import each session's file under “Import market data”.</p>
+  </div>
+  <div class="card"><h2>Daily episode &amp; Shorts</h2>
+    <form data-form="/api/settings" data-done="Saved">
+      <label><input type="checkbox" name="nifty.daily_episode" {{ 'checked' if s['nifty.daily_episode'] }}>
+        3:40 PM on NSE trading days: today's review + reference levels for the next session — made only from today's verified data (imported after 15:30; re-checked every 10 minutes until it arrives)</label><br>
+      <label><input type="checkbox" name="nifty.require_intraday" {{ 'checked' if s['nifty.require_intraday'] }}>
+        Wait for today's complete 15-minute and 1-hour bars (until 22:00) before making it</label><br>
+      <label class="f" style="margin-top:8px"><span>Daily episode language</span><select name="nifty.daily_audience">{% for k, v in audiences.items() %}<option value="{{ k }}" {{ 'selected' if s['nifty.daily_audience'] == k }}>{{ v }}</option>{% endfor %}</select></label>
+      <label><input type="checkbox" name="shorts.enabled" {{ 'checked' if s['shorts.enabled'] }}>
+        Cut Shorts from every long episode that passes its compliance gate</label><br>
+      <label class="f"><span>Most Shorts per episode (fewer are made when fewer good segments exist)</span><input type="number" min="0" max="6" name="shorts.per_episode" value="{{ s['shorts.per_episode'] }}" data-type="number"></label>
+      <div style="margin-top:10px"><button type="submit">Save</button></div>
+    </form>
+    {% if daily_sched %}<p class="small muted">Schedule: {{ 'on' if daily_sched.enabled else 'off' }} · next check {{ daily_sched.next_run_at|dt }} · <a href="/schedule">change</a></p>{% endif %}
+    <p class="muted small">Daily-levels episodes stay private until LEGAL-DAILY-LEVELS and the data licence are resolved. Historical case studies (data ≥ {{ lag_days }} days old) can be made any time from “Create an episode”.</p>
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="spread"><h2>Lesson series — “फिबोनाची पिवट सीखें” (7 parts)</h2>
+    {% if lesson_sched %}<span class="chip {{ 'ok' if lesson_sched.enabled else '' }}">{{ 'daily at ' ~ lesson_sched.time_of_day ~ ' · next ' ~ (lesson_sched.next_run_at|dt) if lesson_sched.enabled else 'schedule off' }}</span>{% endif %}</div>
+  <p class="muted small">One lesson is generated automatically every day at 4 PM in Hindi, with no market data — only a labelled hypothetical example. Each lesson waits for your approval; nothing is published automatically. The schedule switches itself off after part 7.</p>
+  <table><tr><th>Part</th><th>Lesson</th><th>Videos</th></tr>
+    {% for l in lessons %}<tr><td>{{ l.n }}/7</td><td>{{ l.title.hi }}<div class="muted small">{{ l.title.en }}</div></td>
+      <td>{% for v in lessons_made.get(l.n, []) %}<a href="/productions/{{ v.id }}">#{{ v.id }}</a> <span class="chip">{{ v.audience }} · {{ v.status|replace('_',' ') }}</span> {% else %}<span class="muted small">not yet</span>{% endfor %}</td></tr>{% endfor %}
+  </table>
+  <div class="row" style="margin-top:10px">
+    <button data-post="/api/lessons/next" data-body='{"audience":"india"}' data-confirm="Generate the next Hindi lesson now (instead of waiting for 4 PM)?">Generate next lesson now (Hindi)</button>
+    <button data-post="/api/lessons/next" data-body='{"audience":"international"}' data-confirm="Generate the next lesson in English for international viewers?">English version for international viewers</button>
+    {% if lesson_sched %}<a class="btn" href="/schedule">Change time</a>{% endif %}
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Create an episode</h2>
+  {% if not datasets %}<div class="muted">Import a dataset first (below).</div>{% else %}
+  <div class="grid g4" id="ep-form">
+    <label class="f"><span>Dataset</span><select name="dataset_id" onchange="location.href='/compliance?dataset='+this.value">
+      {% for d in datasets %}<option value="{{ d.id }}" {{ 'selected' if chosen and d.id == chosen.id }}>#{{ d.id }} · {{ d.timeframe }} · {{ d.first_date }} → {{ d.last_date }} · {{ d.status }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Basis session (pivots are computed from this day)</span><select name="basis_date">
+      {% for dt in dates|reverse %}<option value="{{ dt }}">{{ dt }}{{ '  (≥ ' ~ lag_days ~ ' days old)' if dt <= lag_cutoff }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Mode</span><select name="mode">{% for k, v in modes.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Format</span><select name="format"><option value="long">Long-form 16:9</option><option value="short">Short 9:16</option></select></label>
+    <label class="f"><span>Audience / language</span><select name="audience">{% for k, v in audiences.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+  </div>
+  <div class="note small">Historical case studies use sessions at least {{ lag_days }} days old (SEBI circular of 8 May 2026 on price data in education) and review what happened next. Daily-levels mode uses the most recent session and is never released publicly until LEGAL-DAILY-LEVELS is resolved.</div>
+  <button class="primary" data-post="/api/episodes" data-collect="#ep-form" data-confirm="Create this episode? Narration is written by your configured AI provider and checked before rendering.">Create episode</button>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Import market data</h2>
+  <p class="muted small">This app never downloads NSE or NSE Indices data automatically: both sites' terms prohibit automated collection and republication without permission.
+    Download the official historical CSV yourself (e.g. niftyindices.com → Reports → Historical Data → NIFTY 50) or export it from a licensed vendor, then import it here. Every import records who, when, from where, and stores an immutable copy with its SHA-256.</p>
+  <form data-import class="grid g3">
+    <label class="f"><span>CSV file</span><input type="file" name="file" accept=".csv,text/csv" required></label>
+    <label class="f"><span>Source</span><select name="source_id">{% for s in sources if s.kind != 'test_fixture' %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Retrieved at (your local time)</span><input type="datetime-local" name="retrieved_at_local" required></label>
+    <label class="f"><span>Timeframe</span><select name="timeframe"><option value="1d">Daily (1d)</option><option value="1h">1 hour</option><option value="15m">15 minutes</option></select></label>
+    <label class="f"><span>Data nature</span><select name="data_nature"><option value="end_of_day">End-of-day</option><option value="delayed">Delayed</option><option value="intraday">Intraday (verified)</option></select></label>
+    <label class="f"><span>Retrieved by</span><input name="retrieved_by" placeholder="your name" required></label>
+    <label class="f" style="grid-column: span 3"><span>Notes (page used, any filters)</span><input name="notes" placeholder="niftyindices.com historical data, NIFTY 50, 01-Jun-2026 to 30-Sep-2026"></label>
+    <div><button type="submit" class="primary">Import &amp; validate</button></div>
+  </form>
+  {% if datasets %}
+  <h3>Datasets</h3>
+  <table><tr><th>#</th><th>Source</th><th>Range</th><th>Nature</th><th>Retrieved</th><th>Validation</th></tr>
+    {% for d in datasets %}<tr><td>{{ d.id }}</td><td class="small">{{ d.source_name }} <span class="chip {{ 'ok' if d.source_status == 'PERMITTED' else 'err' if d.source_status == 'PROHIBITED' else 'warn' }}">{{ d.source_status|replace('_',' ') }}</span></td>
+      <td class="small">{{ d.first_date }} → {{ d.last_date }} ({{ d.rows }} rows, {{ d.timeframe }})</td><td>{{ d.data_nature|replace('_','-') }}</td>
+      <td class="small">{{ d.retrieved_at|dt }} by {{ d.retrieved_by }}<div class="mono muted">sha256 {{ (d.sha256 or '')[:16] }}…</div></td>
+      <td class="small">{% if d.status == 'valid' %}<span class="chip ok">valid</span>{% elif d.status == 'invalid' %}<span class="chip err">invalid</span>{% else %}<span class="chip warn">warnings</span>{% endif %}
+        {% for e in d.validation.errors[:3] %}<div style="color:var(--err)">{{ e }}</div>{% endfor %}
+        {% for w in d.validation.warnings[:3] %}<div class="muted">{{ w }}</div>{% endfor %}</td></tr>{% endfor %}
+  </table>{% endif %}
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Data sources &amp; licences</h2>
+  <table><tr><th>Source</th><th>Terms</th><th>Status</th><th>Record licence / permission</th></tr>
+    {% for s in sources %}<tr><td><b>{{ s.name }}</b><div class="muted small">{{ s.notes }}</div></td>
+      <td class="small">{{ s.terms_summary }}{% if s.terms_url %}<div><a href="{{ s.terms_url }}" target="_blank" rel="noopener">terms ↗</a> · checked {{ s.terms_checked|dt }}</div>{% endif %}</td>
+      <td><span class="chip {{ 'ok' if s.status == 'PERMITTED' else 'err' if s.status == 'PROHIBITED' else 'warn' }}">{{ s.status|replace('_',' ') }}</span>
+        {% if s.licence_reference %}<div class="small">{{ s.licence_reference }} · {{ s.licence_holder }} · until {{ s.licence_expiry or '—' }}</div>{% endif %}</td>
+      <td>{% if s.kind != 'test_fixture' %}<details><summary>Record licence</summary><div id="lic-{{ s.id }}">
+        <label class="f"><span>Licence / permission reference</span><input name="reference"></label>
+        <label class="f"><span>Licence holder</span><input name="holder"></label>
+        <label class="f"><span>Expiry</span><input type="date" name="expiry"></label>
+        <label><input type="checkbox" name="permits_public_video"> Explicitly covers public video display</label><br>
+        <label><input type="checkbox" name="permits_monetization"> Explicitly covers monetized use</label>
+        <label class="f"><span>Evidence (document name, clause, who confirmed)</span><textarea name="evidence" rows="3"></textarea></label>
+        <button class="sm primary" data-post="/api/datasources/{{ s.id }}/licence" data-collect="#lic-{{ s.id }}" data-confirm="Record this licence? It is written to the audit log.">Save licence</button></div></details>{% endif %}</td></tr>{% endfor %}
+  </table>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Rule registry</h2>
+  <p class="muted small">Read from primary sources on the date shown. Re-check every 30 days; a stale critical rule blocks public release. Recording a review needs the reviewer's name and qualification.</p>
+  {% for r in rules %}
+  <div style="border-top:1px solid var(--line); padding:12px 0">
+    <div class="spread"><div><span class="chip">{{ r.category }}</span> <b>{{ r.title }}</b> <span class="mono muted">{{ r.id }}</span></div>
+      <div>{% if r.state == 'VERIFIED' %}<span class="chip ok">verified</span>{% elif r.state == 'RESOLVED' %}<span class="chip ok">resolved by review</span>{% elif r.state == 'RECHECK_DUE' %}<span class="chip warn">re-check due</span>{% else %}<span class="chip {{ 'err' if r.critical else 'warn' }}">REVIEW REQUIRED{{ ' · critical' if r.critical }}</span>{% endif %}</div></div>
+    <div class="small muted">{% if r.reference %}{{ r.reference }} · {% endif %}{% if r.document_date %}dated {{ r.document_date }} · {% endif %}{% if r.effective_date %}effective {{ r.effective_date }} · {% endif %}last checked {{ r.last_checked|dt }}
+      {% if r.url %} · <a href="{{ r.url }}" target="_blank" rel="noopener">source ↗</a>{% endif %}{% if r.document_url %} · <a href="{{ r.document_url }}" target="_blank" rel="noopener">PDF ↗</a>{% endif %}</div>
+    <div class="small" style="margin-top:4px">{{ r.summary }}</div>
+    <div class="small" style="margin-top:4px"><b>Effect on this channel:</b> {{ r.effect }}</div>
+    {% if r.evidence %}<div class="small muted" style="margin-top:4px">Quoted: “{{ r.evidence }}”</div>{% endif %}
+    {% if r.review %}<div class="note small">Review by {{ r.review.reviewer }}{% if r.review.qualification %} ({{ r.review.qualification }}){% endif %} on {{ r.review.reviewed_on }}: <b>{{ r.review.decision|replace('_',' ') }}</b>{% if r.review.conditions %} — conditions: {{ r.review.conditions }}{% endif %}{% if r.review.notes %} — {{ r.review.notes }}{% endif %}</div>{% endif %}
+    <details><summary>Record a review decision</summary><div id="rv-{{ loop.index }}" class="grid g2">
+      <input type="hidden" name="rule_id" value="{{ r.id }}">
+      <label class="f"><span>Reviewer name</span><input name="reviewer"></label>
+      <label class="f"><span>Qualification (e.g. advocate, securities law)</span><input name="qualification"></label>
+      <label class="f"><span>Decision</span><select name="decision"><option value="still_open">Still open</option><option value="resolved_with_conditions">Resolved with conditions</option><option value="resolved">Resolved</option></select></label>
+      <label class="f"><span>Review date</span><input type="date" name="reviewed_on"></label>
+      <label class="f"><span>Conditions</span><input name="conditions"></label>
+      <label class="f"><span>Evidence link (opinion letter, email)</span><input name="evidence_url"></label>
+      <label class="f" style="grid-column: span 2"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
+      <div><button class="sm primary" data-post="/api/compliance/review" data-collect="#rv-{{ loop.index }}">Record decision</button></div>
+    </div></details>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Episodes</h2>
+  <table><tr><th>#</th><th>Title</th><th>Status</th><th>Gate</th><th>Created</th></tr>
+    {% for e in episodes %}<tr><td>{{ e.id }}</td><td><a href="/productions/{{ e.id }}">{{ e.title }}</a></td><td>{% set p = e %}{% include "_status.html" %}</td>
+      <td class="small">{{ e.compliance.status|default('—')|replace('_',' ') }}</td><td class="small muted">{{ e.created_at|dt }}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">No episodes yet.</td></tr>{% endfor %}</table>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="spread"><h2>Audit trail</h2><span class="chip {{ 'ok' if chain.ok else 'err' }}">hash chain {{ 'intact' if chain.ok else 'BROKEN' }} · {{ chain.entries }} entries</span></div>
+  {% if not chain.ok %}<div class="note err small">{{ chain.problems|join('; ') }}</div>{% endif %}
+  {% if chain.notes %}<div class="note small">{{ chain.notes|join('; ') }}</div>{% endif %}
+  <div class="events" style="max-height:420px">{% for a in audit_entries %}<div><span class="muted">{{ a.created_at|dt }}</span> · <b>{{ a.event }}</b> · {{ a.actor }}{% if a.production_id %} · <a href="/productions/{{ a.production_id }}">#{{ a.production_id }}</a>{% endif %}
+    <span class="muted mono">{{ (a.details|tojson)[:220] }}</span>{% if a.artifact_sha256 %} <span class="chip">artifact {{ a.artifact_sha256[:10] }}…</span>{% endif %}</div>{% else %}<div class="muted">No entries yet.</div>{% endfor %}</div>
+  <p class="muted small">Artifacts (datasets, fact sheets, scripts, gate results) are stored under data/audit/ and data/market/ with their SHA-256 in this log.</p>
+</div>
+{% endblock %}

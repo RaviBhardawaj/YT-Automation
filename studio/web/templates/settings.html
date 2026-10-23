@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>Settings</h1><div class="muted">Credentials live in the macOS Keychain; everything else in the local database.</div></div></div>
+<div class="tabs">
+  {% for k, l in [('ai','AI providers'),('keys','Credentials'),('voice','Voice'),('visuals','Visuals'),('brand','Branding & render'),('youtube','YouTube'),('research','Research'),('production','Production')] %}
+  <a href="/settings?tab={{ k }}" class="{{ 'on' if tab == k }}">{{ l }}</a>{% endfor %}
+</div>
+
+{% if tab == 'ai' %}
+<div class="card">
+  <h2>Providers</h2>
+  <table>
+    <tr><th>Provider</th><th>Status</th><th>Model</th><th>Billing</th><th></th></tr>
+    {% for pr in providers %}
+    <tr><td>{{ pr.label }}</td>
+      <td>{% if pr.ok %}<span class="chip ok">ready</span>{% else %}<span class="chip warn">{{ pr.detail }}</span>{% endif %}</td>
+      <td class="mono">{{ pr.model }}</td>
+      <td class="small">{% if pr.id == 'ollama_local' %}free, runs on this Mac{% elif pr.id == 'ollama_cloud' %}Ollama plan / free quota (not per-token){% elif pr.paid %}<span class="chip warn">per-token, counts toward limit</span>{% else %}free tier (limits apply){% endif %}</td>
+      <td>{% if pr.ok %}<button class="sm" data-post="/api/providers/{{ pr.id }}/test" data-reload="no">Test</button>{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  <div class="note small"><b>Internet access:</b> no language model here browses the web on its own. Research comes from the app's own source collectors (news RSS, Wikipedia, YouTube API, Ollama web search), and every model sees only that evidence.</div>
+  <div class="note warn small"><b>Claude API billing:</b> API usage is billed per token by Anthropic, separately from any Claude Pro or Max subscription — a subscription does not include API credit. Create an API key at platform.claude.com and add it under Credentials only if you want to use it. This app never asks for your Claude account password.</div>
+</div>
+
+<form class="card" style="margin-top:16px" data-form="/api/settings">
+  <h2>Routing & spending</h2>
+  <div class="grid g2">
+    <label class="f"><span>Default provider</span><select name="ai.default_provider">{% for k, l in provider_names.items() %}<option value="{{ k }}" {{ 'selected' if s['ai.default_provider'] == k }}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Fallback provider</span><select name="ai.fallback_provider">{% for k, l in provider_names.items() %}<option value="{{ k }}" {{ 'selected' if s['ai.fallback_provider'] == k }}>{{ l }}</option>{% endfor %}</select></label>
+  </div>
+  <h3>Per-task provider</h3>
+  <div class="grid g2">{% for t, label in ai_tasks.items() %}
+    <label class="f"><span>{{ label }}</span><select name="ai.task_providers::{{ t }}"><option value="default">Use default</option>
+      {% for k, l in provider_names.items() %}<option value="{{ k }}" {{ 'selected' if s['ai.task_providers'].get(t) == k }}>{{ l }}</option>{% endfor %}</select></label>{% endfor %}
+  </div>
+  <h3>Spending limit (paid APIs)</h3>
+  <div class="grid g2">
+    <label class="f"><span>Maximum AI spend per calendar month (USD)</span><input type="number" step="0.5" min="0" name="ai.monthly_budget_usd" data-type="number" value="{{ s['ai.monthly_budget_usd'] }}"></label>
+    <label class="f"><span>When the limit is reached</span><select name="ai.on_budget_exceeded">
+      <option value="fallback_local" {{ 'selected' if s['ai.on_budget_exceeded'] == 'fallback_local' }}>Stop paid calls, continue with Ollama (local / cloud)</option>
+      <option value="pause" {{ 'selected' if s['ai.on_budget_exceeded'] == 'pause' }}>Pause the task until next month</option></select></label>
+  </div>
+  <p class="muted small">Before each paid call the app estimates its worst-case cost (prompt + maximum output) and refuses the call if it could cross the limit. Actual costs come from the provider's reported token usage.</p>
+  <button type="submit" class="primary">Save routing</button>
+</form>
+
+<form class="card" style="margin-top:16px" data-form="/api/settings">
+  <h2>Models</h2>
+  <div class="grid g2">
+    {% for pid in ['ollama_local','ollama_cloud','anthropic','gemini'] %}
+    <label class="f"><span>{{ provider_names[pid] }}</span>
+      <div class="row"><input name="ai.models::{{ pid }}" value="{{ s['ai.models'].get(pid, '') }}" list="models-{{ pid }}" style="flex:1">
+      <button type="button" class="sm" data-load-models="{{ pid }}" data-target="models-{{ pid }}">List</button></div>
+      <datalist id="models-{{ pid }}"></datalist></label>
+    {% endfor %}
+  </div>
+  <div class="grid g2">
+    <label class="f"><span>Claude effort</span><select name="ai.anthropic_effort">{% for e in ['low','medium','high','xhigh','max'] %}<option {{ 'selected' if s['ai.anthropic_effort'] == e }}>{{ e }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Gemini billing tier</span><select name="ai.gemini_tier"><option value="free" {{ 'selected' if s['ai.gemini_tier'] == 'free' }}>Free tier (rate-limited; Google may use free-tier data to improve products)</option><option value="paid" {{ 'selected' if s['ai.gemini_tier'] == 'paid' }}>Paid (counts toward the spending limit)</option></select></label>
+  </div>
+  <label class="f"><span>Prices used by the spending guard (USD per million tokens) — verify against the providers' pricing pages</span>
+    <textarea name="ai.prices" data-type="json" rows="8" class="mono">{{ s['ai.prices']|tojson(indent=1) }}</textarea></label>
+  <button type="submit" class="primary">Save models</button>
+</form>
+
+<div class="card" style="margin-top:16px">
+  <h2>Local models (Ollama)</h2>
+  <div class="kv"><div>Ollama</div><div>{% if ollama.running %}<span class="chip ok">running</span> {{ ollama.models|map(attribute='name')|join(', ') or 'no models pulled' }}{% elif ollama.installed %}<span class="chip warn">installed, not running — open the Ollama app</span>{% else %}<span class="chip warn">not installed</span> — install from <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a> or <span class="mono">brew install ollama</span>{% endif %}</div>
+    <div>This Mac</div><div>{{ hw.cpu }}, {{ hw.ram_gb }} GB RAM, {{ disk }} GB free</div></div>
+  <p class="muted small">Check a model's real download size and whether it fits this Mac before pulling it. On {{ hw.ram_gb }} GB, 4–9B models (≈3–7 GB) leave room for rendering; 12B+ models are tight.</p>
+  <div class="row"><input id="ollama-model" placeholder="e.g. qwen3.5:9b, gemma4:e4b, qwen3:8b" style="max-width:320px"><button id="ollama-check">Check size & fit</button></div>
+  <div id="ollama-result"></div>
+  <form data-form="/api/settings" style="margin-top:10px"><label class="f"><span>Ollama host</span><input name="ai.ollama_host" value="{{ s['ai.ollama_host'] }}"></label>
+    <label class="f"><span>Context window (tokens)</span><input type="number" name="ai.ollama_num_ctx" data-type="number" value="{{ s['ai.ollama_num_ctx'] }}"></label><button type="submit">Save</button></form>
+</div>
+
+{% elif tab == 'keys' %}
+<div class="card">
+  <h2>Credentials</h2>
+  <p class="muted">Each key is optional. Add one only when you enable the feature it powers. Keys go straight to the macOS Keychain (service “yt-automation-studio”) and are never shown again.</p>
+  <table>
+    {% for k in secrets if k.name not in ('google_oauth_client_secret','google_refresh_token') %}
+    <tr><td style="width:36%"><b>{{ k.label }}</b><div class="muted small">{{ k.purpose }}</div><a class="small" href="{{ k.url }}" target="_blank" rel="noopener">Get a key ↗</a></td>
+      <td>{% if k.set %}<span class="chip ok">saved {{ k.hint }}</span>{% else %}<span class="chip">not set</span>{% endif %}</td>
+      <td><div class="row"><input type="password" autocomplete="off" data-secret="{{ k.name }}" placeholder="{{ 'Replace key' if k.set else 'Paste key' }}" style="max-width:280px">
+        <button class="sm primary" data-save-secret="{{ k.name }}">Save</button>
+        {% if k.set %}<button class="sm danger" data-save-secret="{{ k.name }}" data-clear>Remove</button>{% endif %}</div></td></tr>
+    {% endfor %}
+  </table>
+  <div class="note small">The YouTube upload credentials (OAuth client + authorization) are managed on the YouTube tab.</div>
+</div>
+
+{% elif tab == 'voice' %}
+<div class="card">
+  <h2>Narration voices</h2>
+  <div class="kv"><div>India audience</div><div><b>{{ audience_languages.india }}</b> · voice <b>{{ voice_hi.voice_id }}</b> {% if voice_hi.installed %}<span class="chip ok">installed</span>{% else %}<span class="chip err">not installed</span>{% endif %}</div>
+    <div>International audience</div><div><b>{{ audience_languages.international }}</b> · voice <b>{{ voice_en.voice_id }}</b> {% if voice_en.installed %}<span class="chip ok">installed</span>{% else %}<span class="chip err">not installed</span>{% endif %}</div></div>
+  <p class="muted small">Every video is made in Hindi unless you choose the international (English) audience for it. Pick a voice for each language below.</p>
+</div>
+<div class="card" style="margin-top:16px">
+  <h2>Default voice</h2>
+  <div class="kv"><div>Selected</div><div><b>{{ voice.engine }} · {{ voice.voice_id }}</b> {% if voice.installed %}<span class="chip ok">installed</span>{% else %}<span class="chip err">not installed</span>{% endif %}
+    {% if voice.commercial is sameas false %}<span class="chip err">non-commercial training data</span>{% elif voice.commercial %}<span class="chip ok">commercial use OK</span>{% endif %}</div>
+    <div>Licence</div><div class="small">{{ voice.license or '—' }}</div><div>Speed</div><div>{{ voice.speed }}</div></div>
+  <div class="note warn small">Only synthetic voices are used. This app does not clone or imitate any real person's voice. Check each voice's licence: all three Hindi Piper voices were trained on non-commercial datasets, so for a monetized Hindi channel use Kokoro (Apache-2.0 weights).</div>
+</div>
+<div class="card" style="margin-top:16px">
+  <h2>Kokoro (recommended — Hindi & English, Apache-2.0)</h2>
+  <p class="small">{% if kokoro_installed %}<span class="chip ok">installed</span>{% else %}<span class="chip">not installed</span>{% endif %}
+    82M-parameter local model. Hindi voices: hf_alpha, hf_beta (female), hm_omega, hm_psi (male); plus US/UK English and other languages.</p>
+  <div class="row"><button data-post="/api/voice/kokoro" data-body='{"variant":"int8"}' data-done="Download queued (92 MB + 28 MB)" data-reload="no">Install compact model (≈120 MB)</button>
+    <button data-post="/api/voice/kokoro" data-body='{"variant":"fp32"}' data-done="Download queued (326 MB + 28 MB)" data-reload="no">Install full-quality model (≈354 MB)</button></div>
+</div>
+{% macro voice_rows(list, prefix) %}
+  <table>
+    <tr><th>Voice</th><th>Language</th><th>Licence</th><th></th></tr>
+    {% for v in list %}
+    <tr><td><b>{{ v.id }}</b> {% if voice.voice_id == v.id %}<span class="chip ok">selected</span>{% endif %} <span class="muted small">{{ v.engine }}</span><div class="muted small">{{ v.label }}</div></td><td>{{ v.lang }}</td>
+      <td class="small">{% if v.commercial is sameas false %}<span class="chip err">non-commercial</span>{% elif v.commercial %}<span class="chip ok">commercial OK</span>{% else %}<span class="chip warn">review</span>{% endif %} {{ v.license }}</td>
+      <td><div class="row" id="{{ prefix }}-{{ loop.index }}"><button class="sm" data-sample="{{ v.engine }}|{{ v.id }}">▶ Test</button>
+        <input type="hidden" name="engine" value="{{ v.engine }}"><input type="hidden" name="voice_id" value="{{ v.id }}">
+        <input type="number" name="speed" data-type="number" min="0.7" max="1.4" step="0.05" value="{{ voice.speed if voice.voice_id == v.id else 1.0 }}" style="width:76px" title="speed">
+        {% if v.lang.startswith('hi') %}<button class="sm {{ 'primary' if voice_hi.voice_id != v.id }}" data-post="/api/voice/select" data-collect="#{{ prefix }}-{{ loop.index }}" data-body='{"language":"Hindi"}'>{{ 'Hindi voice ✓' if voice_hi.voice_id == v.id else 'Use for Hindi' }}</button>
+        {% else %}<button class="sm {{ 'primary' if voice_en.voice_id != v.id }}" data-post="/api/voice/select" data-collect="#{{ prefix }}-{{ loop.index }}" data-body='{"language":"English"}'>{{ 'English voice ✓' if voice_en.voice_id == v.id else 'Use for English' }}</button>{% endif %}</div></td></tr>
+    {% else %}<tr><td colspan="4" class="muted">No voices for this language installed yet — install Kokoro above or a Piper voice below.</td></tr>{% endfor %}
+  </table>
+{% endmacro %}
+<div class="card" style="margin-top:16px">
+  <h2>Voices for {{ channel_lang }}</h2>
+  {% if voice.lang and channel_lang in ('Hindi', 'Hinglish') and not voice.lang.startswith('hi') %}<div class="note warn small">Your channel language is {{ channel_lang }}, but the selected voice speaks {{ voice.lang }}. Hindi narration needs a Hindi voice.</div>{% endif %}
+  {{ voice_rows(voices, 'vs') }}
+  {% if other_voices %}<details style="margin-top:10px"><summary>Other languages ({{ other_voices|length }} voices)</summary>{{ voice_rows(other_voices, 'vo') }}</details>{% endif %}
+</div>
+<div class="card" style="margin-top:16px">
+  <h2>Piper voice catalogue</h2>
+  <p class="muted small">Official Piper voices (rhasspy/piper-voices). Click “Licence” to read the training-data licence before downloading.</p>
+  <div class="row"><input id="piper-lang" placeholder="language code, e.g. hi, en_US, en_GB" style="max-width:260px"><button id="piper-search">Browse</button></div>
+  <div id="piper-results" style="margin-top:10px"></div>
+</div>
+
+{% elif tab == 'visuals' %}
+<form class="card" data-form="/api/settings">
+  <h2>Visual sources</h2>
+  <p class="muted small">Tried in order for each scene. Only licences allowing commercial use and modification are accepted, and every asset's licence and attribution is stored and added to the description. If nothing suitable is found, the app renders original abstract art in your brand palette.</p>
+  <table>
+    {% set desc = {'pexels':'Pexels — free stock photos & video (API key)','pixabay':'Pixabay — free stock photos & video (API key)','openverse':'Openverse — CC-licensed images (CC0, PD, BY, BY-SA only)','wikimedia':'Wikimedia Commons — CC0 / public-domain / BY / BY-SA images','local_sd':'Local Stable Diffusion (A1111/Forge/Draw Things API) — original AI images','gemini_image':'Gemini image generation — paid per image, counts toward the AI limit','procedural':'Original procedural art (always available)'} %}
+    {% for p in s['visuals.order'] %}<tr><td><label><input type="checkbox" name="visuals.enabled::{{ p }}" {{ 'checked' if s['visuals.enabled'].get(p) }} {{ 'disabled' if p == 'procedural' }}> {{ desc.get(p, p) }}</label></td></tr>{% endfor %}
+  </table>
+  <label class="f" style="margin-top:10px"><span>Order (comma-separated)</span><input name="visuals.order" data-type="list" value="{{ s['visuals.order']|join(', ') }}"></label>
+  <label><input type="checkbox" name="visuals.prefer_video" {{ 'checked' if s['visuals.prefer_video'] }}> Prefer stock video clips for scenes marked as motion</label>
+  <div class="grid g3" style="margin-top:12px">
+    <label class="f"><span>Local SD API URL</span><input name="visuals.local_sd_url" value="{{ s['visuals.local_sd_url'] }}"></label>
+    <label class="f"><span>Gemini image model</span><input name="visuals.gemini_image_model" value="{{ s['visuals.gemini_image_model'] }}"></label>
+    <label class="f"><span>Gemini price per image (USD)</span><input type="number" step="0.001" name="visuals.gemini_image_price" data-type="number" value="{{ s['visuals.gemini_image_price'] }}"></label>
+  </div>
+  <div class="note small"><b>About cinematic AI video:</b> generating realistic motion video locally needs far more GPU memory than this Mac has, and hosted text-to-video services are paid per second. This app builds motion from licensed stock clips, Ken Burns camera moves, transitions and kinetic captions instead. AI-generated images are flagged as synthetic when uploading.</div>
+  <button type="submit" class="primary">Save visuals</button>
+</form>
+
+{% elif tab == 'brand' %}
+<form class="card" data-form="/api/settings">
+  <h2>Channel branding</h2>
+  {% set b = s['brand'] %}
+  <div class="grid g3">
+    <label class="f"><span>Channel name (watermark, thumbnail badge)</span><input name="brand::channel_name" value="{{ b.channel_name }}"></label>
+    <label class="f"><span>Caption style</span><select name="brand::caption_style"><option value="bold" {{ 'selected' if b.caption_style == 'bold' }}>Bold word groups, centre (Shorts style)</option><option value="subtle" {{ 'selected' if b.caption_style == 'subtle' }}>Subtitle line at bottom</option></select></label>
+    <label class="f"><span>Watermark</span><select name="brand::watermark" data-type="json"><option value="true" {{ 'selected' if b.watermark }}>Show</option><option value="false" {{ 'selected' if not b.watermark }}>Hide</option></select></label>
+  </div>
+  <div class="row">
+    <label class="f"><span>Primary</span><input type="color" name="brand::primary" value="{{ b.primary }}"></label>
+    <label class="f"><span>Accent</span><input type="color" name="brand::accent" value="{{ b.accent }}"></label>
+    <label class="f"><span>Text</span><input type="color" name="brand::text" value="{{ b.text }}"></label>
+    <label class="f" style="flex:1"><span>Background palette (hex, comma-separated)</span><input name="brand::palette" data-type="list" value="{{ b.palette|join(', ') }}"></label>
+  </div>
+  <button type="submit" class="primary">Save branding</button>
+</form>
+<div class="card" style="margin-top:16px">
+  <h2>Logo</h2>
+  {% if s['brand'].logo_path %}<img src="{{ media_url(s['brand'].logo_path) }}" style="max-height:60px" alt="logo">{% endif %}
+  <input type="file" accept="image/*" data-upload="logo">
+</div>
+<form class="card" style="margin-top:16px" data-form="/api/settings">
+  <h2>Background music (optional)</h2>
+  <p class="muted small">Only use music you are licensed to use (e.g. tracks you own, the YouTube Audio Library, or royalty-free music whose licence allows YouTube monetization). Write the required credit below — it is added to every description. Music is ducked under the narration automatically.</p>
+  <input type="file" accept=".mp3,.wav,.m4a,.aac,.flac" data-upload="music">
+  <div class="grid g3" style="margin-top:10px">
+    <label class="f"><span>Track</span><select name="render.music_file"><option value="">No music</option>{% for m in music %}<option value="{{ m }}" {{ 'selected' if s['render.music_file'].endswith('/' ~ m) }}>{{ m }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Licence / credit line</span><input name="render.music_license" value="{{ s['render.music_license'] }}" placeholder="e.g. 'Track' by Artist, CC BY 4.0"></label>
+    <label class="f"><span>Volume (0–0.5)</span><input type="number" step="0.01" min="0" max="0.5" name="render.music_volume" data-type="number" value="{{ s['render.music_volume'] }}"></label>
+  </div>
+  <h3>Render</h3>
+  <div class="grid g3">
+    <label class="f"><span>x264 preset</span><select name="render.preset">{% for pr in ['ultrafast','veryfast','faster','fast','medium','slow'] %}<option {{ 'selected' if s['render.preset'] == pr }}>{{ pr }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Quality CRF (lower = better, 18–23)</span><input type="number" name="render.crf" data-type="number" min="14" max="28" value="{{ s['render.crf'] }}"></label>
+    <label class="f"><span>Transition length (s)</span><input type="number" step="0.05" min="0.1" max="1.0" name="render.transition" data-type="number" value="{{ s['render.transition'] }}"></label>
+  </div>
+  <button type="submit" class="primary">Save</button>
+</form>
+
+{% elif tab == 'youtube' %}
+<div class="card">
+  <h2>Connect your channel</h2>
+  {% if yt_connected %}
+    <div class="note ok">Connected to <b>{{ s['youtube.channel'].get('title') }}</b> — <a href="{{ s['youtube.channel'].get('url') }}" target="_blank" rel="noopener">open channel</a> · {{ s['youtube.channel'].get('subscribers') }} subscribers</div>
+    <button class="danger" data-post="/api/youtube/disconnect" data-confirm="Disconnect and revoke this app's access to your channel?">Disconnect</button>
+  {% else %}
+  <ol class="small">
+    <li>In <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>, create a project and enable <b>YouTube Data API v3</b> and <b>YouTube Analytics API</b>.</li>
+    <li>Configure the OAuth consent screen (External, Testing) and add your own Google account as a test user.</li>
+    <li>Create credentials → OAuth client ID → application type <b>Desktop app</b>. Download the JSON.</li>
+    <li>Upload that JSON here (the client secret goes to the Keychain), then click Connect. You sign in on Google's page — this app never sees your password.</li>
+  </ol>
+  <div class="row"><input type="file" accept="application/json,.json" data-upload="yt-client" style="max-width:340px">
+    {% if yt_configured %}<span class="chip ok">OAuth client saved</span>{% endif %}</div>
+  <div class="row" style="margin-top:12px">
+    <button class="primary" data-post="/api/youtube/connect" data-navigate {{ 'disabled' if not yt_configured }}>Connect YouTube channel</button>
+    <span class="muted small">Redirect URI used: <span class="mono">{{ redirect_uri }}</span> (Desktop-app clients accept loopback addresses automatically)</span>
+  </div>
+  <p class="muted small">Requested permissions: upload videos, read your channel, read YouTube Analytics{{ ', manage captions' if s['youtube.upload_captions'] }}.</p>
+  {% endif %}
+</div>
+<form class="card" style="margin-top:16px" data-form="/api/settings">
+  <h2>Publishing</h2>
+  <div class="note warn small">YouTube restricts uploads from API projects created after July 2020 to <b>private</b> until the project passes Google's YouTube API Services audit (<a href="https://support.google.com/youtube/contact/yt_api_form" target="_blank" rel="noopener">audit form</a>). Until you tick the box below, every upload is private and you publish it yourself in YouTube Studio.</div>
+  <label><input type="checkbox" name="youtube.audit_passed" {{ 'checked' if s['youtube.audit_passed'] }}> My Google Cloud project has passed the YouTube API audit (enables public, unlisted and scheduled uploads)</label>
+  <div class="grid g3" style="margin-top:12px">
+    <label class="f"><span>Approval</span><select name="publish.mode"><option value="approve_first" {{ 'selected' if s['publish.mode'] == 'approve_first' }}>I approve every video</option><option value="auto_after_validation" {{ 'selected' if s['publish.mode'] == 'auto_after_validation' }}>Auto-upload when all checks pass (no warnings)</option></select></label>
+    <label class="f"><span>Default category</span><select name="youtube.category_id">{% for cid, cl in [('27','Education'),('28','Science & Technology'),('22','People & Blogs'),('24','Entertainment'),('23','Comedy'),('26','Howto & Style'),('25','News & Politics'),('19','Travel & Events'),('17','Sports'),('1','Film & Animation')] %}<option value="{{ cid }}" {{ 'selected' if s['youtube.category_id'] == cid }}>{{ cl }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Shorts publishing times (local, HH:MM, comma-separated)</span><input name="publish.slots::short" data-type="list" value="{{ s['publish.slots'].get('short', [])|join(', ') }}" placeholder="18:30"></label>
+    <label class="f"><span>Long-form publishing times (local, HH:MM, comma-separated)</span><input name="publish.slots::long" data-type="list" value="{{ s['publish.slots'].get('long', [])|join(', ') }}" placeholder="19:30"></label>
+  </div>
+  <label><input type="checkbox" name="youtube.made_for_kids" {{ 'checked' if s['youtube.made_for_kids'] }}> Videos are made for kids (COPPA)</label><br>
+  <label><input type="checkbox" name="youtube.disclose_tts" {{ 'checked' if s['youtube.disclose_tts'] }}> Mention the synthetic narration voice in descriptions</label><br>
+  <label><input type="checkbox" name="youtube.upload_captions" {{ 'checked' if s['youtube.upload_captions'] }}> Upload subtitle files (needs the broader “manage YouTube account” permission — reconnect after enabling)</label>
+  <div style="margin-top:12px"><button type="submit" class="primary">Save publishing</button></div>
+</form>
+
+{% elif tab == 'research' %}
+<form class="card" data-form="/api/settings">
+  <h2>Research sources</h2>
+  {% set src = s['research.sources'] %}
+  {% set desc = {'google_news':'Google News RSS — recent headlines (no key)','wikipedia':'Wikipedia + Wikimedia pageviews — real interest counts (no key)','youtube':'YouTube Data API — competitor videos, views, subscribers (key)','ollama_web':'Ollama web search — web results with URLs (Ollama key)','hackernews':'Hacker News (Algolia API) — tech discussions (no key)','rss':'Your RSS feeds (below)'} %}
+  {% for k, d in desc.items() %}<div><label><input type="checkbox" name="research.sources::{{ k }}" {{ 'checked' if src.get(k) }}> {{ d }}</label></div>{% endfor %}
+  <div class="grid g3" style="margin-top:12px">
+    <label class="f"><span>Region (ISO country code)</span><input name="research.region" value="{{ s['research.region'] }}" maxlength="2"></label>
+    <label class="f"><span>Max article pages fetched per topic</span><input type="number" name="research.max_page_fetch" data-type="number" min="0" max="10" value="{{ s['research.max_page_fetch'] }}"></label>
+    <label class="f"><span>YouTube API units per day (of 10,000 default quota)</span><input type="number" name="research.youtube_daily_unit_budget" data-type="number" value="{{ s['research.youtube_daily_unit_budget'] }}"></label>
+  </div>
+  <label class="f"><span>Contact for API etiquette (optional email or URL — sent in the User-Agent; Wikimedia asks for this and rate-limits anonymous clients harder)</span>
+    <input name="research.contact" value="{{ s['research.contact'] }}" placeholder="you@example.com"></label>
+  <p class="muted small">Web pages are fetched only when robots.txt allows it, at a modest rate, and are used as private research notes — scripts are checked so they do not reuse source wording.</p>
+  <button type="submit" class="primary">Save sources</button>
+</form>
+<div class="card" style="margin-top:16px">
+  <h2>RSS feeds</h2>
+  <table>{% for f in feeds %}<tr><td>{{ f.title }}<div class="muted small mono">{{ f.url }}</div></td><td><button class="sm danger" data-post="/api/feeds" data-body='{"delete": {{ f.id }}}'>Remove</button></td></tr>{% else %}<tr><td class="muted">No feeds yet.</td></tr>{% endfor %}</table>
+  <div class="row" id="feed-add" style="margin-top:10px"><input name="url" placeholder="https://example.com/feed.xml" style="max-width:420px"><button data-post="/api/feeds" data-collect="#feed-add">Add feed</button></div>
+</div>
+
+{% elif tab == 'production' %}
+<form class="card" data-form="/api/settings">
+  <h2>Production</h2>
+  <div class="grid g3">
+    <label class="f"><span>Target Short length (seconds)</span><input type="number" name="production.short_seconds" data-type="number" min="15" max="170" value="{{ s['production.short_seconds'] }}"></label>
+    <label class="f"><span>Target long-form length (minutes)</span><input type="number" name="production.long_minutes" data-type="number" min="3" max="30" value="{{ s['production.long_minutes'] }}"></label>
+    <label class="f"><span>Max productions in progress</span><input type="number" name="production.max_active" data-type="number" min="1" max="10" value="{{ s['production.max_active'] }}"></label>
+    <label class="f"><span>Minimum idea score for automatic picking</span><input type="number" name="production.min_topic_score" data-type="number" min="0" max="100" value="{{ s['production.min_topic_score'] }}"></label>
+  </div>
+  <label><input type="checkbox" name="production.auto_pick_topics" {{ 'checked' if s['production.auto_pick_topics'] }}> Daily plan may pick top-scored ideas automatically (otherwise only ideas you approved)</label>
+  <div style="margin-top:12px"><button type="submit" class="primary">Save</button></div>
+</form>
+{% endif %}
+{% endblock %}

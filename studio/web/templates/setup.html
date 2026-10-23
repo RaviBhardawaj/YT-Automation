@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>Setup</h1><div class="muted">Your Mac, the tools this app relies on, and your channel profile.</div></div></div>
+
+<div class="grid g2">
+  <div class="card">
+    <h2>This Mac</h2>
+    <div class="kv">
+      <div>System</div><div>{{ sys.hardware.os }} · {{ sys.hardware.arch }}</div>
+      <div>Processor</div><div>{{ sys.hardware.cpu }} ({{ sys.hardware.cores }} cores)</div>
+      <div>Memory</div><div>{{ sys.hardware.ram_gb }} GB</div>
+      <div>Free disk</div><div>{{ sys.disk_free_gb }} GB <span class="muted small">({{ sys.data_dir }})</span></div>
+      <div>Python</div><div>{{ sys.hardware.python }}</div>
+    </div>
+    <h3>Tools</h3>
+    <table>
+      <tr><td>FFmpeg</td><td>{% if sys.ffmpeg.ok %}<span class="chip ok">ready</span>{% else %}<span class="chip err">problem</span>{% endif %}
+        <span class="muted small">{{ sys.ffmpeg.version }} — {{ sys.ffmpeg.detail }}</span></td></tr>
+      <tr><td>Text shaping</td><td>{% if sys.pillow.raqm %}<span class="chip ok">ready</span>{% else %}<span class="chip err">missing</span>{% endif %}
+        <span class="muted small">{{ sys.pillow.detail }}</span></td></tr>
+      <tr><td>Local TTS</td><td>{% if sys.tts.ok %}<span class="chip ok">ready</span>{% else %}<span class="chip warn">set up a voice</span>{% endif %}
+        <span class="muted small">{{ sys.tts.detail }} · Kokoro {{ 'installed' if sys.tts.kokoro_installed else 'not installed' }} · {{ sys.tts.piper_voices }} Piper voice(s)</span></td></tr>
+      <tr><td>Ollama (local AI)</td><td>
+        {% if sys.ollama.running %}<span class="chip ok">running</span> <span class="muted small">{{ sys.ollama.models|length }} model(s)</span>
+        {% elif sys.ollama.installed %}<span class="chip warn">installed, not running</span> <span class="muted small">open the Ollama app</span>
+        {% else %}<span class="chip warn">not installed</span> <span class="muted small">optional — see Settings › AI</span>{% endif %}</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h2>Credentials</h2>
+    <p class="muted small">Stored in the macOS Keychain, never in the database or logs. All are optional — add one only when you turn on the feature that needs it.</p>
+    <table>
+      {% for s in secrets if s.name != 'google_refresh_token' %}
+      <tr><td>{{ s.label }}<div class="muted small">{{ s.purpose }}</div></td>
+          <td>{% if s.set %}<span class="chip ok">set {{ s.hint }}</span>{% else %}<span class="chip">not set</span>{% endif %}</td></tr>
+      {% endfor %}
+    </table>
+    <a class="btn sm" href="/settings?tab=keys" style="margin-top:10px">Manage credentials</a>
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Channel profile</h2>
+  <p class="muted small">One question at a time. Answers are saved as you go — you won't be asked again. You can revisit them here anytime.</p>
+  <div id="wizard" class="wizard"></div>
+  <script type="application/json" id="questions">{{ questions|tojson }}</script>
+  <script type="application/json" id="answers">{{ answers|tojson }}</script>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Pipeline self-test</h2>
+  <p class="muted">Renders a short built-in script with your selected voice, original procedural visuals, captions, thumbnail and the full QA gate — no AI calls, no internet. Useful to verify everything works before real production. Test videos can never be uploaded.</p>
+  <div class="row"><button data-post="/api/productions/selftest" data-body='{"format":"short"}'>Run Shorts self-test</button>
+  <button data-post="/api/productions/selftest" data-body='{"format":"long"}'>Run long-form self-test</button></div>
+</div>
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>Analytics &amp; costs</h1><div class="muted">Your videos' performance from YouTube, and what the AI providers cost.</div></div>
+  <button data-post="/api/analytics/sync" data-done="Sync started" {{ 'disabled' if not connected }}>Sync from YouTube now</button></div>
+
+<div class="card">
+  <h2>Video performance</h2>
+  {% if videos %}
+  <table>
+    <tr><th>Video</th><th>Format</th><th>Views</th><th>Likes</th><th>Avg viewed</th><th>Watch time</th><th>Subs gained</th><th>Updated</th></tr>
+    {% for v in videos %}{% set m = v.metrics %}
+    <tr><td><a href="/productions/{{ v.production_id }}">{{ v.title }}</a> <a class="small" href="https://youtu.be/{{ v.video_id }}" target="_blank" rel="noopener">↗</a>
+      {% if m.privacy %}<span class="chip">{{ m.privacy }}</span>{% endif %}</td><td>{{ v.format }}</td>
+      <td>{{ '{:,}'.format(m.views or 0) }}</td><td>{{ m.likes or 0 }}</td>
+      <td>{{ '%.0f%%' % m.averageViewPercentage if m.averageViewPercentage is not none else '—' }}</td>
+      <td>{{ '%.0f min' % m.estimatedMinutesWatched if m.estimatedMinutesWatched is not none else '—' }}</td>
+      <td>{{ m.subscribersGained if m.subscribersGained is not none else '—' }}</td><td class="muted small">{{ v.fetched_at|dt }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="muted small">Numbers come directly from the YouTube Data and Analytics APIs. Small samples are noisy: the ideation step sees your best and weakest videos only as weak hints, never as proof.</p>
+  {% else %}<div class="empty">{{ 'No uploaded videos yet.' if connected else 'Connect YouTube in Settings to see analytics.' }}</div>{% endif %}
+</div>
+
+<div class="grid g2" style="margin-top:16px">
+  <div class="card">
+    <h2>AI usage this month</h2>
+    <table><tr><th>Provider</th><th>Model</th><th>Calls</th><th>Tokens in / out</th><th>Cost</th></tr>
+      {% for u in usage %}<tr><td>{{ u.provider }}</td><td class="mono">{{ u.model }}</td><td>{{ u.calls }}{% if u.errors %} <span class="chip warn">{{ u.errors }} err</span>{% endif %}</td>
+        <td class="small">{{ '{:,}'.format(u.input_tokens or 0) }} / {{ '{:,}'.format(u.output_tokens or 0) }}</td><td>${{ '%.4f' % (u.cost_usd or 0) }}</td></tr>
+      {% else %}<tr><td colspan="5" class="muted">No AI calls yet this month.</td></tr>{% endfor %}</table>
+    <p class="muted small">Costs use the provider-reported token counts × the prices in Settings › AI. Ollama local and Ollama Cloud are not billed per token. Check your provider consoles for authoritative billing.</p>
+  </div>
+  <div class="card">
+    <h2>Daily spend</h2>
+    <table><tr><th>Day</th><th>Calls</th><th>Cost</th></tr>{% for d in daily %}<tr><td>{{ d.day }}</td><td>{{ d.calls }}</td><td>${{ '%.4f' % d.cost }}</td></tr>{% else %}<tr><td colspan="3" class="muted">—</td></tr>{% endfor %}</table>
+    <h3>YouTube Data API units used (research)</h3>
+    <table>{% for d in yt_units %}<tr><td>{{ d.day }}</td><td>{{ d.units }} units</td></tr>{% else %}<tr><td class="muted">None yet.</td></tr>{% endfor %}</table>
+  </div>
+</div>
+{% endblock %}

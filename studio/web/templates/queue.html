@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>Queue &amp; logs</h1><div class="muted">Background tasks survive restarts. Failed tasks retry automatically with back-off.</div></div>
+  <div class="row"><a class="btn" href="/queue">Refresh</a></div></div>
+{% if task_counts.get('running') %}<div data-autorefresh="10"></div>{% endif %}
+<div class="card">
+  <h2>Tasks</h2>
+  <table>
+    <tr><th>#</th><th>Type</th><th>Status</th><th>Attempts</th><th>Next run</th><th>Last error</th><th></th></tr>
+    {% for t in tasks %}
+    <tr><td>{{ t.id }}</td><td>{{ t.type }}{% if t.production_id %} · <a href="/productions/{{ t.production_id }}">#{{ t.production_id }}</a>{% endif %}<div class="muted small">{{ t.lane }} lane</div></td>
+      <td>{% if t.status == 'done' %}<span class="chip ok">done</span>{% elif t.status == 'running' %}<span class="chip info">running</span>{% elif t.status in ('failed',) %}<span class="chip err">failed</span>{% elif t.status == 'paused' %}<span class="chip warn">paused</span>{% else %}<span class="chip">{{ t.status }}</span>{% endif %}</td>
+      <td>{{ t.attempts }}/{{ t.max_attempts }}</td><td class="small muted">{{ t.run_after|dt if t.status == 'pending' else '—' }}</td>
+      <td class="small" style="max-width:420px">{{ (t.last_error or '')[:260] }}</td>
+      <td class="row">{% if t.status in ('failed','paused') %}<button class="sm" data-post="/api/tasks/{{ t.id }}/retry">Retry</button>{% endif %}
+        {% if t.status in ('pending','paused','failed') %}<button class="sm danger" data-post="/api/tasks/{{ t.id }}/cancel">Cancel</button>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="7" class="empty">Queue is empty.</td></tr>{% endfor %}
+  </table>
+</div>
+<div class="card" style="margin-top:16px">
+  <div class="spread"><h2>Event log</h2><div class="tabs" style="margin:0;border:0"><a href="/queue?level=all" class="{{ 'on' if level == 'all' }}">All</a><a href="/queue?level=problems" class="{{ 'on' if level != 'all' }}">Warnings &amp; errors</a></div></div>
+  <div class="events" style="max-height:none">{% for e in events %}<div class="lvl-{{ e.level }}"><span class="muted">{{ e.created_at|dt }}</span> · <span class="chip">{{ e.source }}</span> {{ e.message }}{% if e.production_id %} <a href="/productions/{{ e.production_id }}">#{{ e.production_id }}</a>{% endif %}</div>{% else %}<div class="muted">No events.</div>{% endfor %}</div>
+  <p class="muted small">Full technical log: data/logs/studio.log (credentials are redacted).</p>
+</div>
+{% endblock %}

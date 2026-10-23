@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>Videos</h1><div class="muted">Every production, from research to upload.</div></div>
+  <div class="row"><a class="btn" href="/ideas">Start from an idea</a></div>
+</div>
+<div class="card">
+  {% if productions %}
+  <table>
+    <tr><th>#</th><th>Title</th><th>Format</th><th>Status</th><th>QA</th><th>YouTube</th><th>Updated</th></tr>
+    {% for p in productions %}
+    <tr>
+      <td>{{ p.id }}</td>
+      <td><a href="/productions/{{ p.id }}">{{ p.title or 'Untitled' }}</a>{% if p.test_mode %} <span class="chip">test</span>{% endif %}
+        {% if p.error %}<div class="small" style="color:var(--warn)">{{ p.error[:140] }}</div>{% endif %}</td>
+      <td>{{ p.format }}</td>
+      <td>{% include "_status.html" %}</td>
+      <td>{% if p.qa.checks is defined %}{% if p.qa.passed %}<span class="chip ok">passed</span>{% else %}<span class="chip err">failed</span>{% endif %}{% else %}—{% endif %}</td>
+      <td>{% if p.youtube_video_id %}<a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a>{% else %}—{% endif %}</td>
+      <td class="muted small">{{ p.updated_at|dt }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<div class="empty">No videos yet.</div>{% endif %}
+</div>
+{% endblock %}

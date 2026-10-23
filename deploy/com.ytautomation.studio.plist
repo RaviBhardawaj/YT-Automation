@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- YT Automation Studio: start at login, restart if it stops, keep the Mac from idle-sleeping while it runs.
+     Install:   cp deploy/com.ytautomation.studio.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.ytautomation.studio.plist
+     Remove:    launchctl unload ~/Library/LaunchAgents/com.ytautomation.studio.plist && rm ~/Library/LaunchAgents/com.ytautomation.studio.plist -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ytautomation.studio</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-i</string>
+        <string>/Users/RaviBhardawaj/yt-automation-studio/.venv/bin/python</string>
+        <string>-m</string>
+        <string>studio</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/RaviBhardawaj/yt-automation-studio</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/RaviBhardawaj/yt-automation-studio/data/logs/server.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/RaviBhardawaj/yt-automation-studio/data/logs/server.out</string>
+</dict>
+</plist>
