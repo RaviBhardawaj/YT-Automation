@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>Projects</h1><div class="muted">Every job: what you asked for, what it was made from, where it is now, and what it produced.</div></div>
+  <div class="row"><a class="btn primary" href="/create">Create video</a><a class="btn" href="/edit">Upload &amp; edit</a></div>
+</div>
+{% if task_counts.get('running') %}<div data-autorefresh="15"></div>{% endif %}
+<div class="tabs">{% for k, l in [('all','All'),('active','In progress'),('paused','Paused'),('review','Ready'),('published','Published'),('failed','Failed')] %}<a href="/projects?status={{ k }}" class="{{ 'on' if filter == k }}">{{ l }}</a>{% endfor %}</div>
+{% for p in projects %}
+<div class="card" style="margin-bottom:10px">
+  <div class="spread">
+    <div style="min-width:0"><a href="/productions/{{ p.id }}"><b>#{{ p.id }} {{ p.title }}</b></a>
+      <span class="chip">{{ {'edit':'upload & edit','story':'animated story','nifty_pivot':'NIFTY daily','general':'researched video','fib_lesson':'lesson'}.get(p.kind, p.kind) }}</span>
+      <span class="chip">{{ p.format }}</span>{% if p.children %}<span class="chip info">+{{ p.children }} more output(s)</span>{% endif %}
+      <div class="muted small">{{ p.channel_name or 'no channel' }} · started {{ p.created_at|dt }} · updated {{ p.updated_at|dt }}</div>
+      {% if p.prompt %}<div class="small" style="margin-top:4px">“{{ p.prompt[:200] }}”</div>{% endif %}
+      {% if p.sources %}<div class="small muted">From: {% for m in p.sources %}{{ m.original_name }}{{ ', ' if not loop.last }}{% endfor %}</div>{% endif %}
+      <div class="stages">{% set idx = p.stages.index(p.stage) if p.stage in p.stages else 0 %}{% for s in p.stages %}<span class="{{ 'now' if s == p.stage and p.status not in ('awaiting_approval','uploaded','approved','failed','needs_attention','rejected') else 'done' if loop.index0 < idx or p.status in ('awaiting_approval','uploaded','approved') else '' }}">{{ s }}</span>{% endfor %}</div>
+      {% if p.error %}<div class="small" style="color:var(--warn)">{{ p.error[:200] }}</div>{% endif %}
+    </div>
+    <div class="row">{% include "_status.html" %}{% include "_jobctl.html" %}</div>
+  </div>
+</div>
+{% else %}<div class="card empty">No projects here. <a href="/create">Create a video</a> or <a href="/edit">upload one to edit</a>.</div>{% endfor %}
+{% endblock %}

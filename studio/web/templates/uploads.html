@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>Video library · Uploads</h1><div class="muted">Your original files. They are read-only: every edit is saved as a new video linked back to its source.</div></div>
+  <div class="row"><a class="btn" href="/productions">Finished videos</a><a class="btn primary" href="/edit">Upload &amp; edit</a></div>
+</div>
+<div class="tabs"><a href="/productions">Finished videos</a><a href="/uploads" class="on">Uploads (originals)</a></div>
+<form method="get" class="row card tight" style="margin-bottom:12px">
+  <select name="kind" data-autosubmit style="width:auto"><option value="">All types</option>{% for k in kinds %}<option {{ 'selected' if kind == k }}>{{ k }}</option>{% endfor %}</select>
+  <input name="q" value="{{ q }}" placeholder="Search file names" style="width:200px"><button class="sm" type="submit">Search</button><a class="btn sm" href="/uploads">Reset</a>
+</form>
+<div class="card">
+  <table>
+    <tr><th>#</th><th>File</th><th>Details</th><th>Used in</th><th></th></tr>
+    {% for m in media %}
+    <tr><td>{{ m.id }}</td>
+      <td><b>{{ m.original_name }}</b> <span class="chip">{{ m.kind }}</span><div class="muted small">uploaded {{ m.created_at|dt }}</div>
+        {% if m.kind == 'video' %}<video src="/media-files/{{ m.id }}" preload="none" controls style="width:220px;border-radius:6px;margin-top:4px"></video>
+        {% elif m.kind == 'audio' %}<audio src="/media-files/{{ m.id }}" preload="none" controls></audio>
+        {% elif m.kind == 'image' %}<img src="/media-files/{{ m.id }}" alt="" style="width:160px;border-radius:6px">{% endif %}</td>
+      <td class="small">{% if m.duration %}{{ '%d:%02d' % (m.duration // 60, m.duration % 60) }} · {% endif %}{% if m.width %}{{ m.width }}×{{ m.height }} · {% endif %}{{ '%.1f' % (m.size_bytes / 1e6) }} MB
+        {% if m.kind in ('video','audio') %}<br>audio: {{ 'yes' if m.has_audio else 'no' }} · transcript: {{ 'ready' if m.transcribed else 'made on first edit' }}{% endif %}</td>
+      <td class="small">{% for u in m.used_by %}<a href="/productions/{{ u.id }}">#{{ u.id }} {{ u.title[:40] }}</a><br>{% else %}<span class="muted">not used yet</span>{% endfor %}</td>
+      <td><div class="row">{% if m.kind in ('video','audio') %}<a class="btn sm primary" href="/edit?media={{ m.id }}">Edit with AI</a>{% endif %}
+        <a class="btn sm" href="/media-files/{{ m.id }}?download=1">Download</a>
+        <button class="sm danger" data-post="/api/media-files/{{ m.id }}/delete" data-confirm="Delete the original '{{ m.original_name }}'? Videos already made from it are kept.">Delete</button></div></td></tr>
+    {% else %}<tr><td colspan="5" class="empty">No uploads yet. <a href="/edit">Upload a file</a>.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>Admin</h1><div class="muted">Creators, workspaces, plans and errors across the platform.</div></div>
+  <div class="row"><button data-post="/api/admin/signup" data-body='{"allow": {{ 'false' if allow_signup else 'true' }}}'>{{ 'Close sign-ups' if allow_signup else 'Open sign-ups' }}</button></div></div>
+<div class="card" style="margin-bottom:14px"><h2>Workspaces</h2>
+  <table><tr><th>#</th><th>Name</th><th>Owner</th><th>Plan</th><th>Channels</th><th>Videos</th><th>This month</th></tr>
+  {% for w in workspaces %}<tr><td>{{ w.id }}</td><td>{{ w.name }}</td><td class="small">{{ w.owner or '—' }}</td>
+    <td><span class="row" id="plan-{{ w.id }}"><select name="plan" style="width:auto">{% for k, pl in plans_table.items() %}<option value="{{ k }}" {{ 'selected' if w.plan == k }}>{{ pl.label }}</option>{% endfor %}</select>
+      <button class="sm" data-post="/api/admin/workspaces/{{ w.id }}" data-collect="#plan-{{ w.id }}">Save</button></span></td>
+    <td>{{ w.channels }}</td><td>{{ w.videos }}</td>
+    <td class="small">{{ w.used.videos }} videos · {{ '%.1f' % (w.used.render_minutes or 0) }} render min · {{ '%.2f' % (w.used.storage_bytes / 1024**3) }} GB{% if w.used.cost_usd %} · ${{ w.used.cost_usd }}{% endif %}</td></tr>{% endfor %}</table></div>
+<div class="card" style="margin-bottom:14px"><h2>Users</h2>
+  <table><tr><th>#</th><th>Email</th><th>Workspaces</th><th>Role</th><th>Last sign-in</th><th>Status</th></tr>
+  {% for u in users %}<tr><td>{{ u.id }}</td><td>{{ u.email }}{% if u.name %} <span class="muted small">({{ u.name }})</span>{% endif %}</td><td>{{ u.ws }}</td>
+    <td>{{ 'platform admin' if u.is_admin else 'creator' }}</td><td class="small muted">{{ u.last_login_at|dt }}</td>
+    <td>{% if u.id != me.id %}<button class="sm {{ 'danger' if u.status == 'active' }}" data-post="/api/admin/users/{{ u.id }}" data-body='{"status": "{{ 'disabled' if u.status == 'active' else 'active' }}"}'>{{ 'Disable' if u.status == 'active' else 'Enable' }}</button>{% else %}you{% endif %}</td></tr>{% endfor %}</table></div>
+<div class="card"><h2>Recent errors</h2>
+  <div class="events">{% for e in errors %}<div class="lvl-error"><span class="muted">{{ e.created_at|dt }}</span> · <span class="chip">{{ e.source }}</span> {{ e.message }}{% if e.production_id %} #{{ e.production_id }}{% endif %}</div>{% else %}<div class="muted">No errors.</div>{% endfor %}</div></div>
+{% endblock %}

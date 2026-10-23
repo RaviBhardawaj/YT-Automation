@@ -83,7 +83,7 @@ def generate(channel_id: int, count: int = 10, formats: list[str] | None = None,
             "status": "idea", "score": max(0, min(100, score)), "score_breakdown": db.dumps(breakdown),
             "claims": "[]", "evidence_ids": "[]", "gap": db.dumps({"characters": idea.characters}),
             "search_query": idea.title, "norm_title": dedup.normalize(idea.title), "idea_kind": idea.kind,
-            "style": style, "language": ch["language"], "summary": idea.logline,
+            "style": style, "language": ch["language"], "summary": idea.logline, "workspace_id": ch["workspace_id"],
             "created_at": db.iso(), "updated_at": db.iso()})
         batch.append((tid, idea.title))
         created.append(tid)

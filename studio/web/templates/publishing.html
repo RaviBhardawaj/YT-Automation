@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>Publishing</h1><div class="muted">Videos ready to publish, uploading, scheduled and published. A video only shows as published after YouTube returns its video ID.</div></div></div>
+<div class="card" style="margin-bottom:14px">
+  <h2>Connected channels</h2>
+  {% for c in channels %}<div class="spread small" style="padding:3px 0"><span><a href="/channels/{{ c.id }}">{{ c.name }}</a></span>
+    {% if c.connected %}<span class="chip ok">connected · {{ c.youtube_title or 'YouTube' }}</span>{% else %}<a class="btn sm" href="/channels/{{ c.id }}?tab=youtube">Connect YouTube</a>{% endif %}</div>
+  {% else %}<div class="muted small">No channels yet. <a href="/channels">Add one</a> — or just download your videos.</div>{% endfor %}
+</div>
+<div class="card">
+  <table>
+    <tr><th>#</th><th>Video</th><th>Channel</th><th>State</th><th>YouTube</th><th></th></tr>
+    {% for p in rows %}
+    <tr><td>{{ p.id }}</td><td><a href="/productions/{{ p.id }}">{{ p.title }}</a> <span class="chip">{{ p.format }}</span>{% if p.error and p.status in ('approved','uploading') %}<div class="small" style="color:var(--warn)">{{ p.error[:160] }}</div>{% endif %}</td>
+      <td class="small">{{ p.channel_name or '—' }}</td>
+      <td>{% if p.status == 'awaiting_approval' %}<span class="chip">READY TO PUBLISH</span>{% elif p.status == 'approved' %}<span class="chip warn">UPLOAD PENDING</span>{% elif p.status == 'uploading' %}<span class="chip info">UPLOADING</span>
+        {% elif p.status == 'uploaded' and p.privacy == 'scheduled' %}<span class="chip info">SCHEDULED {{ p.publish_at|dt }}</span>{% elif p.status == 'uploaded' %}<span class="chip ok">{{ 'PUBLISHED' if p.privacy == 'public' else 'UPLOADED · ' ~ (p.privacy or 'private')|upper }}</span>{% else %}{% include "_status.html" %}{% endif %}</td>
+      <td class="small">{% if p.youtube_video_id %}<a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a>{% else %}—{% endif %}</td>
+      <td>{% if p.status == 'awaiting_approval' %}<a class="btn sm primary" href="/productions/{{ p.id }}">Review &amp; publish</a>{% elif p.status == 'approved' and p.error %}<button class="sm" data-post="/api/productions/{{ p.id }}/retry" data-done="Upload re-queued">Retry upload</button>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="6" class="empty">Nothing to publish yet.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}

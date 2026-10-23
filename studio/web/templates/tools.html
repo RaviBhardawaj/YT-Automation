@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>AI agents &amp; tools</h1><div class="muted">The studio picks the tools for each job automatically. This is what is available right now and what powers it.</div></div></div>
+<div class="card">
+  <table><tr><th>Capability</th><th>Status</th><th>Powered by</th></tr>
+  {% for name, ok, how in rows %}<tr><td>{{ name }}</td><td>{% if ok %}<span class="chip ok">available</span>{% else %}<span class="chip warn">not available</span>{% endif %}</td><td class="small">{{ how }}</td></tr>{% endfor %}</table>
+  <div class="muted small" style="margin-top:8px">When a job asks for something marked “not available”, the studio says so on the job and completes everything else.</div>
+</div>
+{% endblock %}

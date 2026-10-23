@@ -10,20 +10,31 @@
 <body>
 <div class="layout">
   <aside class="side">
-    <div class="brand"><div class="logo">▶</div><div>YT Studio<div class="muted small" style="font-weight:400">{{ brand.channel_name or "Automation" }}</div></div></div>
+    <div class="brand"><div class="logo">▶</div><div>Video Studio<div class="muted small" style="font-weight:400">create · edit · publish</div></div></div>
     <nav class="nav">
       <a href="/" class="{{ 'on' if page == 'dashboard' }}">Dashboard</a>
-      <a href="/setup" class="{{ 'on' if page == 'setup' }}">Setup{% if not interview_done %} <span class="badge">!</span>{% endif %}</a>
-      <a href="/channels" class="{{ 'on' if page in ('channels', 'channel') }}">Channels</a>
+      <a href="/create" class="{{ 'on' if page == 'create' and mode == 'create' }}">Create video</a>
+      <a href="/edit" class="{{ 'on' if page == 'create' and mode == 'edit' }}">Upload &amp; edit</a>
       <a href="/ideas" class="{{ 'on' if page in ('ideas', 'idea') }}">Ideas</a>
-      <a href="/productions" class="{{ 'on' if page in ('productions', 'production') }}">Library{% if awaiting %} <span class="badge">{{ awaiting }}</span>{% endif %}</a>
+      <a href="/projects" class="{{ 'on' if page == 'projects' }}">Projects</a>
+      <a href="/productions" class="{{ 'on' if page in ('productions', 'production', 'uploads') }}">Video library{% if awaiting %} <span class="badge">{{ awaiting }}</span>{% endif %}</a>
+      <a href="/tools" class="{{ 'on' if page == 'tools' }}">AI agents &amp; tools</a>
+      <a href="/channels" class="{{ 'on' if page in ('channels', 'channel') }}">YouTube channels</a>
+      <a href="/schedule" class="{{ 'on' if page == 'schedule' }}">Automation &amp; schedules</a>
+      <a href="/publishing" class="{{ 'on' if page == 'publishing' }}">Publishing</a>
+      <a href="/billing" class="{{ 'on' if page == 'billing' }}">Usage &amp; billing</a>
       <a href="/queue" class="{{ 'on' if page == 'queue' }}">Queue &amp; logs{% if task_counts.get('failed') %} <span class="badge">{{ task_counts.get('failed') }}</span>{% endif %}</a>
-      <a href="/schedule" class="{{ 'on' if page == 'schedule' }}">Schedule</a>
-      <a href="/niches" class="{{ 'on' if page == 'niches' }}">Niche research</a>
+      {% if is_admin %}
+      <div class="muted small" style="margin:12px 10px 4px;text-transform:uppercase;letter-spacing:.05em">Platform admin</div>
+      <a href="/admin" class="{{ 'on' if page == 'admin' }}">Admin</a>
+      <a href="/settings" class="{{ 'on' if page == 'settings' }}">Settings</a>
       <a href="/compliance" class="{{ 'on' if page == 'compliance' }}">Compliance</a>
       <a href="/analytics" class="{{ 'on' if page == 'analytics' }}">Analytics &amp; costs</a>
-      <a href="/settings" class="{{ 'on' if page == 'settings' }}">Settings</a>
+      <a href="/niches" class="{{ 'on' if page == 'niches' }}">Niche research</a>
+      {% endif %}
     </nav>
+    {% if me %}<div class="spend" style="margin-top:14px"><b style="color:var(--text)">{{ workspace.name }}</b><br>{{ me.email }} · {{ role }}
+      <div style="margin-top:6px"><button class="sm" data-post="/api/auth/logout" data-done="Signed out">Sign out</button></div></div>{% endif %}
     <div class="spend">AI spend this month<br><b style="color:var(--text)">${{ '%.2f' % spend }}</b> of ${{ '%.2f' % budget }} limit
       <div class="bar {{ 'hot' if spend_pct >= 80 }}"><i style="width:{{ spend_pct }}%"></i></div>
       <div style="margin-top:8px">{{ task_counts.get('running', 0) }} running · {{ task_counts.get('pending', 0) }} queued</div>

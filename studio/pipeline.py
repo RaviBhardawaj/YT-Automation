@@ -465,6 +465,9 @@ def stages_for(kind: str) -> tuple[list[str], dict[str, str], dict[str, Any]]:
     if kind == "fib_lesson":
         from .finance import lessons as fin_lessons
         return fin_lessons.STAGES, fin_lessons.STATUS, {**STAGE_FN, **fin_lessons.STAGE_FN}
+    if kind in ("edit", "edit_clip"):
+        from .editing import workflow as editing
+        return (editing.STAGES if kind == "edit" else editing.CLIP_STAGES), editing.STATUS, editing.STAGE_FN
     if kind in ("story", "story_short"):
         from .creative import workflow as story
         return (story.STAGES if kind == "story" else story.SHORT_STAGES), story.STATUS, story.STAGE_FN
@@ -479,7 +482,9 @@ def run_production(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, A
     from . import channels
     lang = p.get("language") or (channels.get(p.get("channel_id")) or {}).get("language") or \
         profile.language_for(p.get("audience") or "india")
-    with channels.using(p.get("channel_id") or 1), profile.using_language(lang):
+    from . import plans
+    with channels.using(p.get("channel_id") or 1), profile.using_language(lang), \
+            plans.using(p.get("workspace_id") or 1):
         return _run_stages(pid, p)
 
 

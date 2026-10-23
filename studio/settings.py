@@ -120,6 +120,10 @@ DEFAULTS: dict[str, Any] = {
     "nifty.pivot_project_dir": "",            # empty = ~/Downloads/Pivot Reversal Strategy
     "script.sections_per_call": 2,           # long NIFTY scripts are written a few sections per AI call (models stop ~300-700 words)          # wait for today's complete 15m + 1h bars (until 22:00) before the 4 PM episode
     "compliance.auto_private_upload": False, # upload automatically as PRIVATE once the gate allows it
+    "billing.rates": {},                     # per-unit USD estimate rates overriding plans.DEFAULT_RATES
+    "billing.provider": "",                  # e.g. "stripe" once keys are configured; empty = billing not live
+    "auth.allow_signup": True,               # new creators can register their own workspace
+    "transcribe.model": "small",             # faster-whisper model: tiny | base | small | medium
     "compliance.owner_override": None,       # {active, accepted_at, accepted_by, statement}: see finance.gate.owner_override
     "production.test_mode": False,
     "production.max_active": 2,

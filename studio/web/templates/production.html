@@ -79,7 +79,7 @@
 </div>
 {% endif %}
 
-{% if p.video_path %}
+{% if info %}
 <div class="card">
   <div class="video-wrap">
     <video controls preload="metadata" src="{{ media_url(p.video_path) }}" {% if p.format == 'short' %}style="width:315px"{% else %}style="width:640px"{% endif %}></video>
@@ -100,6 +100,34 @@
 </div>
 {% endif %}
 
+{% if files or sources or job_outputs or p.package.unsupported %}
+<div class="grid g2" style="margin-top:16px">
+  <div class="card">
+    {% set has_video = files|selectattr('variant', 'equalto', 'video')|list %}
+    <div class="spread"><h2>Download</h2>
+      {% if has_video %}<span class="chip ok">READY TO DOWNLOAD</span>{% elif active %}<span class="chip info">PROCESSING</span>{% elif p.video_path %}<span class="chip err">VIDEO FILE MISSING</span>{% else %}<span class="chip">NOT AVAILABLE</span>{% endif %}</div>
+    {% if p.video_path and not has_video and not active %}<div class="note err small">The rendered video file is no longer on disk. Use “Retry” on the job{{ ' #' ~ p.parent_id if p.parent_id }} to render it again.</div>{% endif %}
+    {% if info %}<div class="small muted" style="margin-bottom:8px">{{ '%d:%02d' % (info.duration // 60, info.duration % 60) if info.duration }} · {{ info.width }}×{{ info.height }} ({{ '9:16 vertical' if info.height > info.width else '16:9' if info.width * 9 == info.height * 16 else 'custom' }}) · {{ '%.1f' % (info.size_bytes / 1e6) }} MB · {{ info.vcodec }}/{{ info.acodec }}</div>{% endif %}
+    {% for f in files %}<div class="spread small" style="padding:4px 0;border-bottom:1px dashed var(--line)"><span>{{ f.label }} <span class="muted">{{ '%.1f' % (f.size / 1e6) }} MB</span></span>
+      <a class="btn sm primary" href="/download/{{ p.id }}/{{ f.variant }}">Download</a></div>
+    {% else %}<div class="muted small">{{ 'Files appear here when rendering finishes.' if active else 'No rendered file for this job.' }}</div>{% endfor %}
+    {% if job_outputs %}<h3>All outputs of this job</h3>
+      {% for o in job_outputs %}<div class="spread small" style="padding:3px 0"><a href="/productions/{{ o.id }}">#{{ o.id }} {{ o.title }}</a> <span><span class="chip">{{ o.format }}</span> {% with p=o %}{% include "_status.html" %}{% endwith %}</span></div>{% endfor %}{% endif %}
+    {% if p.parent_id %}<div class="small muted" style="margin-top:6px">Part of job <a href="/productions/{{ p.parent_id }}">#{{ p.parent_id }}</a></div>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Made from</h2>
+    {% if sources %}{% for m in sources %}<div class="small" style="padding:3px 0"><span class="chip">{{ m.kind }}</span> {{ m.original_name }}
+      <span class="muted">{% if m.duration %}{{ '%d:%02d' % (m.duration // 60, m.duration % 60) }} · {% endif %}{{ '%.1f' % (m.size_bytes / 1e6) }} MB · original kept unchanged</span>
+      <a href="/media-files/{{ m.id }}?download=1">download original</a></div>{% endfor %}
+    {% else %}<div class="muted small">{{ 'Generated from your prompt — no uploaded files.' }}</div>{% endif %}
+    {% set rq = loads(p.request, {}) or {} %}{% if rq.request %}<div class="small" style="margin-top:8px"><b>Your request:</b> {{ rq.request }}</div>{% endif %}
+    {% if p.package.edit_plan %}<div class="small muted" style="margin-top:6px">Plan: {{ p.package.edit_plan.summary }} ({{ 'AI plan' if p.package.planner.planner == 'ai' else 'rule-based plan — AI unavailable' }})</div>{% endif %}
+    {% if p.package.unsupported %}<div class="note warn small">Not possible with the connected tools: {{ p.package.unsupported|join('; ') }}. Everything else was done.</div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
 {% if p.qa.checks %}
 <div class="grid g2" style="margin-top:16px">
   <div class="card">
@@ -111,8 +139,15 @@
   <div class="card">
     <h2>Publish</h2>
     {% if p.status == 'awaiting_approval' %}
-      {% if not connected %}<div class="note warn">Connect your YouTube channel in <a href="/settings?tab=youtube">Settings › YouTube</a> first.</div>{% endif %}
+      <div class="small muted" style="margin-bottom:8px">Download it and publish yourself, or publish / schedule it to one of your connected channels. Nothing is published until you confirm.</div>
       <div id="approve-form">
+        <label class="f"><span>Channel</span><select name="channel_id">
+          {% for c in my_channels %}<option value="{{ c.id }}" {{ 'selected' if c.id == p.channel_id }} {{ 'disabled' if not c.connected }}>{{ c.name }}{{ ' — ' ~ c.youtube_title if c.connected and c.youtube_title else (' — not connected' if not c.connected else '') }}</option>
+          {% else %}<option value="">No channels yet</option>{% endfor %}</select></label>
+        {% if not my_channels|selectattr('connected')|list %}<div class="note warn small">None of your channels is connected to YouTube. Connect one under <a href="/channels">YouTube channels</a>, or use Download.</div>{% endif %}
+        <label class="f"><span>Title</span><input name="title" maxlength="100" value="{{ pkg.title or p.title }}"></label>
+        <label class="f"><span>Description</span><textarea name="description" rows="5">{{ pkg.final_description or pkg.description or '' }}</textarea></label>
+        <label class="f"><span>Tags (comma separated)</span><input name="tags" value="{{ (pkg.tags or [])|join(', ') }}"></label>
         <label class="f"><span>Visibility</span><select name="privacy">
           <option value="private" {{ 'disabled' if p.kind in ('nifty_pivot', 'fib_lesson', 'nifty_short') and 'private' not in gate.allowed_privacy|default([]) }}>Private (you publish later in YouTube Studio)</option>
           {% for v, label in [('scheduled','Scheduled public release'),('unlisted','Unlisted'),('public','Public now')] %}
@@ -126,8 +161,9 @@
         <div class="muted small">Suggested: {{ pkg.publish_suggestion.local if pkg.publish_suggestion else '—' }} — {{ pkg.publish_suggestion.basis if pkg.publish_suggestion else '' }}</div>
       </div>
       <div class="row" style="margin-top:12px">
-        <button class="primary" data-post="/api/productions/{{ p.id }}/approve" data-collect="#approve-form" {{ 'disabled' if not connected }}
-          data-confirm="Upload this video to your YouTube channel with the selected visibility?">Approve &amp; upload</button>
+        <button class="primary" data-post="/api/productions/{{ p.id }}/publish" data-collect="#approve-form" {{ 'disabled' if not my_channels|selectattr('connected')|list }}
+          data-confirm="Upload this video to the selected YouTube channel with the selected visibility?">Publish / schedule</button>
+        {% if files|selectattr('variant', 'equalto', 'video')|list %}<a class="btn" href="/download/{{ p.id }}/video">Download instead</a>{% endif %}
       </div>
       {% if not audit %}<div class="note small">YouTube locks videos uploaded through unaudited API projects as private. Once Google approves your project's audit, tick “audit passed” in Settings › YouTube to unlock public and scheduled uploads.</div>{% endif %}
     {% elif p.status in ('approved','uploading') %}<div class="note">Approved — upload {{ 'in progress' if p.status == 'uploading' else 'queued' }}.</div>

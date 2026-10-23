@@ -367,7 +367,7 @@ def _channel_fields(ch: dict[str, Any] | None, idea: Any, ev_by_id: dict[int, An
     fresh = bool(dated) and (db.parse_iso(dated[0]["published_at"]) or datetime.min.replace(tzinfo=timezone.utc)) > \
         datetime.now(timezone.utc) - timedelta(days=21)
     src = (dated or cited or [{}])[0]
-    return {"channel_id": ch["id"], "idea_kind": "trend" if fresh else "inspired" if cited else "evergreen",
+    return {"channel_id": ch["id"], "workspace_id": ch["workspace_id"], "idea_kind": "trend" if fresh else "inspired" if cited else "evergreen",
             "style": next(iter(ch.get("styles") or []), None), "language": language, "summary": idea.angle,
             "source_url": src.get("url"), "source_date": (src.get("published_at") or "")[:10] or None}
 

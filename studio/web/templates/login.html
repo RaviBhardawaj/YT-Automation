@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf" content="{{ csrf }}">
+  <title>{{ 'Sign in' if mode == 'login' else 'Create account' }} · {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ static_v }}">
+</head>
+<body>
+<div style="max-width:420px;margin:8vh auto;padding:0 16px">
+  <div class="brand" style="padding:0 0 18px"><div class="logo">▶</div><div>{{ app_name }}<div class="muted small" style="font-weight:400">Create, edit and publish videos for any niche</div></div></div>
+  <form class="card" data-form="/api/auth/{{ mode }}" data-done="{{ 'Signed in' if mode == 'login' else 'Account created' }}">
+    <h2>{% if mode == 'login' %}Sign in{% elif first %}Create the owner account{% else %}Create your studio{% endif %}</h2>
+    {% if mode == 'signup' and first %}<div class="note small">This first account becomes the platform admin and owns the studio's existing channels and videos.</div>{% endif %}
+    {% if error %}<div class="note err">{{ error }}</div>{% endif %}
+    {% if mode == 'signup' %}<label class="f"><span>Your name</span><input name="name" autocomplete="name"></label>
+    {% if not first %}<label class="f"><span>Studio / workspace name</span><input name="workspace" placeholder="e.g. Raat Ki Kahaniyan"></label>{% endif %}{% endif %}
+    <label class="f"><span>Email</span><input name="email" type="email" required autocomplete="email"></label>
+    <label class="f"><span>Password{% if mode == 'signup' %} (10+ characters){% endif %}</span><input name="password" type="password" required minlength="{{ 10 if mode == 'signup' else 1 }}" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}"></label>
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="primary" type="submit" style="width:100%">{{ 'Sign in' if mode == 'login' else 'Create account' }}</button>
+    <div class="small muted" style="margin-top:10px;text-align:center">
+      {% if mode == 'login' and allow_signup %}New here? <a href="/signup">Create an account</a>{% elif mode == 'signup' and not first %}Have an account? <a href="/login">Sign in</a>{% endif %}</div>
+  </form>
+</div>
+<script src="/static/app.js?v={{ static_v }}"></script>
+</body>
+</html>

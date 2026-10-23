@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="head">
-  <div><h1>Library{% if ch %} · {{ ch.name }}{% endif %}</h1><div class="muted">Every video and Short, from request to upload, with its files and status.</div></div>
+  <div><h1>Video library{% if ch %} · {{ ch.name }}{% endif %}</h1><div class="muted">Every video and Short, from request to upload, with its files and status.</div></div>
   <div class="row">{% if ch %}<a class="btn primary" href="/channels/{{ ch.id }}">Create video</a>{% endif %}<a class="btn" href="/ideas{{ '?channel=' ~ ch.id if ch }}">Ideas</a></div>
 </div>
 {% if task_counts.get('running') %}<div data-autorefresh="20"></div>{% endif %}
+<div class="tabs"><a href="/productions" class="on">Finished videos</a><a href="/uploads">Uploads (originals)</a></div>
 <form method="get" action="/productions" class="card tight" style="margin-bottom:14px">
   <div class="row">
     <select name="channel" data-autosubmit style="width:auto"><option value="all">All channels</option>
@@ -32,8 +33,8 @@
       <td>{{ p.format }}</td>
       <td>{% include "_status.html" %}</td>
       <td>{% if p.qa.checks is defined %}{% if p.qa.passed %}<span class="chip ok">passed</span>{% else %}<span class="chip err">failed</span>{% endif %}{% else %}—{% endif %}</td>
-      <td class="small">{% if p.video_path %}<a href="{{ media_url(p.video_path) }}" download>video</a>{% endif %}
-        {% if p.thumbnail_path %} · <a href="{{ media_url(p.thumbnail_path) }}" download>thumbnail</a>{% endif %}
+      <td class="small">{% if p.has_video %}<a href="/download/{{ p.id }}/video">download video</a>{% elif p.video_path %}<span class="muted">file unavailable</span>{% endif %}
+        {% if p.has_thumb %} · <a href="/download/{{ p.id }}/thumbnail">thumbnail</a>{% endif %}
         {% if p.youtube_video_id %}<br><a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a>{% endif %}</td>
       <td class="muted small">{{ p.updated_at|dt }}</td>
       <td>{% include "_jobctl.html" %}</td>

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import bootstrap, config, db, logs, net, pipeline, profile, settings, sysinfo, worker
+from .. import auth, bootstrap, config, db, logs, net, pipeline, plans, profile, settings, sysinfo, worker
 from ..ai import providers, router
 from ..media import tts
 from ..research import engine
@@ -47,10 +47,60 @@ import jinja2  # noqa: E402
 templates.env.undefined = jinja2.ChainableUndefined
 
 
+PUBLIC = ("/login", "/signup", "/api/auth/login", "/api/auth/signup", "/static/", "/oauth/google/callback", "/favicon.ico")
+ADMIN_ONLY = ("/analytics", "/settings", "/compliance", "/niches", "/setup", "/admin", "/api/settings", "/api/secrets/",
+              "/api/providers/", "/api/ollama/", "/api/voice/", "/api/youtube/", "/api/compliance/", "/api/datasources/",
+              "/api/datasets/", "/api/niches/", "/api/interview/", "/api/feeds", "/api/upload/", "/api/lessons/",
+              "/api/episodes", "/api/productions/selftest", "/api/analytics/", "/api/ideas/generate", "/api/admin/")
+# /<prefix>/<id>: the id must belong to the signed-in workspace (404 otherwise — never reveal other tenants' data)
+OWNED_PATHS = [(re.compile(r"^/(?:api/)?productions/(\d+)"), "productions"),
+               (re.compile(r"^/download/(\d+)"), "productions"),
+               (re.compile(r"^/(?:api/)?(?:ideas|topics)/(\d+)"), "topics"),
+               (re.compile(r"^/(?:api/)?channels/(\d+)"), "channels"),
+               (re.compile(r"^/api/characters/(\d+)"), "characters"),
+               (re.compile(r"^/api/tasks/(\d+)"), "tasks"),
+               (re.compile(r"^/(?:api/)?media-files/(\d+)"), "media"),
+               (re.compile(r"^/media/productions/(\d+)/"), "productions"),
+               (re.compile(r"^/media/channels/(\d+)/"), "channels")]
+
+
+def _deny(request: Request, code: int, msg: str):
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"ok": False, "error": msg}, status_code=code)
+    if code == 401:
+        return RedirectResponse("/login?next=" + request.url.path, status_code=303)
+    return HTMLResponse(f"<h1>{msg}</h1><p><a href='/'>Back</a></p>", status_code=code)
+
+
 @app.middleware("http")
 async def guard(request: Request, call_next):
     if request.headers.get("host", "") not in ALLOWED_HOSTS:
         return PlainTextResponse("Forbidden host", status_code=403)
+    path = request.url.path
+    request.state.sess = None
+    if not path.startswith(PUBLIC):
+        if not auth.has_users():
+            return _deny(request, 401, "Create the owner account first") if path.startswith("/api/") else \
+                RedirectResponse("/signup", status_code=303)
+        sess = auth.session(request.cookies.get("sid"))
+        if not sess:
+            return _deny(request, 401, "Sign in first")
+        request.state.sess = sess
+        ws_id = sess["workspace"]["id"]
+        if path.startswith(ADMIN_ONLY) and not sess["user"]["is_admin"]:
+            return _deny(request, 403, "Only the platform admin can open this")
+        for rx, table in OWNED_PATHS:
+            m = rx.match(path)
+            if m and table == "tasks" and sess["user"]["is_admin"] and \
+                    db.q1("SELECT 1 FROM tasks WHERE id=? AND production_id IS NULL", (int(m.group(1)),)):
+                continue                                   # system tasks (research, schedules): platform admin
+            if m and not auth.owns(ws_id, table, int(m.group(1))):
+                return _deny(request, 404, "Not found")
+        if path.startswith("/media/workspaces/") and not path.startswith(f"/media/workspaces/{ws_id:05d}/"):
+            return _deny(request, 404, "Not found")
+        if request.method not in ("GET", "HEAD", "OPTIONS") and sess["role"] == "viewer":
+            return _deny(request, 403, "Viewers can't change anything in this workspace")
+        plans._current.set(ws_id)
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
         if origin and origin not in ALLOWED_ORIGINS:
@@ -103,19 +153,35 @@ def media_url(path: str | None) -> str | None:
     return "/media/" + str(rel)
 
 
-def common() -> dict[str, Any]:
+def ws_id(request: Request) -> int:
+    return request.state.sess["workspace"]["id"]
+
+
+def is_admin(request: Request) -> bool:
+    return bool(request.state.sess and request.state.sess["user"]["is_admin"])
+
+
+def common(request: Request | None = None) -> dict[str, Any]:
     spend = router.month_spend()
     budget = float(settings.get("ai.monthly_budget_usd"))
-    counts = {r["status"]: r["n"] for r in db.q("SELECT status, COUNT(*) AS n FROM tasks GROUP BY status")}
+    sess = getattr(request.state, "sess", None) if request else None
+    ws = sess["workspace"]["id"] if sess else 0
+    counts = {r["status"]: r["n"] for r in db.q(
+        "SELECT t.status, COUNT(*) AS n FROM tasks t LEFT JOIN productions p ON p.id=t.production_id "
+        "WHERE p.workspace_id=? OR (? AND t.production_id IS NULL) GROUP BY t.status",
+        (ws, int(bool(sess and sess["user"]["is_admin"]))))}
     return {"csrf": CSRF, "app_name": config.APP_NAME, "spend": spend, "budget": budget,
             "spend_pct": min(100, int(spend / budget * 100)) if budget else 0,
             "brand": settings.get("brand"), "interview_done": profile.complete(), "task_counts": counts,
-            "awaiting": db.q1("SELECT COUNT(*) AS n FROM productions WHERE status='awaiting_approval'")["n"],
-            "media_url": media_url, "loads": db.loads}
+            "awaiting": db.q1("SELECT COUNT(*) AS n FROM productions WHERE status='awaiting_approval' AND workspace_id=?",
+                              (ws,))["n"],
+            "media_url": media_url, "loads": db.loads, "me": sess["user"] if sess else None,
+            "workspace": sess["workspace"] if sess else None, "role": sess["role"] if sess else None,
+            "is_admin": bool(sess and sess["user"]["is_admin"])}
 
 
 def page(request: Request, name: str, **ctx: Any) -> HTMLResponse:
-    return templates.TemplateResponse(request, name, {**common(), **ctx, "page": name.removesuffix(".html")})
+    return templates.TemplateResponse(request, name, {**common(request), **ctx, "page": name.removesuffix(".html")})
 
 
 def _fmt_dt(value: str | None) -> str:
@@ -136,19 +202,75 @@ def _static_version() -> str:
 templates.env.globals["static_v"] = _static_version()
 
 
+# ------------------------------------------------------------------ accounts
+
+def _login_response(token: str, next_url: str) -> RedirectResponse:
+    resp = RedirectResponse(next_url if next_url.startswith("/") and not next_url.startswith("//") else "/",
+                            status_code=303)
+    # Lax (not Strict) so the session survives the redirect back from Google's YouTube authorization
+    resp.set_cookie("sid", token, httponly=True, samesite="lax", max_age=auth.SESSION_DAYS * 86400)
+    return resp
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/", error: str = ""):
+    if not auth.has_users():
+        return RedirectResponse("/signup", status_code=303)
+    return templates.TemplateResponse(request, "login.html", {"csrf": CSRF, "app_name": config.APP_NAME,
+                                      "static_v": templates.env.globals["static_v"], "next": next, "error": error,
+                                      "mode": "login", "allow_signup": settings.get("auth.allow_signup")})
+
+
+@app.get("/signup", response_class=HTMLResponse)
+def signup_page(request: Request, error: str = ""):
+    first = not auth.has_users()
+    if not first and not settings.get("auth.allow_signup"):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "login.html", {"csrf": CSRF, "app_name": config.APP_NAME,
+                                      "static_v": templates.env.globals["static_v"], "next": "/", "error": error,
+                                      "mode": "signup", "first": first, "allow_signup": True})
+
+
+@app.post("/api/auth/{action}")
+async def api_auth(request: Request, action: str):
+    data = await body(request)
+    try:
+        if action == "signup":
+            if auth.has_users() and not settings.get("auth.allow_signup"):
+                return bad("Sign-ups are closed.")
+            auth.register(str(data.get("email", "")), str(data.get("password", "")), str(data.get("name", "")),
+                          str(data.get("workspace", "")))
+            action = "login"
+        if action == "login":
+            token, _ = auth.login(str(data.get("email", "")), str(data.get("password", "")))
+            resp = JSONResponse({"ok": True, "next": str(data.get("next") or "/")})
+            resp.set_cookie("sid", token, httponly=True, samesite="lax", max_age=auth.SESSION_DAYS * 86400)
+            return resp
+    except auth.AuthError as e:
+        return bad(str(e))
+    if action == "logout":
+        auth.logout(request.cookies.get("sid"))
+        resp = JSONResponse({"ok": True, "next": "/login"})
+        resp.delete_cookie("sid")
+        return resp
+    return bad("unknown action")
+
+
 # ------------------------------------------------------------------ pages
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     from .. import channels as chmod
     cid = _channel_arg(request, request.query_params.get("channel"))
-    w, a = ("WHERE p.channel_id=?", (cid,)) if cid else ("", ())
+    ws = ws_id(request)
+    w, a = ("WHERE p.channel_id=?", (cid,)) if cid else ("WHERE p.workspace_id=?", (ws,))
     prods = db.q(f"SELECT p.id, p.title, p.format, p.status, p.stage, p.updated_at, p.test_mode, p.parent_id, "
                  f"c.name AS channel_name FROM productions p LEFT JOIN channels c ON c.id=p.channel_id {w} "
                  f"ORDER BY p.id DESC LIMIT 10", a)
     ideas = db.q(f"SELECT id, title, format, score FROM topics WHERE status IN ('idea','approved') "
-                 f"{'AND channel_id=?' if cid else 'AND channel_id IS NOT NULL'} ORDER BY saved DESC, score DESC LIMIT 6", a)
-    chans = chmod.all_channels()
+                 f"{'AND channel_id=?' if cid else 'AND workspace_id=? AND channel_id IS NOT NULL'} "
+                 f"ORDER BY saved DESC, score DESC LIMIT 6", a)
+    chans = chmod.all_channels(ws)
     for c in chans:
         c["counts"] = chmod.counts(c["id"])
         c["connected"] = oauth.connected(c["id"])
@@ -157,8 +279,14 @@ def home(request: Request):
         c["next_run"] = sched["next_run_at"] if sched else None
     ch = chmod.get(cid)
     resp = page(request, "dashboard.html", productions=prods, ideas=ideas, channels=chans, ch=ch,
-                totals=chmod.counts(cid), providers=providers.status_all(),
-                schedules=db.q("SELECT * FROM schedules WHERE enabled=1 ORDER BY next_run_at"))
+                totals=chmod.counts(cid, ws), providers=providers.status_all(),
+                schedules=db.q("SELECT s.* FROM schedules s JOIN channels c ON c.id=s.channel_id WHERE s.enabled=1 "
+                               "AND c.workspace_id=? ORDER BY s.next_run_at", (ws,)),
+                uploads_recent=db.q("SELECT * FROM media WHERE workspace_id=? AND status='ready' ORDER BY id DESC "
+                                    "LIMIT 5", (ws,)),
+                unfinished=db.q("SELECT id, title, status, kind FROM productions WHERE workspace_id=? AND parent_id IS "
+                                "NULL AND status IN ('failed','needs_attention','paused','queued') ORDER BY id DESC "
+                                "LIMIT 5", (ws,)))
     return _with_cookie(resp, cid) if request.query_params.get("channel") is not None else resp
 
 
@@ -193,7 +321,7 @@ def ideas_page(request: Request, channel: str = "", niche: str = "", format: str
                q: str = "", page_no: int = 1):
     from .. import channels as chmod
     cid = _channel_arg(request, channel)
-    where, args = [IDEA_STATUS.get(status, IDEA_STATUS["open"])], []
+    where, args = [IDEA_STATUS.get(status, IDEA_STATUS["open"]), "t.workspace_id=?"], [ws_id(request)]
     if cid:
         where.append("t.channel_id=?"); args.append(cid)
     if niche:
@@ -223,8 +351,9 @@ def ideas_page(request: Request, channel: str = "", niche: str = "", format: str
         r["gap"] = db.loads(r["gap"], {}) or {}
         ids = db.loads(r["evidence_ids"], []) or []
         r["evidence"] = engine.load_evidence(f"id IN ({','.join('?' for _ in ids)})", tuple(ids)) if ids else []
-    running = db.q("SELECT id, payload FROM tasks WHERE type IN ('channel_ideas','ideation') AND status IN ('pending','running')")
-    all_ch = chmod.all_channels()
+    all_ch = chmod.all_channels(ws_id(request))
+    running = [t for t in db.q("SELECT id, payload FROM tasks WHERE type='channel_ideas' AND status IN ('pending','running')")
+               if (db.loads(t["payload"], {}) or {}).get("channel_id") in {c["id"] for c in all_ch}]
     filters = {"channel": str(cid or ""), "niche": niche, "format": format, "language": language, "style": style,
                "kind": kind, "fresh": fresh, "status": status, "sort": sort, "q": q}
     from urllib.parse import urlencode
@@ -233,7 +362,8 @@ def ideas_page(request: Request, channel: str = "", niche: str = "", format: str
                 filters=filters, total=total, pages=pages, page_no=page_no, qs=qs,
                 niches=sorted({c["niche"] for c in all_ch if c["niche"]}),
                 languages=sorted({r["l"] for r in db.q("SELECT DISTINCT COALESCE(t.language, c.language) AS l FROM topics t "
-                                                       "LEFT JOIN channels c ON c.id=t.channel_id") if r["l"]}),
+                                                       "LEFT JOIN channels c ON c.id=t.channel_id WHERE t.workspace_id=?",
+                                                       (ws_id(request),)) if r["l"]}),
                 styles=chmod.STYLES)
     return _with_cookie(resp, cid) if channel != "" else resp
 
@@ -269,7 +399,7 @@ def productions_page(request: Request, channel: str = "", status: str = "all", f
                      q: str = "", page_no: int = 1):
     from .. import channels as chmod
     cid = _channel_arg(request, channel)
-    where, args = [LIB_STATUS.get(status, "1=1")], []
+    where, args = [LIB_STATUS.get(status, "1=1"), "p.workspace_id=?"], [ws_id(request)]
     if cid:
         where.append("p.channel_id=?"); args.append(cid)
     if format in ("long", "short"):
@@ -289,9 +419,12 @@ def productions_page(request: Request, channel: str = "", status: str = "all", f
     for r in rows:
         r["qa"] = db.loads(r["qa"], {}) or {}
         r["tl"] = db.loads(r["timeline"], {}) or {}
+        r["has_video"] = bool(r["video_path"]) and Path(r["video_path"]).is_file()
+        r["has_thumb"] = bool(r["thumbnail_path"]) and Path(r["thumbnail_path"]).is_file()
     from urllib.parse import urlencode
     filters = {"channel": str(cid or ""), "status": status, "format": format, "kind": kind, "q": q}
-    resp = page(request, "productions.html", productions=rows, formats=profile.formats(), channels=chmod.all_channels(),
+    resp = page(request, "productions.html", productions=rows, formats=profile.formats(),
+                channels=chmod.all_channels(ws_id(request)),
                 ch=chmod.get(cid), filters=filters, total=total, pages=pages, page_no=page_no,
                 qs=urlencode({k: v for k, v in filters.items() if v}))
     return _with_cookie(resp, cid) if channel != "" else resp
@@ -310,9 +443,30 @@ def production_page(request: Request, pid: int):
     if p.get("kind") in pipeline.FINANCE_KINDS:
         from ..finance import audit as fin_audit
         fin_audit_entries = fin_audit.entries(production_id=pid, limit=60)
+    from .. import channels as chmod
+    ws = ws_id(request)
+    chans = chmod.all_channels(ws)
+    for c in chans:
+        c["connected"] = oauth.connected(c["id"])
+    files = outputs_of(p)
+    info = None
+    if p.get("video_path") and Path(p["video_path"]).is_file():
+        try:
+            from ..uploads import probe
+            info = {**probe(Path(p["video_path"])), "size_bytes": Path(p["video_path"]).stat().st_size}
+        except Exception:
+            info = None
+    if p.get("video_path") and not info and p["status"] in ("awaiting_approval", "approved"):
+        p["status"] = "needs_attention"               # shown only: never call a missing file ready
+        p["error"] = "The rendered video file is missing. Retry the job to render it again."
+    sources = [m for m in (uploads_mod().get(i, ws) for i in db.loads(p.get("source_media"), []) or []) if m]
+    job_outputs = db.q("SELECT id, title, status, format, video_path, youtube_video_id FROM productions WHERE parent_id=? "
+                       "AND kind='edit_clip' ORDER BY id", (pid,)) if p.get("kind") == "edit" else []
     return page(request, "production.html", p=p, pkg=p["package"], tl=p["timeline"], topic=topic, evidence=ev,
                 ev_by_id=ev_by_id, assets=pipeline.assets_for(pid), events=events, tasks=tasks,
-                stages=stages, connected=oauth.connected(), audit=settings.get("youtube.audit_passed"),
+                files=files, info=info, sources=sources, job_outputs=job_outputs, my_channels=chans,
+                stages=stages, connected=oauth.connected(p["channel_id"]) if p.get("channel_id") else False,
+                audit=settings.get("youtube.audit_passed"),
                 active=p["status"] not in pipeline.TERMINAL, gate=p.get("compliance") or {},
                 facts=(p.get("episode") or {}).get("facts") or {}, fin_audit=fin_audit_entries,
                 shorts=db.q("SELECT id, title, status, privacy, youtube_video_id, video_path, compliance, "
@@ -323,16 +477,24 @@ def production_page(request: Request, pid: int):
 
 @app.get("/queue", response_class=HTMLResponse)
 def queue_page(request: Request, level: str = "all"):
-    tasks = db.q("SELECT * FROM tasks ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'pending' THEN 1 WHEN 'paused' THEN 2 "
-                 "WHEN 'failed' THEN 3 ELSE 4 END, id DESC LIMIT 150")
-    where = "" if level == "all" else "WHERE level IN ('warning','error')"
-    events = db.q(f"SELECT * FROM logs {where} ORDER BY id DESC LIMIT 300")
+    ws, admin = ws_id(request), int(is_admin(request))
+    tasks = db.q("SELECT t.* FROM tasks t LEFT JOIN productions p ON p.id=t.production_id "
+                 "WHERE p.workspace_id=? OR (? AND t.production_id IS NULL) "
+                 "ORDER BY CASE t.status WHEN 'running' THEN 0 WHEN 'pending' THEN 1 WHEN 'paused' THEN 2 "
+                 "WHEN 'failed' THEN 3 ELSE 4 END, t.id DESC LIMIT 150", (ws, admin))
+    where = "" if level == "all" else "AND l.level IN ('warning','error')"
+    events = db.q(f"SELECT l.* FROM logs l LEFT JOIN productions p ON p.id=l.production_id "
+                  f"WHERE (p.workspace_id=? OR (? AND l.production_id IS NULL)) {where} ORDER BY l.id DESC LIMIT 300",
+                  (ws, admin))
     return page(request, "queue.html", tasks=tasks, events=events, level=level)
 
 
 @app.get("/schedule", response_class=HTMLResponse)
 def schedule_page(request: Request):
-    return page(request, "schedule.html", schedules=db.q("SELECT * FROM schedules ORDER BY id"),
+    rows = db.q("SELECT s.* FROM schedules s LEFT JOIN channels c ON c.id=s.channel_id "
+                "WHERE c.workspace_id=? OR (? AND s.channel_id IS NULL) ORDER BY s.id",
+                (ws_id(request), int(is_admin(request))))
+    return page(request, "schedule.html", schedules=rows,
                 cadence=profile.cadence(), slots=settings.get("publish.slots"))
 
 
@@ -369,7 +531,8 @@ def settings_page(request: Request, tab: str = "ai"):
 @app.get("/media/{path:path}")
 def media(path: str):
     target = (config.DATA_DIR / path).resolve()
-    allowed = [config.PRODUCTIONS_DIR, config.SAMPLES_DIR, config.ASSET_CACHE_DIR, config.BRAND_DIR]
+    allowed = [config.PRODUCTIONS_DIR, config.SAMPLES_DIR, config.ASSET_CACHE_DIR, config.BRAND_DIR,
+               config.DATA_DIR / "workspaces", config.DATA_DIR / "channels"]
     if not any(target.is_relative_to(a.resolve()) for a in allowed) or not target.is_file():
         raise HTTPException(404)
     mt = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
@@ -533,17 +696,24 @@ async def api_episode_create(request: Request):
 # ------------------------------------------------------------------ API: status
 
 @app.get("/api/status")
-def api_status():
+def api_status(request: Request):
+    ws, admin = ws_id(request), int(is_admin(request))
     running = db.q("SELECT t.id, t.type, t.production_id, t.locked_at, p.title, p.status AS pstatus FROM tasks t "
-                   "LEFT JOIN productions p ON p.id=t.production_id WHERE t.status='running'")
-    pending = db.q1("SELECT COUNT(*) AS n FROM tasks WHERE status='pending'")["n"]
-    events = db.q("SELECT level, source, message, created_at, production_id FROM logs ORDER BY id DESC LIMIT 15")
+                   "LEFT JOIN productions p ON p.id=t.production_id WHERE t.status='running' AND "
+                   "(p.workspace_id=? OR (? AND t.production_id IS NULL))", (ws, admin))
+    pending = db.q1("SELECT COUNT(*) AS n FROM tasks t LEFT JOIN productions p ON p.id=t.production_id "
+                    "WHERE t.status='pending' AND (p.workspace_id=? OR (? AND t.production_id IS NULL))",
+                    (ws, admin))["n"]
+    events = db.q("SELECT l.level, l.source, l.message, l.created_at, l.production_id FROM logs l "
+                  "LEFT JOIN productions p ON p.id=l.production_id WHERE p.workspace_id=? OR "
+                  "(? AND l.production_id IS NULL) ORDER BY l.id DESC LIMIT 15", (ws, admin))
     for e in events:
         e["when"] = _fmt_dt(e["created_at"])
     spend = router.month_spend()
     return {"running": running, "pending": pending, "events": events, "spend": round(spend, 4),
             "budget": settings.get("ai.monthly_budget_usd"),
-            "awaiting": db.q1("SELECT COUNT(*) AS n FROM productions WHERE status='awaiting_approval'")["n"]}
+            "awaiting": db.q1("SELECT COUNT(*) AS n FROM productions WHERE status='awaiting_approval' AND "
+                              "workspace_id=?", (ws,))["n"]}
 
 
 @app.get("/api/productions/{pid}/status")
@@ -709,13 +879,16 @@ async def api_selftest(request: Request):
 @app.post("/api/productions/{pid}/approve")
 async def api_approve(request: Request, pid: int):
     data = await body(request)
-    privacy = data.get("privacy", "private")
+    return _approve(pid, data.get("privacy", "private"), data.get("publish_at_local"))
+
+
+def _approve(pid: int, privacy: str, publish_at_local: Any) -> JSONResponse:
     if privacy not in ("private", "unlisted", "public", "scheduled"):
         return bad("invalid privacy")
     publish_at = None
     if privacy == "scheduled":
         try:
-            local = datetime.fromisoformat(str(data.get("publish_at_local")))
+            local = datetime.fromisoformat(str(publish_at_local))
             publish_at = db.iso(local.astimezone())
         except (TypeError, ValueError):
             return bad("Pick a valid date and time for scheduled publishing.")
@@ -810,9 +983,11 @@ def api_task(tid: int, action: str):
 async def api_schedule(request: Request, sid: int):
     from .. import scheduler
     data = await body(request)
-    s = db.q1("SELECT * FROM schedules WHERE id=?", (sid,))
-    if not s:
+    s = db.q1("SELECT s.*, c.workspace_id AS ws FROM schedules s LEFT JOIN channels c ON c.id=s.channel_id "
+              "WHERE s.id=?", (sid,))
+    if not s or (s["ws"] != ws_id(request) and not (s["channel_id"] is None and is_admin(request))):
         return bad("not found", 404)
+    s.pop("ws", None)
     if data.get("run_now"):
         worker.enqueue(s["task_type"], db.loads(s["payload"], {}), schedule_id=sid, dedupe=True)
         return ok()
@@ -1137,7 +1312,8 @@ def _channel_arg(request: Request, channel: str | int | None) -> int | None:
         cid = int(raw)
     except ValueError:
         return None
-    return cid if channels.get(cid) else None
+    ch = channels.get(cid)
+    return cid if ch and ch["workspace_id"] == ws_id(request) else None
 
 
 def _with_cookie(resp: HTMLResponse, cid: int | None) -> HTMLResponse:
@@ -1148,7 +1324,7 @@ def _with_cookie(resp: HTMLResponse, cid: int | None) -> HTMLResponse:
 @app.get("/channels", response_class=HTMLResponse)
 def channels_page(request: Request):
     from .. import channels
-    rows = channels.all_channels()
+    rows = channels.all_channels(ws_id(request))
     for c in rows:
         c["counts"] = channels.counts(c["id"])
         c["connected"] = oauth.connected(c["id"])
@@ -1179,8 +1355,9 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
 async def api_channel_create(request: Request):
     from .. import channels, scheduler
     try:
-        cid = channels.create(await body(request))
-    except (ValueError, TypeError) as e:
+        plans.check(ws_id(request), "channel")
+        cid = channels.create(await body(request), ws_id(request))
+    except (ValueError, TypeError, plans.LimitExceeded) as e:
         return bad(str(e))
     scheduler.sync_channels()
     logs.event("info", "channels", f"Channel #{cid} created")
@@ -1308,3 +1485,295 @@ def api_job_control(pid: int, action: str):
     except ValueError as e:
         return bad(str(e))
     return bad("unknown action")
+
+
+# ------------------------------------------------------------------ create, upload & edit
+
+@app.get("/create", response_class=HTMLResponse)
+@app.get("/edit", response_class=HTMLResponse)
+def create_page(request: Request, media: str = "", channel: str = ""):
+    from .. import channels as chmod
+    ws = ws_id(request)
+    chosen = [int(x) for x in media.split(",") if x.isdigit()]
+    picked = [m for m in (uploads_mod().get(i, ws) for i in chosen) if m]
+    recent = db.q("SELECT * FROM media WHERE workspace_id=? AND status='ready' ORDER BY id DESC LIMIT 30", (ws,))
+    lim = plans.limits(ws)
+    return page(request, "create.html", mode="edit" if request.url.path == "/edit" else "create",
+                channels=chmod.all_channels(ws), ch=chmod.get(_channel_arg(request, channel)), picked=picked,
+                recent=recent, limits=lim, accept=",".join(sorted(e for ex in uploads_mod().KINDS.values() for e in ex)))
+
+
+def uploads_mod():
+    from .. import uploads
+    return uploads
+
+
+@app.post("/api/media/upload")
+async def api_media_upload(request: Request):
+    """Streamed upload: the request body is the file itself (no size-limited JSON/base64)."""
+    from urllib.parse import unquote
+    up = uploads_mod()
+    name = unquote(request.headers.get("x-filename", ""))[:255]
+    if not name:
+        return bad("missing file name")
+    ch = request.headers.get("x-channel", "")
+    channel_id = int(ch) if ch.isdigit() and auth.owns(ws_id(request), "channels", int(ch)) else None
+    try:
+        m = await up.save_stream(ws_id(request), request.state.sess["user"]["id"], name, request.stream(), channel_id)
+    except (up.UploadError, plans.LimitExceeded) as e:
+        return bad(str(e))
+    return ok(media={k: m.get(k) for k in ("id", "kind", "original_name", "size_bytes", "duration", "width", "height",
+                                          "has_audio")}, duplicate=bool(m.get("duplicate")))
+
+
+@app.post("/api/create")
+async def api_create(request: Request):
+    """One entry point for the Create and Upload & Edit pages."""
+    from .. import channels as chmod, jobs
+    from ..editing import workflow as editing
+    data = await body(request)
+    ws = ws_id(request)
+    req = str(data.get("request") or "").strip()[:4000]
+    fmt = data.get("format") or None
+    media_ids = [int(x) for x in data.get("media_ids") or [] if str(x).isdigit()]
+    cid = int(data["channel_id"]) if str(data.get("channel_id") or "").isdigit() else None
+    if cid and not auth.owns(ws, "channels", cid):
+        return bad("channel not found", 404)
+    try:
+        if media_ids:
+            pid = editing.create(ws, req, media_ids, channel_id=cid, fmt=fmt, user_id=request.state.sess["user"]["id"])
+            return ok(production_ids=[pid], next=f"/productions/{pid}", detail="Edit job started")
+        if not req:
+            return bad("Describe the video you want, or add files to edit.")
+        if not cid:                                  # no channel picked: the workspace's first, or a general one
+            mine = chmod.all_channels(ws)
+            cid = mine[0]["id"] if mine else chmod.create({"name": "My channel", "workflow": "auto",
+                                                           "language": editing.output_language(req, None),
+                                                           "formats": "both"}, ws)
+        res = jobs.create(cid, req, fmt=fmt)
+    except (ValueError, plans.LimitExceeded) as e:
+        return bad(str(e))
+    pids = res.get("production_ids") or []
+    return ok(production_ids=pids, next=f"/productions/{pids[0]}" if pids else "/queue", detail="Video job started")
+
+
+@app.get("/uploads", response_class=HTMLResponse)
+def uploads_page(request: Request, kind: str = "", q: str = ""):
+    ws = ws_id(request)
+    where, args = ["workspace_id=?", "status='ready'"], [ws]
+    if kind in uploads_mod().KINDS:
+        where.append("kind=?"); args.append(kind)
+    if q.strip():
+        where.append("original_name LIKE ?"); args.append(f"%{q.strip()}%")
+    rows = db.q(f"SELECT * FROM media WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT 200", tuple(args))
+    for r in rows:
+        r["used_by"] = db.q("SELECT id, title, kind, status FROM productions WHERE workspace_id=? AND "
+                            "EXISTS (SELECT 1 FROM json_each(productions.source_media) WHERE value=?) ORDER BY id DESC",
+                            (ws, r["id"]))
+        r["transcribed"] = r["transcript"] is not None
+    return page(request, "uploads.html", media=rows, kind=kind, q=q, kinds=list(uploads_mod().KINDS))
+
+
+@app.post("/api/media-files/{mid}/delete")
+def api_media_delete(request: Request, mid: int):
+    try:
+        uploads_mod().delete(mid, ws_id(request))
+    except uploads_mod().UploadError as e:
+        return bad(str(e))
+    return ok(detail="Original deleted (videos made from it are kept)")
+
+
+@app.get("/media-files/{mid}")
+def media_file(request: Request, mid: int, download: int = 0):
+    m = uploads_mod().get(mid, ws_id(request))
+    if not m or not Path(m["path"]).is_file():
+        raise HTTPException(404)
+    return FileResponse(m["path"], media_type=mimetypes.guess_type(m["path"])[0] or "application/octet-stream",
+                        filename=m["original_name"] if download else None,
+                        content_disposition_type="attachment" if download else "inline")
+
+
+# ------------------------------------------------------------------ downloads (real files only)
+
+DOWNLOADS = {"video": ("video_path", "mp4"), "srt": ("srt_path", "srt"), "thumbnail": ("thumbnail_path", "jpg")}
+
+
+def outputs_of(p: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every downloadable file of a production that exists on disk right now."""
+    out = []
+    for key, (col, ext) in DOWNLOADS.items():
+        path = p.get(col)
+        if path and Path(path).is_file():
+            out.append({"variant": key, "label": {"video": "Video", "srt": "Subtitles (.srt)",
+                                                   "thumbnail": "Thumbnail"}[key],
+                        "size": Path(path).stat().st_size, "path": path})
+    ep = p.get("episode") if isinstance(p.get("episode"), dict) else db.loads(p.get("episode"), {}) or {}
+    res = (ep.get("output") or (ep.get("outputs") or [None])[0]) if p.get("kind") in ("edit", "edit_clip") else None
+    if res and res.get("clean_video") and Path(res["clean_video"]).is_file():
+        out.insert(1, {"variant": "clean", "label": "Video without burned-in subtitles",
+                       "size": Path(res["clean_video"]).stat().st_size, "path": res["clean_video"]})
+    return out
+
+
+@app.get("/download/{pid}/{variant}")
+def download(pid: int, variant: str):
+    p = pipeline.load(pid)
+    f = next((o for o in outputs_of(p) if o["variant"] == variant), None)
+    if not f:
+        raise HTTPException(404, "This file doesn't exist (yet). Check the job status.")
+    safe = re.sub(r"[^\w\- ]+", "", p.get("title") or f"video-{pid}", flags=re.UNICODE).strip()[:60] or f"video-{pid}"
+    ext = Path(f["path"]).suffix
+    suffix = {"clean": " (no subtitles)", "srt": "", "thumbnail": " thumbnail"}.get(variant, "")
+    return FileResponse(f["path"], media_type=mimetypes.guess_type(f["path"])[0] or "application/octet-stream",
+                        filename=f"{safe}{suffix}{ext}")
+
+
+# ------------------------------------------------------------------ publishing
+
+@app.post("/api/productions/{pid}/publish")
+async def api_publish(request: Request, pid: int):
+    """Choose the destination channel, confirm metadata, then publish now / schedule / keep private."""
+    from .. import channels as chmod
+    data = await body(request)
+    p = pipeline.load(pid)
+    if not p.get("video_path") or not Path(p["video_path"]).is_file():
+        return bad("This video hasn't been rendered yet — nothing to publish.")
+    if p["status"] in ("uploading", "uploaded") or p.get("youtube_video_id"):
+        return bad("Already uploaded" + (f": https://youtu.be/{p['youtube_video_id']}" if p.get("youtube_video_id") else "."))
+    cid = int(data.get("channel_id") or p.get("channel_id") or 0)
+    if not cid or not auth.owns(ws_id(request), "channels", cid):
+        return bad("Pick one of your channels to publish to.")
+    if not oauth.connected(cid):
+        return bad(f"'{chmod.get(cid)['name']}' isn't connected to YouTube yet. Connect it under Channels → YouTube & "
+                   f"publishing, or download the video and upload it yourself.")
+    pkg = p["package"]
+    title = str(data.get("title") or pkg.get("title") or p["title"]).replace("<", "").replace(">", "").strip()[:100]
+    if len(title) < 3:
+        return bad("Add a title.")
+    desc = str(data.get("description") if data.get("description") is not None else pkg.get("final_description", ""))
+    desc = desc.replace("<", "").replace(">", "")
+    if len(desc.encode()) > 5000:
+        return bad("Description exceeds YouTube's 5000-byte limit.")
+    tags = [t.strip()[:30] for t in str(data.get("tags") if data.get("tags") is not None else ",".join(pkg.get("tags", [])))
+            .split(",") if t.strip()][:20]
+    pkg.update({"title": title, "final_description": desc, "tags": tags})
+    pipeline.save(pid, package=pkg, title=title, channel_id=cid)
+    return _approve(pid, str(data.get("privacy") or "private"), data.get("publish_at_local"))
+
+
+# ------------------------------------------------------------------ projects, publishing, usage, admin, tools
+
+@app.get("/projects", response_class=HTMLResponse)
+def projects_page(request: Request, status: str = "all"):
+    ws = ws_id(request)
+    rows = db.q(f"SELECT p.*, c.name AS channel_name, (SELECT COUNT(*) FROM productions k WHERE k.parent_id=p.id) "
+                f"AS children FROM productions p LEFT JOIN channels c ON c.id=p.channel_id WHERE p.workspace_id=? "
+                f"AND p.parent_id IS NULL AND {LIB_STATUS.get(status, '1=1')} ORDER BY p.id DESC LIMIT 100", (ws,))
+    for r in rows:
+        stages, _, _ = pipeline.stages_for(r.get("kind") or "general")
+        r["stages"] = stages
+        r["sources"] = [m for m in (uploads_mod().get(i, ws) for i in db.loads(r.get("source_media"), []) or []) if m]
+        req = db.loads(r.get("request"), {}) or {}
+        r["prompt"] = req.get("request") if isinstance(req, dict) else ""
+    return page(request, "projects.html", projects=rows, filter=status)
+
+
+@app.get("/publishing", response_class=HTMLResponse)
+def publishing_page(request: Request):
+    from .. import channels as chmod
+    ws = ws_id(request)
+    rows = db.q("SELECT p.*, c.name AS channel_name FROM productions p LEFT JOIN channels c ON c.id=p.channel_id "
+                "WHERE p.workspace_id=? AND (p.status IN ('approved','uploading','uploaded','awaiting_approval') "
+                "OR p.youtube_video_id IS NOT NULL) ORDER BY CASE p.status WHEN 'uploading' THEN 0 WHEN 'approved' THEN 1 "
+                "WHEN 'awaiting_approval' THEN 2 ELSE 3 END, p.updated_at DESC LIMIT 150", (ws,))
+    chans = chmod.all_channels(ws)
+    for c in chans:
+        c["connected"] = oauth.connected(c["id"])
+    return page(request, "publishing.html", rows=rows, channels=chans)
+
+
+@app.get("/billing", response_class=HTMLResponse)
+def billing_page(request: Request):
+    ws = ws_id(request)
+    w = plans.workspace(ws)
+    used = plans.used(ws)
+    by_kind = db.q("SELECT kind, SUM(quantity) AS q, SUM(COALESCE(cost_usd,0)) AS c, "
+                   "GROUP_CONCAT(DISTINCT cost_basis) AS basis FROM usage WHERE workspace_id=? AND created_at>=? "
+                   "GROUP BY kind ORDER BY kind", (ws, plans._month_start()))
+    return page(request, "billing.html", ws=w, limits=plans.limits(ws), used=used, by_kind=by_kind,
+                plans_table=plans.PLANS, labels=plans.LIMIT_LABELS, provider=settings.get("billing.provider"))
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page(request: Request):
+    users = db.q("SELECT u.*, (SELECT GROUP_CONCAT(workspace_id) FROM workspace_members m WHERE m.user_id=u.id) AS ws "
+                 "FROM users u ORDER BY u.id")
+    workspaces = db.q("SELECT w.*, (SELECT COUNT(*) FROM channels c WHERE c.workspace_id=w.id) AS channels, "
+                      "(SELECT COUNT(*) FROM productions p WHERE p.workspace_id=w.id) AS videos, "
+                      "(SELECT email FROM users u WHERE u.id=w.owner_user_id) AS owner FROM workspaces w ORDER BY w.id")
+    for w in workspaces:
+        w["used"] = plans.used(w["id"])
+    errors = db.q("SELECT * FROM logs WHERE level='error' ORDER BY id DESC LIMIT 30")
+    return page(request, "admin.html", users=users, workspaces=workspaces, errors=errors, plans_table=plans.PLANS,
+                allow_signup=settings.get("auth.allow_signup"))
+
+
+@app.post("/api/admin/workspaces/{wid}")
+async def api_admin_workspace(request: Request, wid: int):
+    data = await body(request)
+    if not db.q1("SELECT id FROM workspaces WHERE id=?", (wid,)):
+        return bad("not found", 404)
+    if data.get("plan") not in plans.PLANS:
+        return bad("unknown plan")
+    db.ex("UPDATE workspaces SET plan=? WHERE id=?", (data["plan"], wid))
+    logs.event("info", "admin", f"Workspace #{wid} moved to the {data['plan']} plan")
+    return ok()
+
+
+@app.post("/api/admin/users/{uid}")
+async def api_admin_user(request: Request, uid: int):
+    data = await body(request)
+    if uid == request.state.sess["user"]["id"]:
+        return bad("You can't disable your own account.")
+    if data.get("status") not in ("active", "disabled"):
+        return bad("status must be active or disabled")
+    db.ex("UPDATE users SET status=? WHERE id=?", (data["status"], uid))
+    if data["status"] == "disabled":
+        db.ex("DELETE FROM sessions WHERE user_id=?", (uid,))
+    return ok()
+
+
+@app.post("/api/admin/signup")
+async def api_admin_signup(request: Request):
+    settings.set("auth.allow_signup", bool((await body(request)).get("allow")))
+    return ok()
+
+
+@app.get("/tools", response_class=HTMLResponse)
+def tools_page(request: Request):
+    """Which production capabilities are available right now, and what powers each one."""
+    import shutil as _sh
+    prov = providers.status_all()
+    llm_ok = any(p["ok"] for p in prov)
+    whisper = (config.DATA_DIR / "models" / "whisper").exists()
+    sarvam = settings.has_secret("sarvam_api_key")
+    yt = oauth.configured()
+    rows = [
+        ("Prompt interpretation & planning", llm_ok, "AI text model (" + ", ".join(p["label"] for p in prov if p["ok"]) + ")" if llm_ok else "no AI text model configured"),
+        ("Research (news, Wikipedia, YouTube, web search)", True, "built-in collectors; YouTube/Ollama search when their keys are set"),
+        ("Scriptwriting & screenplays", llm_ok, "AI text model"),
+        ("Transcription (speech-to-text)", whisper, "faster-whisper running on this computer" + ("" if whisper else " — model downloads on first use (~460 MB)")),
+        ("Scene detection & clip selection", bool(_sh.which("ffmpeg") or config.FFMPEG), "FFmpeg scene analysis + AI selection from the transcript"),
+        ("Video editing & rendering", True, f"FFmpeg ({config.FFMPEG})"),
+        ("Subtitles (burned-in + .srt, translation)", True, "transcript timings; translation by the AI text model"),
+        ("Animated characters & scenes", True, "built-in 2D cartoon renderer"),
+        ("Voiceover", sarvam, "Sarvam Bulbul (Hindi/Hinglish/English)" if sarvam else "add a Sarvam key; Kokoro offline voice as fallback"),
+        ("Music & sound", True, "original music generated by the app"),
+        ("Thumbnails", True, "Pillow renderer"),
+        ("Quality checks", True, "ffprobe validation of every output"),
+        ("Publishing to YouTube", yt, "official YouTube Data API (OAuth per channel)" if yt else "add a Google OAuth client in Settings"),
+        ("AI image generation", settings.has_secret("gemini_api_key"), "Gemini images (optional)"),
+        ("AI video generation (text-to-video)", False, "not connected — no text-to-video provider is configured"),
+        ("Voice replacement / dubbing of uploads", False, "not available yet"),
+    ]
+    return page(request, "tools.html", rows=rows, providers=prov)

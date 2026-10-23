@@ -14,6 +14,8 @@ def init(start_background: bool = False) -> None:
         config.ensure_dirs()
         logs.setup()
         db.migrate()
+        from . import auth
+        auth.ensure_default_workspace()
         from . import net
         net.configure_ip_preference()
         from .finance import marketdata, rules

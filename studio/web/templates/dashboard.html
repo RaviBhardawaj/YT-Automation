@@ -5,8 +5,8 @@
   <form method="get" action="/" class="row">
     <select name="channel" data-autosubmit style="width:auto"><option value="all">All channels</option>
       {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if ch and ch.id == c.id }}>{{ c.name }}</option>{% endfor %}</select>
-    {% if ch %}<a class="btn primary" href="/channels/{{ ch.id }}">Create video</a>{% endif %}
-    <a class="btn" href="/channels">Channels</a>
+    <a class="btn primary" href="/create{{ '?channel=' ~ ch.id if ch }}">Create video</a>
+    <a class="btn" href="/edit">Upload &amp; edit</a>
   </form>
 </div>
 {% if awaiting %}
@@ -17,6 +17,17 @@
   {% for k, l in [('today','Created today'),('in_production','In production'),('review','Ready for review'),('published','Published'),('ready','Approved / uploading'),('failed','Failed'),('shorts','Shorts'),('total','Total videos')] %}
   <a class="card tight stat" style="color:inherit;text-decoration:none" href="/productions?channel={{ ch.id if ch else 'all' }}&status={{ {'in_production':'active','review':'review','published':'published','ready':'approved','failed':'failed'}.get(k, 'all') }}"><div class="n">{{ totals[k] }}</div><div class="l">{{ l }}</div></a>{% endfor %}
 </div>
+
+{% if unfinished or uploads_recent %}
+<div class="grid g2" style="margin-bottom:16px">
+  <div class="card"><h2>Continue</h2>
+    {% for p in unfinished %}<div class="spread small" style="padding:3px 0"><a href="/productions/{{ p.id }}">#{{ p.id }} {{ p.title[:60] }}</a> {% include "_status.html" %}</div>
+    {% else %}<div class="muted small">Nothing waiting on you.</div>{% endfor %}</div>
+  <div class="card"><div class="spread"><h2>Recent uploads</h2><a class="small" href="/uploads">All uploads</a></div>
+    {% for m in uploads_recent %}<div class="spread small" style="padding:3px 0"><span><span class="chip">{{ m.kind }}</span> {{ m.original_name }}</span>{% if m.kind in ('video','audio') %}<a class="btn sm" href="/edit?media={{ m.id }}">Edit with AI</a>{% endif %}</div>
+    {% else %}<div class="muted small">No uploads yet. <a href="/edit">Upload a video</a> to edit it with AI.</div>{% endfor %}</div>
+</div>
+{% endif %}
 
 <div class="card" style="margin-bottom:16px">
   <div class="spread"><h2>Channels</h2><a class="small" href="/channels">Manage</a></div>

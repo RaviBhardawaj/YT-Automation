@@ -52,7 +52,8 @@ def create(channel_id: int, request: str, *, idea_id: int | None = None, fmt: st
     title = (request or (idea or {}).get("title") or f"{plan['content_type'].title()} episode")[:90]
     pid = db.insert("productions", {
         "topic_id": idea_id, "format": out_fmt, "title": title, "status": "queued", "stage": "script", "kind": "story",
-        "channel_id": channel_id, "language": plan["language"], "request": json.dumps(plan, ensure_ascii=False),
+        "channel_id": channel_id, "workspace_id": ch["workspace_id"], "language": plan["language"],
+        "request": json.dumps(plan, ensure_ascii=False),
         "package": "{}", "timeline": "{}", "episode": "{}", "test_mode": 0, "created_at": db.iso(),
         "updated_at": db.iso()})
     if idea_id:
@@ -430,7 +431,8 @@ def make_shorts(parent_id: int) -> list[int]:
                "thumbnail_text": m["hook"][:30]}
         sid = db.insert("productions", {
             "topic_id": p.get("topic_id"), "format": "short", "title": title, "status": "queued", "stage": "animate",
-            "kind": "story_short", "parent_id": parent_id, "channel_id": p["channel_id"], "language": p.get("language"),
+            "kind": "story_short", "parent_id": parent_id, "channel_id": p["channel_id"],
+            "workspace_id": p.get("workspace_id") or 1, "language": p.get("language"),
             "request": p.get("request"), "package": json.dumps(pkg, ensure_ascii=False),
             "episode": json.dumps({"segment": m, "cast": p["episode"]["cast"]}, ensure_ascii=False), "timeline": "{}",
             "test_mode": 0, "created_at": db.iso(), "updated_at": db.iso()})

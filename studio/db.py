@@ -398,6 +398,81 @@ MIGRATIONS: list[str] = [
     CREATE INDEX idx_topics_channel ON topics(channel_id, created_at);
     CREATE INDEX idx_productions_channel ON productions(channel_id, created_at);
     """,
+    # v7: multi-user SaaS — users, workspaces, sessions; uploaded media; usage metering
+    """
+    CREATE TABLE users (
+        id INTEGER PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL DEFAULT '',
+        password_hash TEXT NOT NULL,
+        is_admin INTEGER NOT NULL DEFAULT 0,          -- platform admin (operator of the SaaS)
+        status TEXT NOT NULL DEFAULT 'active',        -- active | disabled
+        created_at TEXT NOT NULL,
+        last_login_at TEXT
+    );
+    CREATE TABLE workspaces (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        plan TEXT NOT NULL DEFAULT 'free',
+        limits TEXT NOT NULL DEFAULT '{}',            -- per-workspace overrides of the plan limits
+        owner_user_id INTEGER,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE workspace_members (
+        workspace_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        role TEXT NOT NULL DEFAULT 'owner',           -- owner | editor | viewer
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, user_id)
+    );
+    CREATE TABLE sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        workspace_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    );
+    CREATE TABLE media (
+        id INTEGER PRIMARY KEY,
+        workspace_id INTEGER NOT NULL,
+        channel_id INTEGER,
+        kind TEXT NOT NULL,                           -- video | audio | image | subtitle | document
+        original_name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        mime TEXT,
+        duration REAL,
+        width INTEGER,
+        height INTEGER,
+        fps REAL,
+        has_audio INTEGER,
+        meta TEXT NOT NULL DEFAULT '{}',
+        transcript TEXT,                              -- JSON segments once transcribed
+        status TEXT NOT NULL DEFAULT 'ready',         -- ready | deleted
+        created_by INTEGER,
+        created_at TEXT NOT NULL,
+        deleted_at TEXT
+    );
+    CREATE INDEX idx_media_ws ON media(workspace_id, created_at);
+    CREATE TABLE usage (
+        id INTEGER PRIMARY KEY,
+        workspace_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,                           -- render_minutes | voice_chars | ai_calls | storage_bytes | uploads | videos
+        quantity REAL NOT NULL,
+        cost_usd REAL,
+        cost_basis TEXT,                              -- actual | estimate
+        production_id INTEGER,
+        idem_key TEXT UNIQUE,                         -- one charge per job step, even after retries
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_usage_ws ON usage(workspace_id, created_at);
+    ALTER TABLE channels ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE productions ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE productions ADD COLUMN source_media TEXT;  -- JSON list of media ids this output was made from
+    ALTER TABLE topics ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 1;
+    CREATE INDEX idx_productions_ws ON productions(workspace_id, created_at);
+    """,
 ]
 
 

@@ -16,7 +16,7 @@ a { color: var(--info); text-decoration: none; } a:hover { text-decoration: unde
 h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 17px; margin: 0 0 12px; } h3 { font-size: 14px; margin: 16px 0 8px; }
 .muted { color: var(--muted); } .small { font-size: 12px; } .mono { font-family: var(--mono); font-size: 12px; }
 .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
-.side { background: var(--panel); border-right: 1px solid var(--line); padding: 18px 12px; position: sticky; top: 0; height: 100vh; }
+.side { background: var(--panel); border-right: 1px solid var(--line); padding: 18px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; padding: 0 8px 18px; }
 .brand .logo { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2));
   display: grid; place-items: center; color: #fff; font-size: 15px; }
@@ -103,3 +103,11 @@ details > summary { cursor: pointer; color: var(--muted); font-size: 13px; margi
 pre.script { white-space: pre-wrap; font: inherit; background: var(--panel-2); padding: 12px; border-radius: 8px; max-height: 420px; overflow: auto; }
 .pill-list { display: flex; flex-wrap: wrap; gap: 6px; }
 hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+
+/* create / upload */
+.drop { border: 2px dashed var(--line); border-radius: var(--radius); padding: 22px; text-align: center; color: var(--muted); cursor: pointer; }
+.drop.over { border-color: var(--accent); background: var(--panel-2); }
+.filerow { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.filerow .bar { margin-top: 4px; }
+.pick { display: flex; gap: 6px; align-items: center; padding: 4px 0; font-size: 13px; }
+.examples button { margin: 0 6px 6px 0; }

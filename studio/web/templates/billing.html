@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>Usage &amp; billing</h1><div class="muted">{{ ws.name }} · {{ plans_table[ws.plan].label if ws.plan in plans_table else ws.plan }} plan · this month</div></div></div>
+{% if not provider %}<div class="note warn">Billing is <b>not live</b>: no payment provider is connected yet. Plans and limits are enforced; nobody is charged. The platform admin can connect a provider (e.g. Stripe) later.</div>{% endif %}
+<div class="grid g4" style="margin-bottom:16px">
+  {% for key, used_key, unit in [('videos_per_month','videos',''),('render_minutes_per_month','render_minutes',' min'),('storage_gb','storage_bytes',' GB'),('channels','channels','')] %}
+  {% set u = (used[used_key] or 0) / (1024**3) if used_key == 'storage_bytes' else (used[used_key] or 0) %}
+  <div class="card tight stat"><div class="n">{{ ('%.2f' % u) if used_key == 'storage_bytes' else ('%.1f' % u if used_key == 'render_minutes' else u|int) }}<small class="muted"> / {{ limits[key] }}{{ unit }}</small></div><div class="l">{{ labels[key] }}</div>
+    <div class="bar {{ 'hot' if limits[key] and u / limits[key] >= 0.8 }}"><i style="width:{{ [100, (u / limits[key] * 100) if limits[key] else 0]|min }}%"></i></div></div>{% endfor %}
+</div>
+<div class="grid g2">
+  <div class="card"><h2>Metered usage this month</h2>
+    <table><tr><th>What</th><th>Amount</th><th>Cost (USD)</th></tr>
+    {% for r in by_kind %}<tr><td>{{ r.kind|replace('_',' ') }}</td><td>{{ '%.2f' % r.q if r.q != r.q|int else r.q|int }}{% if r.kind.endswith('bytes') %} bytes{% endif %}</td>
+      <td>{% if r.c %}${{ '%.4f' % r.c }} <span class="chip {{ 'ok' if r.basis == 'actual' else 'warn' }}">{{ r.basis or 'estimate' }}</span>{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">No usage yet this month.</td></tr>{% endfor %}</table>
+    <div class="muted small">Each job step is metered once — retries never charge twice. “estimate” = calculated from configured rates, not a provider bill.</div></div>
+  <div class="card"><h2>Plans</h2>
+    <table><tr><th></th>{% for k, pl in plans_table.items() %}<th>{{ pl.label }}{% if k == ws.plan %} <span class="chip ok">current</span>{% endif %}</th>{% endfor %}</tr>
+    {% for key, label in labels.items() %}<tr><td class="small">{{ label }}</td>{% for k, pl in plans_table.items() %}<td>{{ pl[key] }}</td>{% endfor %}</tr>{% endfor %}</table>
+    <div class="muted small">Prices are set in the payment provider when billing goes live. To change plan now, ask the platform admin.</div></div>
+</div>
+{% endblock %}

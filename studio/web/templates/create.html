@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>{{ 'Upload & edit' if mode == 'edit' else 'Create a video' }}</h1>
+    <div class="muted">{% if mode == 'edit' %}Upload your footage, audio or images and tell the AI what to do with it. Your originals are never changed.{% else %}Describe the video you want, in any niche. Add files if you want them used or edited.{% endif %}</div></div>
+</div>
+
+<div class="card" id="creator" data-mode="{{ mode }}">
+  <label class="f"><span>What do you want?</span>
+    <textarea id="req" rows="4" placeholder="{{ 'e.g. Convert this 20-minute interview into five engaging Shorts with Hindi subtitles' if mode == 'edit' else 'e.g. Create a funny Hindi animated superhero comedy episode with original recurring characters' }}"></textarea></label>
+  <div class="examples small muted">Examples:
+    {% for ex in (['Remove long pauses and add subtitles with highlighted keywords', 'Convert this video into 5 vertical Shorts of the best moments', 'Add an intro, outro and background music', 'Make a vertical version for YouTube Shorts', 'Add Hindi subtitles'] if mode == 'edit' else ['Create a funny Hindi animated superhero comedy episode', 'Create a horror story video with suspenseful narration', 'Explain how UPI payments work in Hindi, 6 minutes', 'Create a weekly technology news video about AI']) %}
+    <button type="button" class="sm" data-example="{{ ex }}">{{ ex }}</button>{% endfor %}</div>
+
+  <h3 style="margin-top:14px">Files {% if mode != 'edit' %}<span class="muted small">(optional)</span>{% endif %}</h3>
+  <div class="drop" id="drop">Drop video, audio, image, subtitle or text files here, or click to choose
+    <div class="small">Up to {{ limits.max_upload_mb }} MB and {{ limits.max_upload_minutes }} minutes per file on your plan</div></div>
+  <input type="file" id="files" multiple accept="{{ accept }}" hidden>
+  <div id="queue"></div>
+  {% if recent %}
+  <details style="margin-top:8px" {{ 'open' if picked }}><summary class="small">Use files you uploaded before ({{ recent|length }})</summary>
+    {% for m in recent %}<label class="pick"><input type="checkbox" class="prev" value="{{ m.id }}" {{ 'checked' if m.id in picked|map(attribute='id')|list }}>
+      <span class="chip">{{ m.kind }}</span> {{ m.original_name }} <span class="muted">{% if m.duration %}{{ '%d:%02d' % (m.duration // 60, m.duration % 60) }} · {% endif %}{{ '%.1f' % (m.size_bytes / 1e6) }} MB</span></label>{% endfor %}
+  </details>{% endif %}
+
+  <div class="grid g3" style="margin-top:14px">
+    <label class="f"><span>Channel (optional)</span><select id="channel"><option value="">{{ 'No channel — just make the video' if mode == 'edit' else 'Pick automatically' }}</option>
+      {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if ch and ch.id == c.id }}>{{ c.name }} · {{ c.niche[:40] }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Format</span><select id="format"><option value="">Decide from my request</option><option value="long">Long video (16:9)</option><option value="short">Shorts only (9:16)</option><option value="both">Long video + Shorts</option></select></label>
+  </div>
+  <button class="primary" id="go">{{ 'Start editing' if mode == 'edit' else 'Create video' }}</button>
+  <span class="muted small" id="gostate"></span>
+</div>
+<div class="note small">Work runs in the background: you can leave this page. Each job shows its real progress on its page and in Projects; nothing is marked ready until the file exists and passes its checks.</div>
+<script src="/static/create.js?v={{ static_v }}"></script>
+{% endblock %}

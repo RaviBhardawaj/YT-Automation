@@ -171,11 +171,17 @@ class IdeasPageTests(unittest.TestCase):
     def setUpClass(cls):
         from fastapi.testclient import TestClient
         from studio.web import app as webapp
-        cls.client = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}")
+        from studio import auth
+        cls.client = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False)
+        auth.ensure_default_workspace()
+        if not db.q1("SELECT id FROM users WHERE email='owner@test.local'"):
+            auth.register("owner@test.local", "correct horse battery")
+        token, _ = auth.login("owner@test.local", "correct horse battery")
+        cls.client.cookies.set("sid", token)
         cls.cid = make_channel(name="Filter Toons")
         for i, (fmt, style, kind) in enumerate([("long", "comedy", "ai_original"), ("short", "horror", "evergreen"),
                                                 ("short", "comedy", "ai_original")]):
-            db.insert("topics", {"channel_id": cls.cid, "title": f"Idea number {i} {style}", "format": fmt, "style": style,
+            db.insert("topics", {"channel_id": cls.cid, "workspace_id": 1, "title": f"Idea number {i} {style}", "format": fmt, "style": style,
                                  "idea_kind": kind, "language": "Hindi", "score": 50 + i, "status": "idea",
                                  "created_at": db.iso(), "updated_at": db.iso()})
 

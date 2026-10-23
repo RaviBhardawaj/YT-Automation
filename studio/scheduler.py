@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from datetime import datetime, timedelta
 from typing import Any
@@ -77,6 +78,8 @@ def sync_channels() -> None:
 
 
 def tick() -> int:
+    if os.environ.get("STUDIO_SCHEDULES", "on") == "off":      # test / staging instances: no automatic jobs
+        return 0
     now = db.iso()
     fired = 0
     for s in db.q("SELECT * FROM schedules WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= ?", (now,)):

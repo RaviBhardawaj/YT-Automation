@@ -36,6 +36,8 @@ def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fm
     ch = channels.get(channel_id)
     if not ch:
         raise ValueError("channel not found")
+    from . import plans
+    plans.check(ch["workspace_id"], "video")
     request = (request or "").strip()[:2000]
     idea = db.q1("SELECT * FROM topics WHERE id=?", (idea_id,)) if idea_id else None
     if idea and idea.get("channel_id") not in (None, channel_id):
@@ -76,8 +78,9 @@ def _factual(ch: dict[str, Any], plan: dict[str, Any], idea: dict[str, Any] | No
             "format": "short" if plan["format"] == "short" else "long", "hook_idea": "", "why_now": "requested",
             "status": "approved", "score": 0, "idea_kind": "request", "style": plan["content_type"],
             "language": plan["language"], "summary": req, "search_query": req[:200], "norm_title": _norm(title),
-            "created_at": db.iso(), "updated_at": db.iso()})
-    extra = {"channel_id": ch["id"], "language": plan["language"], "request": json.dumps(plan, ensure_ascii=False)}
+            "workspace_id": ch["workspace_id"], "created_at": db.iso(), "updated_at": db.iso()})
+    extra = {"channel_id": ch["id"], "workspace_id": ch["workspace_id"], "language": plan["language"],
+             "request": json.dumps(plan, ensure_ascii=False)}
     fmts = ["long", "short"] if plan["format"] == "both" else [plan["format"]]
     pids = [pipeline.create(tid, f, extra=extra) for f in fmts]
     logs.event("info", "jobs", f"{plan['content_type']} video queued for '{ch['name']}' as {'+'.join(fmts)} "
@@ -113,11 +116,20 @@ def cancel(pid: int) -> None:
 
 def retry(pid: int) -> int:
     """Re-run from the stage that failed; finished stages are not repeated."""
+    from pathlib import Path
     p = db.q1("SELECT * FROM productions WHERE id=?", (pid,))
     if not p:
         raise ValueError("not found")
-    if p["status"] not in ("failed", "needs_attention", "paused", "rejected"):
+    missing = bool(p["video_path"]) and not Path(p["video_path"]).is_file() and p["status"] != "uploaded"
+    if p["status"] not in ("failed", "needs_attention", "paused", "rejected") and not missing:
         raise ValueError(f"nothing to retry (status is {p['status']})")
+    if p["kind"] in ("edit", "edit_clip") and missing:
+        # a lost output is rendered again by its job; finished outputs that still exist are kept
+        job = p["parent_id"] if p["kind"] == "edit_clip" else pid
+        db.update("productions", job, {"status": "queued", "stage": "render", "error": None, "updated_at": db.iso()})
+        if job != pid:
+            db.update("productions", pid, {"status": "queued", "error": None, "updated_at": db.iso()})
+        return worker.enqueue("production", {"production_id": job}, production_id=job, max_attempts=3, dedupe=True)
     last = db.q1("SELECT type, payload FROM tasks WHERE production_id=? ORDER BY id DESC LIMIT 1", (pid,))
     kind, payload = (last["type"], db.loads(last["payload"], {})) if last else ("production", {"production_id": pid})
     db.ex("UPDATE tasks SET status='cancelled', updated_at=? WHERE production_id=? AND status IN ('pending','paused','failed')",

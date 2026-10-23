@@ -39,8 +39,11 @@ def get(channel_id: int | None) -> dict[str, Any] | None:
     return _row(db.q1("SELECT * FROM channels WHERE id=?", (channel_id,))) if channel_id else None
 
 
-def all_channels() -> list[dict[str, Any]]:
-    return [_row(r) for r in db.q("SELECT * FROM channels ORDER BY id")]
+def all_channels(workspace_id: int | None = None) -> list[dict[str, Any]]:
+    """Every channel (scheduler/system use), or one workspace's channels (anything shown to a user)."""
+    if workspace_id is None:
+        return [_row(r) for r in db.q("SELECT * FROM channels ORDER BY id")]
+    return [_row(r) for r in db.q("SELECT * FROM channels WHERE workspace_id=? ORDER BY id", (workspace_id,))]
 
 
 def current_id() -> int | None:
@@ -113,10 +116,12 @@ def clean(data: dict[str, Any], partial: bool = False) -> dict[str, Any]:
     return out
 
 
-def create(data: dict[str, Any]) -> int:
+def create(data: dict[str, Any], workspace_id: int | None = None) -> int:
+    from . import plans
     row = clean(data)
     row.setdefault("styles", "[]")
-    return db.insert("channels", {**row, "created_at": db.iso(), "updated_at": db.iso()})
+    ws = workspace_id or plans.current_id() or 1
+    return db.insert("channels", {**row, "workspace_id": ws, "created_at": db.iso(), "updated_at": db.iso()})
 
 
 def update(channel_id: int, data: dict[str, Any]) -> None:
@@ -167,8 +172,9 @@ def refresh_token_secret(channel_id: int | None) -> str:
     return "google_refresh_token" if not channel_id or channel_id == 1 else f"google_refresh_token__ch{channel_id}"
 
 
-def counts(channel_id: int | None = None) -> dict[str, int]:
-    where, args = ("WHERE channel_id=?", (channel_id,)) if channel_id else ("", ())
+def counts(channel_id: int | None = None, workspace_id: int | None = None) -> dict[str, int]:
+    where, args = ("WHERE channel_id=?", (channel_id,)) if channel_id else \
+        ("WHERE workspace_id=?", (workspace_id,)) if workspace_id else ("", ())
     rows = db.q(f"SELECT status, created_at, format, kind FROM productions {where}", args)
     from datetime import datetime
     today = datetime.now().astimezone().date()
@@ -176,7 +182,7 @@ def counts(channel_id: int | None = None) -> dict[str, int]:
     def local_day(v: str):
         dt = db.parse_iso(v)
         return dt.astimezone().date() if dt else None
-    active = ("queued", "rendering", "voicing", "scripting", "drawing charts", "quality check", "compliance gate",
+    active = ("queued", "analysing media", "transcribing", "planning edit", "rendering", "voicing", "scripting", "drawing charts", "quality check", "compliance gate",
               "generating script", "generating assets", "animating", "editing", "quality review", "uploading")
     return {
         "today": sum(1 for r in rows if local_day(r["created_at"]) == today),
