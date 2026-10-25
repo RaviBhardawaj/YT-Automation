@@ -77,7 +77,7 @@ def stage_script(p: dict[str, Any]) -> None:
     plan = plan_of(p)
     idea = db.q1("SELECT * FROM topics WHERE id=?", (p["topic_id"],)) if p.get("topic_id") else None
     sp = screenplay.write(plan, ch, idea)
-    screenplay.save_new_characters(ch["id"], sp, p["id"])
+    screenplay.save_new_characters(ch["id"], sp, p["id"], oneoff=plan.get("use_cast") is False)
     pkg = {**sp, "plan": plan}
     pipeline.save(p["id"], package=pkg, title=sp["title"])
     logs.event("info", "creative", f"Screenplay: {len(sp['scenes'])} scenes, {sp['words']} words — '{sp['title']}'",

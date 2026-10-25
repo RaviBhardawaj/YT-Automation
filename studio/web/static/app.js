@@ -370,3 +370,11 @@ document.querySelectorAll("[data-help]").forEach(box => {
     try { localStorage.setItem(key, "1"); } catch { /* ignore */ }
   });
 });
+
+// phone layout: the sidebar collapses behind a Menu button ---------------------
+document.querySelector(".navtoggle")?.addEventListener("click", e => {
+  const side = e.currentTarget.closest(".side");
+  const open = side.classList.toggle("open");
+  e.currentTarget.setAttribute("aria-expanded", String(open));
+  e.currentTarget.textContent = open ? "✕ Close" : "☰ Menu";
+});

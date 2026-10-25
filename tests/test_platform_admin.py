@@ -173,3 +173,45 @@ class CsrfTests(unittest.TestCase):
         self.assertEqual(c.post("/api/storage/clean", json={}).status_code, 403)
         c.headers["X-CSRF-Token"] = c.get("/api/csrf").json()["token"]
         self.assertTrue(c.post("/api/storage/clean", json={}).json()["ok"])
+
+
+class AnalyticsPageTests(unittest.TestCase):
+    def _report(self, title, views):
+        return db.dumps({"fetched_at": db.iso(), "days": 3, "notes": [],
+                         "totals": {"views": views, "estimatedMinutesWatched": 120, "subscribersGained": 5,
+                                    "subscribersLost": 1, "averageViewDuration": 75, "likes": 4},
+                         "daily": [{"day": "2026-10-22", "views": 1, "minutes": 10, "subs": 1},
+                                   {"day": "2026-10-23", "views": views, "minutes": 100, "subs": 3},
+                                   {"day": "2026-10-24", "views": 0, "minutes": 0, "subs": 0}],
+                         "channel": {"title": title, "subscriberCount": 42, "viewCount": 999, "videoCount": 2},
+                         "videos": [{"id": "vidAAAAAAAA", "title": f"{title} long one", "published": "2026-10-20",
+                                     "views": 5, "likes": 1, "comments": 0, "seconds": 400, "short": False,
+                                     "privacy": "public", "production_id": None},
+                                    {"id": "vidBBBBBBBB", "title": f"{title} short one", "published": "2026-10-24",
+                                     "views": 50, "likes": 2, "comments": 1, "seconds": 40, "short": True,
+                                     "privacy": "public", "production_id": None}]})
+
+    def test_creator_sees_own_channel_only_and_no_costs(self):
+        from unittest import mock
+        from studio.youtube import oauth
+        _, ws_a, tok_a = user("ana-a@test.local")
+        _, ws_b, _ = user("ana-b@test.local")
+        a = channels.create({"name": "A analytics"}, ws_a)
+        b = channels.create({"name": "B analytics"}, ws_b)
+        db.update("channels", a, {"analytics": self._report("Alpha", 77)})
+        db.update("channels", b, {"analytics": self._report("Bravo", 88)})
+        with mock.patch.object(oauth, "connected", return_value=True):
+            c = client(tok_a)
+            html = c.get("/analytics", params={"channel": a}).text
+            self.assertIn("Alpha long one", html)
+            self.assertNotIn("Bravo", html)
+            self.assertNotIn("AI usage this month", html)            # platform costs are superadmin-only
+            self.assertIn("<svg class=\"trend\"", html)
+            shorts = c.get("/analytics", params={"channel": a, "kind": "short"}).text
+            self.assertIn("Alpha short one", shorts)
+            self.assertNotIn("Alpha long one", shorts)
+            top = c.get("/analytics", params={"channel": a, "sort": "views"}).text
+            self.assertLess(top.index("Alpha short one"), top.index("Alpha long one"))
+            other = c.get("/analytics", params={"channel": b}).text      # someone else's channel id
+            self.assertNotIn("Bravo", other)
+            self.assertEqual(c.post(f"/api/channels/{b}/analytics").status_code, 404)

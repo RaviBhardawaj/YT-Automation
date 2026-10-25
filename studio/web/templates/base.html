@@ -10,28 +10,39 @@
 <body>
 <div class="layout">
   <aside class="side">
-    <div class="brand"><div class="logo">▶</div><div>Video Studio<div class="muted small" style="font-weight:400">create · edit · publish</div></div></div>
-    <nav class="nav">
-      <a href="/" class="{{ 'on' if page == 'dashboard' }}">Dashboard</a>
-      <a href="/create" class="{{ 'on' if page == 'create' and mode == 'create' }}">Create video</a>
-      <a href="/edit" class="{{ 'on' if page == 'create' and mode == 'edit' }}">Upload &amp; edit</a>
-      <a href="/ideas" class="{{ 'on' if page in ('ideas', 'idea') }}">Ideas</a>
-      <a href="/projects" class="{{ 'on' if page == 'projects' }}">Projects</a>
-      <a href="/productions" class="{{ 'on' if page in ('productions', 'production', 'uploads') }}">Video library{% if awaiting %} <span class="badge">{{ awaiting }}</span>{% endif %}</a>
-      <a href="/tools" class="{{ 'on' if page == 'tools' }}">AI agents &amp; tools</a>
-      <a href="/channels" class="{{ 'on' if page in ('channels', 'channel') }}">YouTube channels</a>
-      <a href="/schedule" class="{{ 'on' if page == 'schedule' }}">Automation &amp; schedules</a>
-      <a href="/publishing" class="{{ 'on' if page == 'publishing' }}">Publishing</a>
-      <a href="/billing" class="{{ 'on' if page == 'billing' }}">Usage &amp; billing</a>
-      <a href="/storage" class="{{ 'on' if page == 'storage' }}">Storage</a>
-      <a href="/queue" class="{{ 'on' if page == 'queue' }}">Queue &amp; logs{% if task_counts.get('failed') %} <span class="badge">{{ task_counts.get('failed') }}</span>{% endif %}</a>
+    <div class="side-top">
+      <a class="brand" href="/" style="color:inherit;text-decoration:none"><div class="logo">▶</div><div>Video Studio<div class="muted small" style="font-weight:400">create · edit · publish</div></div></a>
+      <button class="navtoggle" type="button" aria-expanded="false" aria-controls="mainnav">☰ Menu</button>
+    </div>
+    <a class="btn primary create-cta" href="/create">＋ Create video</a>
+    {% macro item(href, icon, label, on, badge=0, warn=False) -%}
+      <a href="{{ href }}" class="{{ 'on' if on }}"><span class="ico" aria-hidden="true">{{ icon }}</span><span class="lbl">{{ label }}</span>{% if badge %}<span class="badge {{ 'warnb' if warn }}">{{ badge }}</span>{% endif %}</a>
+    {%- endmacro %}
+    <nav class="nav" id="mainnav">
+      {{ item('/', '🏠', 'Home', page == 'dashboard') }}
+      <div class="nav-group">Create</div>
+      {{ item('/create', '✍️', 'Create video', page == 'create' and mode == 'create') }}
+      {{ item('/edit', '✂️', 'Upload & edit', page == 'create' and mode == 'edit') }}
+      {{ item('/ideas', '💡', 'Ideas', page in ('ideas', 'idea')) }}
+      <div class="nav-group">My videos</div>
+      {{ item('/projects', '⏳', 'In progress', page == 'projects') }}
+      {{ item('/productions', '🎬', 'Video library', page in ('productions', 'production', 'uploads'), awaiting) }}
+      {{ item('/publishing', '📤', 'Publishing', page == 'publishing') }}
+      <div class="nav-group">Channels</div>
+      {{ item('/channels', '📺', 'My channels', page in ('channels', 'channel', 'channel_setup')) }}
+      {{ item('/analytics', '📈', 'Analytics', page == 'analytics') }}
+      {{ item('/schedule', '⏰', 'Daily automation', page == 'schedule') }}
+      <div class="nav-group">Account</div>
+      {{ item('/billing', '💳', 'Plan & usage', page == 'billing') }}
+      {{ item('/storage', '🗄️', 'Storage', page == 'storage') }}
+      {{ item('/tools', '🧰', 'AI tools', page == 'tools') }}
+      {{ item('/queue', '📜', 'Activity log', page == 'queue', task_counts.get('failed'), True) }}
       {% if is_admin %}
-      <div class="muted small" style="margin:12px 10px 4px;text-transform:uppercase;letter-spacing:.05em">Platform admin</div>
-      <a href="/admin" class="{{ 'on' if page == 'admin' }}">Admin</a>
-      <a href="/settings" class="{{ 'on' if page == 'settings' }}">Settings</a>
-      <a href="/compliance" class="{{ 'on' if page == 'compliance' }}">Compliance</a>
-      <a href="/analytics" class="{{ 'on' if page == 'analytics' }}">Analytics &amp; costs</a>
-      <a href="/niches" class="{{ 'on' if page == 'niches' }}">Niche research</a>
+      <div class="nav-group">Admin</div>
+      {{ item('/admin', '🛡️', 'Users & website', page == 'admin') }}
+      {{ item('/settings', '⚙️', 'Settings', page == 'settings') }}
+      {{ item('/compliance', '⚖️', 'Compliance', page == 'compliance') }}
+      {{ item('/niches', '🔎', 'Niche research', page == 'niches') }}
       {% endif %}
     </nav>
     {% if me %}<div class="spend" style="margin-top:14px"><b style="color:var(--text)">{{ workspace.name }}</b><br>{{ me.email }} · {{ role }}
@@ -48,7 +59,7 @@
     </div>{% endif %}
   </aside>
   <main>
-    {% if is_admin and not sarvam.ok %}<div class="note warn"><b>Sarvam voice is unavailable</b> since {{ sarvam.since|dt }} — new videos are being voiced with the free Kokoro voice so they still get made.
+    {% if is_admin and not sarvam.ok %}<div class="note warn helpbox" data-help="sarvam-{{ sarvam.since }}"><button class="x" type="button" title="Close this warning">✕</button><b>Sarvam voice is unavailable</b> since {{ sarvam.since|dt }} — new videos are being voiced with the free Kokoro voice so they still get made.
       Reason: {{ sarvam.error }}. Top up or check your key at dashboard.sarvam.ai; the studio retries Sarvam every 30 minutes and this warning clears by itself.</div>{% endif %}
     {% if page_help %}<div class="helpbox" data-help="{{ page }}"><button class="x" type="button" title="Hide this tip">✕</button>💡 {{ page_help|safe }}</div>{% endif %}
     {% block content %}{% endblock %}

@@ -32,7 +32,7 @@ def plan_for(channel_id: int, request: str, idea: dict[str, Any] | None = None, 
 
 def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fmt: str | None = None,
            actor: str = "user", scheduled_for: str | None = None, no_upload: bool = False,
-           ai_video: bool = False) -> dict[str, Any]:
+           ai_video: bool = False, use_cast: bool | None = None) -> dict[str, Any]:
     """Queue a job. Returns {"production_ids": [...]} or {"task_id": n} for the NIFTY daily episode."""
     ch = channels.get(channel_id)
     if not ch:
@@ -41,7 +41,7 @@ def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fm
     plans.check(ch["workspace_id"], "video")
     request = (request or "").strip()[:2000]
     idea = db.q1("SELECT * FROM topics WHERE id=?", (idea_id,)) if idea_id else None
-    if idea and idea.get("channel_id") not in (None, channel_id):
+    if idea and (idea.get("workspace_id") != ch["workspace_id"] or idea.get("channel_id") not in (None, channel_id)):
         raise ValueError("that idea belongs to another channel")
     if fmt not in (None, "", "long", "short", "both"):
         raise ValueError("format must be long, short or both")
@@ -69,6 +69,11 @@ def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fm
     plan["actor"] = actor
     plan["no_upload"] = bool(no_upload)                # "No channel — just make it": never auto-uploaded
     plan["ai_video"] = bool(ai_video)                  # opted in to paid AI-generated clips (researched videos)
+    if use_cast is not None:                           # False = stand-alone video with its own fresh characters
+        from .creative import characters as charmod
+        named = any(c["name"] and c["name"].lower() in (request or "").lower()
+                    for c in charmod.for_channel(channel_id))
+        plan["use_cast"] = bool(use_cast) or named     # naming a cast member in the prompt brings them in
     if plan["workflow"] == "animated_story":
         from .creative import workflow
         pid = workflow.create(channel_id, plan["request"], idea_id=idea_id, fmt=plan["format"], actor=actor,

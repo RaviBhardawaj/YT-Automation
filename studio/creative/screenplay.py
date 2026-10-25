@@ -110,7 +110,8 @@ def recent_episodes(channel_id: int, limit: int = 12) -> list[str]:
 
 def write(plan: dict[str, Any], channel: dict[str, Any], idea: dict[str, Any] | None = None) -> dict[str, Any]:
     """Outline + dialogue. Returns the screenplay dict (not yet saved)."""
-    bible = charmod.for_channel(channel["id"])
+    fresh = plan.get("use_cast") is False             # one-off video: invent its own characters, no recurring cast
+    bible = [] if fresh else charmod.for_channel(channel["id"])
     keys = {charmod.key_of(c) for c in bible}
     words = int(plan["long_minutes"] * 135) if plan["format"] != "short" else int(plan["short_seconds"] * 2.3)
     n_beats = max(2, min(14, round(words / 110))) if plan["format"] != "short" else 2
@@ -131,15 +132,16 @@ def write(plan: dict[str, Any], channel: dict[str, Any], idea: dict[str, Any] | 
            if plan.get("decided_by") == "request" and plan["content_type"] not in (channel.get("styles") or [])
            and plan["content_type"] != "story" else "")
         + f"This is ENTERTAINMENT, not a lesson: no explanations, tutorials or 'today we will learn'. Show, don't teach.\n"
-        f"CHARACTER BIBLE (recurring characters — keep their names, personalities and catchphrases exactly):\n"
-        f"{charmod.bible_text(bible)}\n"
-        f"RECENT EPISODES (do not repeat these plots): {'; '.join(recent) or 'none yet'}\n"
+        + ("CHARACTERS: this is a stand-alone video. Do NOT use the channel's recurring characters; create fresh, "
+           "original characters that fit the request (keys N1, N2 …).\n" if fresh else
+           f"CHARACTER BIBLE (recurring characters — keep their names, personalities and catchphrases exactly):\n"
+           f"{charmod.bible_text(bible)}\n")
+        + f"RECENT EPISODES (do not repeat these plots): {'; '.join(recent) or 'none yet'}\n"
         f"{_lang_rules(plan['language'])}\n")
     outline_prompt = (head +
         f"\nPlan an original {'YouTube Short (vertical)' if plan['format'] == 'short' else 'animated episode'} of about "
         f"{words} spoken words: exactly {n_beats} scenes (beats). Use bible characters by key where they fit; invent new "
-        "characters only when the story needs them (keys N1, N2 ... with a full visual design; new characters become "
-        "recurring). Locations must be from the allowed list. Moods must fit the genre. thumbnail_text = 2-5 punchy "
+        "characters only when the story needs them (keys N1, N2 ... with a full visual design). Locations must be from the allowed list. Moods must fit the genre. thumbnail_text = 2-5 punchy "
         "words. Description: 2-3 lines, no URLs. Tags: 6-12.")
 
     def check_outline(o: Outline) -> None:
@@ -223,17 +225,21 @@ def write(plan: dict[str, Any], channel: dict[str, Any], idea: dict[str, Any] | 
             "generated_by": meta, "words": sum(len(ln["text"].split()) for s in scenes_out for ln in s["lines"])}
 
 
-def save_new_characters(channel_id: int, sp: dict[str, Any], episode_id: int) -> dict[str, str]:
-    """New characters become recurring bible entries; returns {N-key: C-key} and rewrites the screenplay keys."""
+def save_new_characters(channel_id: int, sp: dict[str, Any], episode_id: int, oneoff: bool = False) -> dict[str, str]:
+    """New characters become recurring bible entries — or, for a stand-alone video, characters of that video only
+    (status 'oneoff': never offered to later episodes). Returns {N-key: C-key} and rewrites the screenplay keys."""
     mapping: dict[str, str] = {}
     for n in sp.get("new_characters", []):
-        existing = db.q1("SELECT id FROM characters WHERE channel_id=? AND lower(name)=lower(?)", (channel_id, n["name"]))
+        existing = None if oneoff else db.q1(
+            "SELECT id FROM characters WHERE channel_id=? AND lower(name)=lower(?) AND status NOT IN ('retired','oneoff')",
+            (channel_id, n["name"]))
         if existing:
             mapping[n["key"]] = f"C{existing['id']}"
             continue
         cid = charmod.create(channel_id, n["name"], n, role=n.get("role", ""), personality=n.get("personality", ""),
                              catchphrases=[n["catchphrase"]] if n.get("catchphrase") else [],
-                             rules=f"Introduced in episode #{episode_id}; keep this design and voice.")
+                             rules=f"Introduced in episode #{episode_id}; keep this design and voice.",
+                             status="oneoff" if oneoff else "approved")
         mapping[n["key"]] = f"C{cid}"
     if mapping:
         def m(k: str) -> str:

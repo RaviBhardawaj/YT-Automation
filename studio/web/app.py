@@ -87,7 +87,7 @@ templates.env.undefined = jinja2.ChainableUndefined
 
 PENDING_OK = ("/pending", "/api/auth/logout", "/pricing", "/privacy", "/terms")
 PUBLIC = ("/home", "/pricing", "/privacy", "/terms", "/login", "/signup", "/api/csrf", "/api/auth/login", "/api/auth/signup", "/static/", "/oauth/google/callback", "/favicon.ico")
-ADMIN_ONLY = ("/analytics", "/settings", "/compliance", "/niches", "/setup", "/admin", "/api/settings", "/api/secrets/",
+ADMIN_ONLY = ("/settings", "/compliance", "/niches", "/setup", "/admin", "/api/settings", "/api/secrets/",
               "/api/providers/", "/api/ollama/", "/api/voice/", "/api/youtube/", "/api/compliance/", "/api/datasources/",
               "/api/datasets/", "/api/niches/", "/api/interview/", "/api/feeds", "/api/upload/", "/api/lessons/",
               "/api/episodes", "/api/productions/selftest", "/api/analytics/", "/api/ideas/generate", "/api/admin/")
@@ -119,6 +119,9 @@ def _rate_ok(request: Request, path: str) -> bool:
     import time
     key, limit = f"{path}:{_client_ip(request)}", (10 if path.endswith("login") else 5)
     now = time.time()
+    if len(_attempts) > 5000:                      # forget addresses with no recent attempts (bounded memory)
+        for k in [k for k, v in _attempts.items() if not v or now - v[-1] >= 900]:
+            _attempts.pop(k, None)
     hits = [t for t in _attempts.get(key, []) if now - t < 900]
     hits.append(now)
     _attempts[key] = hits
@@ -201,6 +204,12 @@ async def guard(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def on_error(request: Request, exc: Exception):
+    if isinstance(exc, (net.FetchError, httpx.HTTPError)):     # an outside service is unreachable: not a crash
+        log.warning("outside service unavailable on %s: %s", request.url.path, exc)
+        msg = "Couldn't reach an outside service right now — check the internet connection and try again."
+        if request.url.path.startswith("/api/"):
+            return JSONResponse({"ok": False, "error": msg}, status_code=502)
+        return HTMLResponse(f"<h1>Temporarily unavailable</h1><p>{msg}</p><p><a href='/'>Back</a></p>", status_code=502)
     log.exception("request failed: %s", request.url.path)
     if request.url.path.startswith("/api/"):
         return JSONResponse({"ok": False, "error": logs.redact(f"{type(exc).__name__}: {exc}")[:600]}, status_code=500)
@@ -249,8 +258,8 @@ PAGE_HELP = {
               "(its topic is used, never its content). Pick the channel it's for, then <b>Create video</b>. It's made in the background; you can leave the page.",
     "edit": "Upload your video or audio (or pick an earlier upload), then say what to change: “remove pauses and add Hindi subtitles”, "
             "“make 3 vertical Shorts of the best moments”. Your original file is never changed.",
-    "ideas": "Ideas are made for each channel's niche. Pick a channel, click <b>Generate ideas</b>, then <b>Generate video</b> on any idea you like. "
-             "<b>Save</b> keeps it for the daily schedule; <b>Reject</b> removes it.",
+    "ideas": "Write or paste your own prompt to make a video right away — or pick a channel and click <b>Generate ideas</b> for suggestions "
+             "in its niche, then <b>Generate video</b> on any idea. <b>Save</b> keeps it for the daily schedule; <b>Reject</b> removes it.",
     "projects": "Every job and its progress. A job shows each step as it really happens; <b>Retry</b> continues from the step that failed.",
     "productions": "All finished videos and Shorts. Open one to preview it, download the video, subtitles or thumbnail, or publish it to a connected channel.",
     "uploads": "Your original files. They're read-only — every edit is saved as a new video. Use <b>Edit with AI</b> to start a new edit.",
@@ -259,6 +268,8 @@ PAGE_HELP = {
     "channel_setup": "Fill in what the channel is about, what kind of videos it makes, when to make them and when they go public. You can change everything later.",
     "schedule": "Automatic jobs. Each channel's daily video is set on the channel itself (Settings tab); the times here are your computer's local time.",
     "publishing": "Videos ready to publish and what's been uploaded. A video only shows as published after YouTube confirms it.",
+    "analytics": "Pick a channel to see its subscribers, views, watch time, daily trend and every video. "
+                 "Numbers refresh every 6 hours; use <b>Refresh from YouTube</b> for the latest.",
     "billing": "Your plan and this month's usage. Limits reset on the 1st of each month.",
     "storage": "Delete videos you no longer need and clear working files so your space doesn't fill up. Nothing on YouTube is deleted.",
     "tools": "What the studio can do right now and what powers each capability. It picks the right tools for each job automatically.",
@@ -340,6 +351,14 @@ templates.env.globals["static_v"] = _static_version()
 
 # ------------------------------------------------------------------ accounts
 
+def safe_next(url: Any) -> str:
+    """Only paths inside this site — never another website (open-redirect protection)."""
+    url = str(url or "/")
+    if not url.startswith("/") or url.startswith("//") or "\\" in url or any(ord(ch) < 32 for ch in url):
+        return "/"
+    return url
+
+
 def _login_response(token: str, next_url: str) -> RedirectResponse:
     resp = RedirectResponse(next_url if next_url.startswith("/") and not next_url.startswith("//") else "/",
                             status_code=303)
@@ -379,7 +398,7 @@ async def api_auth(request: Request, action: str):
             action = "login"
         if action == "login":
             token, _ = auth.login(str(data.get("email", "")), str(data.get("password", "")))
-            resp = JSONResponse({"ok": True, "next": str(data.get("next") or "/")})
+            resp = JSONResponse({"ok": True, "next": safe_next(data.get("next"))})
             set_cookie(resp, "sid", token, auth.SESSION_DAYS * 86400)
             return resp
     except auth.AuthError as e:
@@ -418,7 +437,7 @@ def home(request: Request):
     ch = chmod.get(cid)
     resp = page(request, "dashboard.html", productions=prods, ideas=ideas, channels=chans, ch=ch,
                 getting_started=_getting_started(ws),
-                totals=chmod.counts(cid, ws), providers=providers.status_all(),
+                totals=chmod.counts(cid, ws), providers=providers.status_all() if is_admin(request) else [],
                 schedules=db.q("SELECT s.* FROM schedules s JOIN channels c ON c.id=s.channel_id WHERE s.enabled=1 "
                                "AND c.workspace_id=? ORDER BY s.next_run_at", (ws,)),
                 uploads_recent=db.q("SELECT * FROM media WHERE workspace_id=? AND status='ready' ORDER BY id DESC "
@@ -638,14 +657,53 @@ def schedule_page(request: Request):
 
 
 @app.get("/analytics", response_class=HTMLResponse)
-def analytics_page(request: Request):
-    rows = analytics.latest()
-    usage = router.spend_by_provider()
-    daily = db.q("SELECT substr(created_at,1,10) AS day, ROUND(SUM(cost_usd),4) AS cost, COUNT(*) AS calls "
-                 "FROM ai_usage GROUP BY day ORDER BY day DESC LIMIT 30")
-    yt_units = db.q("SELECT day, SUM(units) AS units FROM api_quota GROUP BY day ORDER BY day DESC LIMIT 14")
-    return page(request, "analytics.html", videos=rows, usage=usage, daily=daily, yt_units=yt_units,
-                connected=oauth.connected())
+def analytics_page(request: Request, channel: str = "", sort: str = "new", kind: str = ""):
+    from .. import channels as chmod
+    from ..youtube import growth
+    chans = chmod.all_channels(ws_id(request))
+    for c in chans:
+        c["connected"] = oauth.connected(c["id"])
+        a = c.get("analytics") or {}
+        t = a.get("totals") or {}
+        c["summary"] = {"subs": (a.get("channel") or {}).get("subscriberCount"),
+                        "views_total": (a.get("channel") or {}).get("viewCount"),
+                        "videos": (a.get("channel") or {}).get("videoCount"),
+                        "views_28": int(t.get("views") or 0), "hours_28": round((t.get("estimatedMinutesWatched") or 0) / 60, 1),
+                        "subs_28": int(t.get("subscribersGained") or 0) - int(t.get("subscribersLost") or 0),
+                        "fetched": a.get("fetched_at")}
+    cid = _channel_arg(request, channel) or next((c["id"] for c in chans if c["connected"]), None) or \
+        (chans[0]["id"] if chans else None)
+    ch = next((c for c in chans if c["id"] == cid), None)
+    rep = (ch or {}).get("analytics") or {}
+    vids = list(rep.get("videos") or [])
+    if kind in ("short", "long"):
+        vids = [v for v in vids if v["short"] == (kind == "short")]
+    if sort == "views":
+        vids.sort(key=lambda v: -v["views"])
+    daily = rep.get("daily") or []
+    ctx: dict[str, Any] = {"channels": chans, "ch": ch, "rep": rep, "vids": vids, "sort": sort, "kind": kind,
+                           "daily": daily, "peak": max([d["views"] for d in daily] + [1]), "tiers": growth.TIERS}
+    if is_admin(request):                          # platform costs: superadmin only
+        ctx.update(usage=router.spend_by_provider(),
+                   costs=db.q("SELECT substr(created_at,1,10) AS day, ROUND(SUM(cost_usd),4) AS cost, COUNT(*) AS calls "
+                              "FROM ai_usage GROUP BY day ORDER BY day DESC LIMIT 30"),
+                   yt_units=db.q("SELECT day, SUM(units) AS units FROM api_quota GROUP BY day ORDER BY day DESC LIMIT 14"))
+    resp = page(request, "analytics.html", **ctx)
+    return _with_cookie(resp, cid) if channel else resp
+
+
+@app.post("/api/channels/{cid}/analytics")
+def api_channel_analytics(cid: int):
+    from ..youtube import analytics as yta, growth
+    if not oauth.connected(cid):
+        return bad("Connect this channel to YouTube first.")
+    try:
+        rep = yta.channel_report(cid)
+        growth.refresh(cid)
+        yta.sync(cid)
+    except Exception as e:
+        return bad(f"Couldn't read this channel's analytics: {e}")
+    return ok(detail=f"Updated: {len(rep['videos'])} videos")
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -671,12 +729,34 @@ def settings_page(request: Request, tab: str = "ai"):
                 disk=sysinfo.disk_free_gb())
 
 
+def media_owner_ok(request: Request, target: Path) -> bool:
+    """Ownership from the file's REAL location (after resolving), never from the address as typed."""
+    sess = getattr(request.state, "sess", None)
+    if not sess:
+        return False
+    ws, admin = sess["workspace"]["id"], bool(sess["user"]["is_admin"])
+
+    def first_part(base: Path) -> str | None:
+        base = base.resolve()
+        return target.relative_to(base).parts[0] if target.is_relative_to(base) else None
+    if (p := first_part(config.PRODUCTIONS_DIR)) is not None:
+        return p.isdigit() and auth.owns(ws, "productions", int(p))
+    if (p := first_part(config.DATA_DIR / "channels")) is not None:
+        return p.isdigit() and auth.owns(ws, "channels", int(p))
+    if (p := first_part(config.DATA_DIR / "workspaces")) is not None:
+        return p == f"{ws:05d}"
+    if first_part(config.SAMPLES_DIR) is not None:
+        return admin                               # the operator's voice samples
+    # shared, non-personal files: downloaded stock visuals and the bundled fonts/brand files
+    return first_part(config.ASSET_CACHE_DIR) is not None or first_part(config.BRAND_DIR) is not None
+
+
 @app.get("/media/{path:path}")
-def media(path: str):
+def media(request: Request, path: str):
+    if ".." in Path(path).parts or "\\" in path:
+        raise HTTPException(404)
     target = (config.DATA_DIR / path).resolve()
-    allowed = [config.PRODUCTIONS_DIR, config.SAMPLES_DIR, config.ASSET_CACHE_DIR, config.BRAND_DIR,
-               config.DATA_DIR / "workspaces", config.DATA_DIR / "channels"]
-    if not any(target.is_relative_to(a.resolve()) for a in allowed) or not target.is_file():
+    if not target.is_file() or not media_owner_ok(request, target):
         raise HTTPException(404)
     mt = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     return FileResponse(target, media_type=mt)
@@ -1101,7 +1181,7 @@ async def api_metadata(request: Request, pid: int):
     if p["status"] in ("uploading", "uploaded"):
         return bad("Already uploaded — edit metadata in YouTube Studio.")
     pkg = p["package"]
-    title = str(data.get("title", pkg["title"])).replace("<", "").replace(">", "").strip()[:100]
+    title = str(data.get("title", pkg.get("title") or p.get("title") or "")).replace("<", "").replace(">", "").strip()[:100]
     if len(title) < 5:
         return bad("Title is too short.")
     tags = [t.strip().replace("<", "").replace(">", "")[:30] for t in str(data.get("tags", "")).split(",") if t.strip()]
@@ -1543,7 +1623,7 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
     ch = channels.get(cid)
     if not ch:
         raise HTTPException(404)
-    chars = characters.for_channel(cid)
+    chars = characters.for_channel(cid, include_all=True)
     recent = db.q("SELECT id, title, format, kind, status, stage, updated_at, youtube_video_id, parent_id, error "
                   "FROM productions WHERE channel_id=? ORDER BY id DESC LIMIT 12", (cid,))
     from ..youtube import growth
@@ -1779,7 +1859,7 @@ async def api_media_upload(request: Request):
     """Streamed upload: the request body is the file itself (no size-limited JSON/base64)."""
     from urllib.parse import unquote
     up = uploads_mod()
-    name = unquote(request.headers.get("x-filename", ""))[:255]
+    name = "".join(ch for ch in unquote(request.headers.get("x-filename", "")) if ch.isprintable())[:255]
     if not name:
         return bad("missing file name")
     if not plans.can(ws_id(request), "upload_edit"):
@@ -1805,6 +1885,8 @@ async def api_create(request: Request):
     fmt = data.get("format") or None
     media_ids = [int(x) for x in data.get("media_ids") or [] if str(x).isdigit()]
     cid = int(data["channel_id"]) if str(data.get("channel_id") or "").isdigit() else None
+    if str(data.get("channel_id") or "") == "none":
+        data["no_upload"] = True
     if cid and not auth.owns(ws, "channels", cid):
         return bad("channel not found", 404)
     try:
@@ -1839,7 +1921,8 @@ async def api_create(request: Request):
             if not est["fits_cap"]:
                 return bad(f"This job's AI clips (~${est['usd']:.2f}) would pass the monthly cap "
                            f"(${est['spent_this_month']:.2f} of ${est['cap']:.2f} used).")
-        res = jobs.create(cid, req, fmt=fmt, no_upload=bool(data.get("no_upload")), ai_video=bool(data.get("ai_video")))
+        res = jobs.create(cid, req, fmt=fmt, no_upload=bool(data.get("no_upload")), ai_video=bool(data.get("ai_video")),
+                          use_cast=bool(data["use_cast"]) if "use_cast" in data else None)
     except (ValueError, plans.LimitExceeded) as e:
         return bad(str(e))
     pids = res.get("production_ids") or []

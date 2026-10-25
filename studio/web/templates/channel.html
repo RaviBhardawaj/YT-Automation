@@ -97,7 +97,7 @@
 
 {% elif tab == 'characters' %}
 <div class="grid g3">
-  {% for c in characters %}
+  {% for c in characters if c.status != 'oneoff' %}
   <div class="card">
     {% if c.reference_path %}<img class="thumb" src="{{ media_url(c.reference_path) }}" alt="{{ c.name }}" style="width:100%">{% endif %}
     <div class="spread" style="margin-top:8px"><b>{{ c.name }}</b> <span class="chip {{ 'ok' if c.status == 'approved' else 'warn' }}">{{ c.status }}</span></div>
@@ -112,6 +112,11 @@
   </div>
   {% else %}<div class="card empty">No characters yet. Animated episodes add the characters they introduce automatically; you can also add one below.</div>{% endfor %}
 </div>
+{% set oneoffs = characters|selectattr('status', 'equalto', 'oneoff')|list %}{% if oneoffs %}
+<details class="card" style="margin-top:16px"><summary><b>Characters from stand-alone videos ({{ oneoffs|length }})</b> <span class="muted small">— used only in their own video, never in new episodes</span></summary>
+  {% for c in oneoffs %}<div class="spread small" style="padding:4px 0"><span>{{ c.name }} <span class="muted">{{ c.role }}</span></span>
+    <button class="sm" data-post="/api/characters/{{ c.id }}/approve">Make recurring</button></div>{% endfor %}
+</details>{% endif %}
 <form class="card" style="margin-top:16px" data-form="/api/channels/{{ ch.id }}/characters" data-done="Character added">
   <h2>Add a character</h2>
   <div class="grid g3">

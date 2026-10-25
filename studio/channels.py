@@ -23,7 +23,7 @@ WORKFLOWS = {
 STYLES = ["comedy", "drama", "horror", "storytelling", "documentary", "education", "satire", "news", "motivation",
           "kids", "thriller", "romance", "mystery", "tech", "finance"]
 LANGUAGES = ["Hindi", "Hinglish", "English", "Marathi", "Tamil", "Telugu", "Bengali", "Gujarati"]
-JSON_FIELDS = ("styles", "branding", "voice", "schedule_days", "monetization", "youtube_status")
+JSON_FIELDS = ("styles", "branding", "voice", "schedule_days", "monetization", "youtube_status", "analytics")
 
 _current: contextvars.ContextVar[int | None] = contextvars.ContextVar("current_channel", default=None)
 
@@ -192,10 +192,13 @@ def lookup_youtube(text: str) -> dict[str, Any]:
 def link_youtube(channel_id: int, text: str) -> dict[str, Any]:
     """Lock a studio channel to one YouTube channel: connecting any other account is refused."""
     info = lookup_youtube(text)
-    other = db.q1("SELECT id, name FROM channels WHERE (youtube_expected_id=? OR youtube_channel_id=?) AND id<>?",
-                  (info["id"], info["id"], channel_id))
+    # duplicates only within the same workspace: another tenant can never block (or learn about) this link;
+    # who really owns the YouTube channel is proven by Google's sign-in when connecting
+    other = db.q1("SELECT id, name FROM channels WHERE (youtube_expected_id=? OR youtube_channel_id=?) AND id<>? "
+                  "AND workspace_id=(SELECT workspace_id FROM channels WHERE id=?)",
+                  (info["id"], info["id"], channel_id, channel_id))
     if other:
-        raise ValueError(f"that YouTube channel is already linked to studio channel '{other['name']}'")
+        raise ValueError(f"that YouTube channel is already linked to your channel '{other['name']}'")
     db.update("channels", channel_id, {"youtube_expected_id": info["id"], "youtube_handle": info["handle"],
                                        "youtube_title": info["title"], "updated_at": db.iso()})
     return info

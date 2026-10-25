@@ -4,6 +4,22 @@
   <div><h1>Ideas</h1><div class="muted">Ideas belong to a channel and follow its niche, language and style. Creative channels get original story concepts; factual channels get evidence-backed topics.</div></div>
 </div>
 
+<form class="card" data-form="/api/create" data-done="Video started" style="margin-bottom:14px">
+  <h2>Make a video from your own prompt</h2>
+  <label class="f"><span>Write or paste what you want — topic, story, style, language, length</span>
+    <textarea name="request" rows="4" required placeholder="e.g. A 2-minute Hindi kids story about a little elephant who is afraid of water and learns to swim, with a happy ending"></textarea></label>
+  <div class="grid g3">
+    <label class="f"><span>Channel</span><select name="channel_id">
+      {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if ch and ch.id == c.id }}>{{ c.name }}</option>{% endfor %}
+      <option value="none" {{ 'selected' if not channels }}>No channel — just make it (download)</option></select></label>
+    <label class="f"><span>Format</span><select name="format"><option value="">Decide from my prompt</option><option value="long">Long video</option><option value="short">Short (vertical)</option><option value="both">Long video + Shorts</option></select></label>
+    <label class="f"><span>Characters</span><label class="small" style="font-weight:400"><input type="checkbox" name="use_cast"> Use this channel's recurring characters</label>
+      <span class="muted small" style="font-weight:400">Unticked = fresh characters made just for this video (naming a character in your prompt brings them in).</span></label>
+  </div>
+  <button class="primary" type="submit">Generate video</button>
+  <span class="muted small">When it's ready you can preview it, download it, or publish it — your choice.</span>
+</form>
+
 {% if ch %}
 <form class="card tight" id="gen" style="margin-bottom:14px">
   <div class="row">
@@ -16,7 +32,7 @@
   </div>
 </form>
 {% else %}
-<div class="note">Pick a channel in the filter to generate ideas for it.</div>
+<div class="note">To get idea suggestions for a channel's niche, pick the channel in the filter below.</div>
 {% endif %}
 {% if running %}<div class="note" data-autorefresh="15">Idea generation is running. This page refreshes automatically.</div>{% endif %}
 

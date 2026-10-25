@@ -506,6 +506,10 @@ MIGRATIONS: list[str] = [
         decided_by INTEGER
     );
     """,
+    # v12: per-channel YouTube analytics report (28-day totals and trend, every video on the channel)
+    """
+    ALTER TABLE channels ADD COLUMN analytics TEXT NOT NULL DEFAULT '{}';
+    """,
 ]
 
 

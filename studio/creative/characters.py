@@ -67,9 +67,16 @@ def _row(r: dict[str, Any]) -> dict[str, Any]:
     return r
 
 
-def for_channel(channel_id: int, include_draft: bool = True) -> list[dict[str, Any]]:
-    q = "SELECT * FROM characters WHERE channel_id=?" + ("" if include_draft else " AND status='approved'")
-    return [_row(r) for r in db.q(q + " ORDER BY id", (channel_id,))]
+def for_channel(channel_id: int, include_draft: bool = True, include_all: bool = False) -> list[dict[str, Any]]:
+    """The channel's recurring cast. Retired characters and one-video ('oneoff') characters are never offered to
+    new episodes; include_all lists them too (for the Characters page)."""
+    if include_all:
+        cond = ""
+    elif include_draft:
+        cond = " AND status NOT IN ('retired','oneoff')"
+    else:
+        cond = " AND status='approved'"
+    return [_row(r) for r in db.q("SELECT * FROM characters WHERE channel_id=?" + cond + " ORDER BY id", (channel_id,))]
 
 
 def get(char_id: int) -> dict[str, Any] | None:

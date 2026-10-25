@@ -231,3 +231,47 @@ class IdeasOrderTests(unittest.TestCase):
         html = c.get("/ideas", params={"channel": cid, "sort": "score"}).text
         self.assertLess(html.index("Older high score idea"), html.index("Newest low score idea"))
         self.assertGreater(new, old)
+
+
+class FreshCastTests(unittest.TestCase):
+    def test_prompt_video_uses_fresh_characters_unless_asked(self):
+        from studio.creative import characters as charmod, screenplay
+        cid = make_channel(name="Cast channel")
+        hero = charmod.create(cid, "Bholu", {"gender": "male", "age": "child"}, role="hero")
+        with mock.patch.object(worker, "enqueue", return_value=1):
+            fresh = jobs.create(cid, "A funny cartoon about a clever crow", use_cast=False)["plan"]
+            named = jobs.create(cid, "A funny cartoon where Bholu meets a clever crow", use_cast=False)["plan"]
+            ticked = jobs.create(cid, "A funny cartoon about a clever crow", use_cast=True)["plan"]
+            legacy = jobs.create(cid, "A funny cartoon about a clever crow")["plan"]
+        self.assertIs(fresh["use_cast"], False)
+        self.assertIs(named["use_cast"], True)                  # naming a cast member brings them in
+        self.assertIs(ticked["use_cast"], True)
+        self.assertNotIn("use_cast", legacy)                    # schedules/series keep the recurring cast
+        # one-off characters never join the recurring cast
+        sp = {"new_characters": [{"key": "N1", "name": "Kauwa", "gender": "male", "age": "adult"}],
+              "cast": ["N1"], "scenes": [{"characters": ["N1"], "lines": [{"speaker": "N1"}]}]}
+        screenplay.save_new_characters(cid, sp, 999, oneoff=True)
+        names = [c["name"] for c in charmod.for_channel(cid)]
+        self.assertIn("Bholu", names)
+        self.assertNotIn("Kauwa", names)
+        self.assertIn("Kauwa", [c["name"] for c in charmod.for_channel(cid, include_all=True)])
+        db.update("characters", hero, {"status": "retired"})
+        self.assertNotIn("Bholu", [c["name"] for c in charmod.for_channel(cid)])   # retired: never reused
+
+    def test_fresh_prompt_has_no_bible(self):
+        from studio.creative import screenplay
+        captured = {}
+
+        def fake_generate(task, system, prompt, model_cls, **kw):
+            captured["prompt"] = prompt
+            raise RuntimeError("stop after the prompt")
+        cid = make_channel(name="Prompt check")
+        from studio.creative import characters as charmod
+        charmod.create(cid, "Tinku", {"gender": "male", "age": "child"}, role="hero")
+        plan = {"request": "x", "content_type": "comedy", "format": "short", "long_minutes": 2, "short_seconds": 40,
+                "language": "English", "tone": "", "use_cast": False, "decided_by": "request"}
+        with mock.patch("studio.ai.generate", side_effect=fake_generate):
+            with self.assertRaises(RuntimeError):
+                screenplay.write(plan, channels.get(cid), None)
+        self.assertIn("Do NOT use the channel's recurring characters", captured["prompt"])
+        self.assertNotIn("Tinku", captured["prompt"])
