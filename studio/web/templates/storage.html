@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>Storage</h1><div class="muted">Delete videos you no longer need and clear working files so the studio never fills your disk. Deleting here never removes anything from YouTube.</div></div>
+  <div class="row"><button class="primary" data-post="/api/storage/clean" data-confirm="Clear the working files of all finished videos? Final videos, thumbnails and subtitles are kept; re-rendering an old video would rebuild them.">Free up space now</button></div></div>
+<div class="grid g4" style="margin-bottom:16px">
+  <div class="card tight stat"><div class="n">{{ '%.2f' % ((rep.final_bytes + rep.working_bytes + rep.uploads_bytes) / 1e9) }} GB</div><div class="l">Used by your studio (plan: {{ lim.storage_gb }} GB)</div></div>
+  <div class="card tight stat"><div class="n">{{ '%.2f' % (rep.working_bytes / 1e9) }} GB</div><div class="l">Working files (safe to clear)</div></div>
+  <div class="card tight stat"><div class="n">{{ '%.2f' % (rep.final_bytes / 1e9) }} GB</div><div class="l">Final videos</div></div>
+  <div class="card tight stat"><div class="n">{{ '%.2f' % (rep.uploads_bytes / 1e9) }} GB</div><div class="l">Your uploads (originals)</div></div>
+</div>
+{% if is_admin %}
+<div class="grid g2" style="margin-bottom:16px">
+  <form class="card" data-form="/api/storage/settings" data-done="Saved">
+    <h2>Automatic clean-up</h2>
+    <label class="f"><span>Clear working files of finished videos after (days, 0 = never)</span><input name="auto_clean_days" data-type="number" type="number" min="0" max="365" value="{{ auto_clean }}"></label>
+    <label class="f"><span>Delete rejected / cancelled videos after (days, 0 = never)</span><input name="auto_delete_days" data-type="number" type="number" min="0" max="365" value="{{ auto_delete }}"></label>
+    <button type="submit">Save</button><div class="muted small">Runs every night at 3:30.</div>
+  </form>
+  <div class="card"><h2>This computer</h2>
+    <div class="kv"><div>Free disk space</div><div>{{ '%.0f' % (rep.disk_free_bytes / 1e9) }} GB</div><div>Download cache</div><div>{{ '%.2f' % (rep.cache_bytes / 1e9) }} GB (stock clips &amp; images; re-downloaded if needed)</div></div>
+    <div class="row" style="margin-top:10px"><button data-post="/api/storage/cache" data-body='{"older_than_days": 7}' data-confirm="Delete cached downloads older than 7 days?">Clear cache older than 7 days</button>
+      <button class="danger" data-post="/api/storage/cache" data-body='{"older_than_days": 0}' data-confirm="Delete the whole download cache?">Clear all cache</button></div></div>
+</div>
+{% endif %}
+<div class="card" id="vids">
+  <div class="spread"><h2>Videos by size</h2>
+    <button class="danger" id="delsel" data-post="/api/storage/delete" data-collect="#vids" data-confirm="Permanently delete the selected videos and their files from this studio? Videos already on YouTube stay on YouTube.">Delete selected</button></div>
+  <input type="hidden" name="ids" data-type="list" id="ids">
+  <table>
+    <tr><th></th><th>#</th><th>Video</th><th>Status</th><th>Size</th><th>Working files</th><th></th></tr>
+    {% for v in rep.videos|sort(attribute='bytes', reverse=True) %}{% if v.bytes or not v.parent_id %}
+    <tr><td><input type="checkbox" class="pickdel" value="{{ v.id }}"></td><td>{{ v.id }}</td>
+      <td><a href="/productions/{{ v.id }}">{{ v.title[:70] }}</a> <span class="chip">{{ v.format }}</span>{% if v.parent_id %} <span class="chip">part of #{{ v.parent_id }}</span>{% endif %}{% if v.youtube_video_id %} <span class="chip ok">on YouTube</span>{% endif %}</td>
+      <td>{% with p=v %}{% include "_status.html" %}{% endwith %}</td>
+      <td>{{ '%.0f' % (v.bytes / 1e6) }} MB</td><td>{{ '%.0f' % (v.working / 1e6) }} MB</td>
+      <td class="row">{% if v.working %}<button class="sm" data-post="/api/productions/{{ v.id }}/clean">Clear working files</button>{% endif %}
+        <button class="sm danger" data-post="/api/productions/{{ v.id }}/delete" data-confirm="Delete #{{ v.id }} '{{ v.title[:40] }}' and its files{{ ' (and its Shorts/outputs)' if not v.parent_id }}? {{ 'It stays on YouTube.' if v.youtube_video_id }}">Delete</button></td></tr>
+    {% endif %}{% else %}<tr><td colspan="7" class="empty">No videos.</td></tr>{% endfor %}
+  </table>
+</div>
+<script src="/static/storage.js?v={{ static_v }}"></script>
+{% endblock %}

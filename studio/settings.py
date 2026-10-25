@@ -120,6 +120,16 @@ DEFAULTS: dict[str, Any] = {
     "nifty.pivot_project_dir": "",            # empty = ~/Downloads/Pivot Reversal Strategy
     "script.sections_per_call": 2,           # long NIFTY scripts are written a few sections per AI call (models stop ~300-700 words)          # wait for today's complete 15m + 1h bars (until 22:00) before the 4 PM episode
     "compliance.auto_private_upload": False, # upload automatically as PRIVATE once the gate allows it
+    "videogen.enabled": False,               # AI text-to-video clips (Gemini Omni Flash); off until the owner enables it
+    "videogen.model": "gemini-omni-1.1-flash",
+    "videogen.resolution": "720p",
+    "videogen.usd_per_second": 0.10,         # Google's published ~720p rate; used for estimates
+    "videogen.usd_per_million_output_tokens": 17.50,
+    "videogen.seconds_per_clip": 8,
+    "videogen.max_clips_per_video": 3,
+    "videogen.monthly_cap_usd": 5.0,
+    "storage.auto_clean_days": 3,            # clear working files of finished videos after N days (0 = never)
+    "storage.auto_delete_rejected_days": 0,  # delete rejected/cancelled videos after N days (0 = never)
     "billing.rates": {},                     # per-unit USD estimate rates overriding plans.DEFAULT_RATES
     "billing.provider": "",                  # e.g. "stripe" once keys are configured; empty = billing not live
     "auth.allow_signup": True,               # new creators can register their own workspace

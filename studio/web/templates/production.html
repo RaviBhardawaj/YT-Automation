@@ -16,6 +16,7 @@
     <button data-post="/api/productions/{{ p.id }}/retry" data-collect="#restart-wrap" data-confirm="Re-run from the selected stage? Later stages will be redone.">Re-run from stage</button>
     {% endif %}
     {% if p.status not in ('uploaded','uploading','rejected') %}<button class="danger" data-post="/api/productions/{{ p.id }}/reject" data-confirm="Reject this video?">Reject</button>{% endif %}
+    {% if p.status != 'uploading' %}<button class="danger" data-post="/api/productions/{{ p.id }}/delete" data-confirm="Permanently delete this video{{ ' and its Shorts/outputs' if not p.parent_id }} and all its files from the studio?{{ ' It stays on YouTube.' if p.youtube_video_id }}">Delete</button>{% endif %}
     {% if p.status == 'paused' %}<button data-post="/api/productions/{{ p.id }}/job/resume">Resume</button>
     {% elif active %}<button data-post="/api/productions/{{ p.id }}/job/pause">Pause</button>{% endif %}
     {% if p.status in ('failed','needs_attention','paused_budget') %}<button class="primary" data-post="/api/productions/{{ p.id }}/job/retry">Retry failed step</button>{% endif %}

@@ -242,8 +242,12 @@ def sanitize(pkg: dict[str, Any]) -> dict[str, Any]:
 # ------------------------------------------------------------------ generation
 
 def _context(topic: dict[str, Any], evidence: list[dict[str, Any]]) -> str:
+    requested = topic.get("idea_kind") == "request"
     return (f"CHANNEL PROFILE: {profile.summary_text()}\n"
-            f"TOPIC: {topic['title']}\nORIGINAL ANGLE: {topic.get('angle') or '-'}\n"
+            + ("SUBJECT RULE: the creator chose this video's subject (TOPIC and ANGLE below). Use the channel "
+               "profile only for language, tone and audience — do NOT turn the video toward the channel's usual "
+               "niche or mention it unless the topic itself is about it.\n" if requested else "")
+            + f"TOPIC: {topic['title']}\nORIGINAL ANGLE: {topic.get('angle') or '-'}\n"
             f"HOOK IDEA: {topic.get('hook_idea') or '-'}\n\n"
             f"{prompts.evidence_block(evidence, max_chars=16000, content_chars=1400)}\n\n"
             f"{profile.language_rules()}\n")

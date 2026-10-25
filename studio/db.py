@@ -473,6 +473,11 @@ MIGRATIONS: list[str] = [
     ALTER TABLE topics ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 1;
     CREATE INDEX idx_productions_ws ON productions(workspace_id, created_at);
     """,
+    # v8: per-channel upload switch and YouTube growth / monetization progress
+    """
+    ALTER TABLE channels ADD COLUMN uploads_enabled INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE channels ADD COLUMN monetization TEXT NOT NULL DEFAULT '{}';
+    """,
 ]
 
 

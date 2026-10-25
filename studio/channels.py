@@ -22,7 +22,7 @@ WORKFLOWS = {
 STYLES = ["comedy", "drama", "horror", "storytelling", "documentary", "education", "satire", "news", "motivation",
           "kids", "thriller", "romance", "mystery", "tech", "finance"]
 LANGUAGES = ["Hindi", "Hinglish", "English", "Marathi", "Tamil", "Telugu", "Bengali", "Gujarati"]
-JSON_FIELDS = ("styles", "branding", "voice", "schedule_days")
+JSON_FIELDS = ("styles", "branding", "voice", "schedule_days", "monetization")
 
 _current: contextvars.ContextVar[int | None] = contextvars.ContextVar("current_channel", default=None)
 
@@ -31,7 +31,8 @@ def _row(r: dict[str, Any] | None) -> dict[str, Any] | None:
     if not r:
         return None
     for k in JSON_FIELDS:
-        r[k] = db.loads(r.get(k), [] if k in ("styles", "schedule_days") else {})
+        r[k] = db.loads(r.get(k), [] if k in ("styles", "schedule_days") else {}) or \
+            ([] if k in ("styles", "schedule_days") else {})
     return r
 
 
@@ -66,7 +67,7 @@ def using(channel_id: int | None) -> Iterator[None]:
 FIELDS = ("name", "niche", "sub_niche", "audience", "language", "tone", "styles", "workflow", "formats", "long_minutes",
           "short_seconds", "shorts_per_episode", "instructions", "restrictions", "research_required", "branding",
           "voice", "schedule_enabled", "schedule_time", "schedule_days", "timezone", "auto_publish",
-          "publish_privacy", "status")
+          "publish_privacy", "status", "uploads_enabled")
 
 
 def clean(data: dict[str, Any], partial: bool = False) -> dict[str, Any]:
@@ -93,7 +94,7 @@ def clean(data: dict[str, Any], partial: bool = False) -> dict[str, Any]:
             v = max(15, min(180, int(v)))
         elif k == "shorts_per_episode":
             v = max(0, min(8, int(v)))
-        elif k in ("research_required", "schedule_enabled", "auto_publish"):
+        elif k in ("research_required", "schedule_enabled", "auto_publish", "uploads_enabled"):
             v = 1 if v in (True, 1, "1", "true", "on", "yes") else 0
         elif k == "schedule_time":
             import re
@@ -157,6 +158,11 @@ def ensure_default() -> None:
 
 
 # ------------------------------------------------------------------ helpers used by the pipelines
+
+def uploads_allowed(ch: dict[str, Any] | None) -> bool:
+    """The channel's YouTube upload switch (off = videos are made and kept, never uploaded)."""
+    return bool(ch) and bool(ch.get("uploads_enabled", 1))
+
 
 def styles(ch: dict[str, Any] | None) -> list[str]:
     return (ch or {}).get("styles") or []

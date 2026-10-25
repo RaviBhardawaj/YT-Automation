@@ -58,7 +58,7 @@ def save(pid: int, **fields: Any) -> None:
 def assets_for(pid: int) -> list[dict[str, Any]]:
     rows = db.q("SELECT * FROM assets WHERE production_id=? ORDER BY scene_index", (pid,))
     for r in rows:
-        r["synthetic"] = r["provider"] == "gemini_image"
+        r["synthetic"] = r["provider"] in ("gemini_image", "gemini_video")
         r["is_card"] = (r["provider_id"] or "").endswith("#card")
     return rows
 
@@ -184,9 +184,16 @@ def stage_assets(p: dict[str, Any]) -> str | None:
         "SELECT provider, provider_id FROM assets WHERE created_at >= ?", (db.iso_in(-30 * 86400),))}
     seed = f"p{p['id']}"
     failures: dict[str, int] = {}
+    ai_left = _ai_clip_budget(p, have)
     for idx, scene in enumerate(pkg["scenes"]):
         if idx in have:
             continue
+        if ai_left and scene.get("visual_type") in ("video", "illustration"):
+            rec = _ai_clip(p, scene, idx, work)
+            if rec:
+                ai_left -= 1
+                db.insert("assets", {**rec, "production_id": p["id"], "created_at": db.iso()})
+                continue
         # test mode: original procedural art only (no network, no API keys needed)
         rec = visuals.choose(scene, idx, p["format"], used, work, seed,
                              providers=[] if p["test_mode"] else None, failures=failures)
@@ -202,6 +209,37 @@ def stage_assets(p: dict[str, Any]) -> str | None:
     return None
 
 
+def _ai_clip_budget(p: dict[str, Any], have: set[int]) -> int:
+    """AI clips still allowed for this video: only when the job opted in and AI video is switched on."""
+    from .ai import videogen
+    plan = db.loads(p.get("request"), {}) or {}
+    if not plan.get("ai_video") or not videogen.cfg()["enabled"] or p.get("test_mode"):
+        return 0
+    made = db.q1("SELECT COUNT(*) AS n FROM assets WHERE production_id=? AND provider=?",
+                 (p["id"], videogen.PROVIDER))["n"]
+    return max(0, videogen.cfg()["max_clips"] - made)
+
+
+def _ai_clip(p: dict[str, Any], scene: dict[str, Any], idx: int, work: Path) -> dict[str, Any] | None:
+    """One AI-generated clip for a scene; None (→ normal visuals) if it can't be made or the cap is reached."""
+    from .ai import videogen
+    target = work / f"ai_{idx:03d}.mp4"
+    prompt = (f"{scene.get('visual_description') or scene.get('visual_query')}. Cinematic, realistic, smooth camera "
+              f"motion, no text, no captions, no logos, no watermark.")
+    try:
+        res = videogen.generate(prompt, "9:16" if p["format"] == "short" else "16:9", target,
+                                label=f"#{p['id']} scene {idx + 1}")
+    except videogen.VideoGenError as e:
+        logs.event("warning", "videogen", f"Scene {idx + 1}: AI clip not made ({e}); using stock/original visuals",
+                   production_id=p["id"])
+        return None
+    info = visuals.probe_video(target)
+    return {"scene_index": idx, "kind": "video", "provider": videogen.PROVIDER, "provider_id": target.stem,
+            "source_url": "", "page_url": "", "local_path": str(target), "license": "AI-generated (Google Gemini)",
+            "license_url": "", "author": "Google Gemini Omni", "attribution": "", "width": info["width"],
+            "height": info["height"], "duration": info["duration"]}
+
+
 def stage_voice(p: dict[str, Any]) -> str | None:
     sarvam_before = tts._sarvam_chars["n"]
     voice = tts.current_voice()
@@ -212,27 +250,43 @@ def stage_voice(p: dict[str, Any]) -> str | None:
     work.mkdir(exist_ok=True)
     scenes = tl.get("scenes") or []
     key = f"{voice['engine']}:{voice['voice_id']}:{settings.get('voice').get('speed')}"
+    if voice["engine"] == "sarvam" and not tts.sarvam_status().get("ok", True):
+        key += ":fallback"                          # audio made with the free voice is redone once Sarvam is back
     if tl.get("voice_key") != key:
         scenes = []
-    for idx, scene in enumerate(pkg["scenes"]):
-        wav = work / f"scene_{idx:03d}.wav"
-        if idx < len(scenes) and wav.exists() and scenes[idx].get("text") == scene["narration"]:
-            continue
-        info = tts.synthesize_scene(scene["narration"], wav)
-        entry = {"index": idx, "wav": str(wav), "duration": info["duration"], "sentences": info["sentences"],
-                 "text": scene["narration"]}
-        if idx < len(scenes):
-            scenes[idx] = entry
-        else:
-            scenes.append(entry)
+    for attempt in range(2):
+        try:
+            with tts.track_engines() as used:
+                for idx, scene in enumerate(pkg["scenes"]):
+                    wav = work / f"scene_{idx:03d}.wav"
+                    if idx < len(scenes) and wav.exists() and scenes[idx].get("text") == scene["narration"]:
+                        continue
+                    info = tts.synthesize_scene(scene["narration"], wav)
+                    entry = {"index": idx, "wav": str(wav), "duration": info["duration"],
+                             "sentences": info["sentences"], "text": scene["narration"]}
+                    if idx < len(scenes):
+                        scenes[idx] = entry
+                    else:
+                        scenes.append(entry)
+            break
+        except tts.VoiceSwitched:                   # Sarvam stopped mid-video: one voice for the whole video
+            scenes = []
+            key = key if key.endswith(":fallback") else key + ":fallback"
     scenes = scenes[:len(pkg["scenes"])]
     narration = workdir(p["id"]) / "narration.wav"
     tts.concat_wavs([Path(s["wav"]) for s in scenes], narration)
-    tl.update({"scenes": scenes, "voice_key": key, "narration": str(narration),
-               "voice": {k: voice.get(k) for k in ("engine", "voice_id", "license", "commercial", "lang")}})
+    vinfo = {k: voice.get(k) for k in ("engine", "voice_id", "license", "commercial", "lang")}
+    if "fallback" in used:
+        fb, _ = tts.fallback_voice(voice["voice_id"], " ".join(s["narration"] for s in pkg["scenes"])[:2000])
+        vinfo = {"engine": "kokoro", "voice_id": fb, "license": "Apache-2.0", "commercial": True,
+                 "lang": voice.get("lang"), "fallback_for": f"sarvam/{voice['voice_id']}"}
+        key = key if key.endswith(":fallback") else key + ":fallback"
+    tl.update({"scenes": scenes, "voice_key": key, "narration": str(narration), "voice": vinfo})
     save(p["id"], timeline=tl)
     paid = tts._sarvam_chars["n"] - sarvam_before
-    logs.event("info", "pipeline", f"Narration: {sum(s['duration'] for s in scenes):.1f}s with {voice['engine']}/{voice['voice_id']}"
+    logs.event("warning" if vinfo.get("fallback_for") else "info", "pipeline",
+               f"Narration: {sum(s['duration'] for s in scenes):.1f}s with {vinfo['engine']}/{vinfo['voice_id']}"
+               + (" — free fallback voice because Sarvam is unavailable" if vinfo.get("fallback_for") else "")
                + (f" ({tts.sarvam_cost_note(paid)})" if paid else ""), production_id=p["id"])
     return None
 
@@ -258,6 +312,8 @@ def compose_description(p: dict[str, Any], pkg: dict[str, Any], tl: dict[str, An
     tail = []
     if settings.get("youtube.disclose_tts"):
         tail.append("Narration uses a synthetic (text-to-speech) voice.")
+    if any(a.get("provider") == "gemini_video" for a in assets):
+        tail.append("Some footage in this video is AI-generated (Google Gemini).")
     paragraphs = list(parts)
 
     def assemble(srcs: list[str], opt: list[str]) -> str:
@@ -536,6 +592,19 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
         raise NeedsAttention("Test-mode productions cannot be uploaded.")
     if not p["qa"].get("passed"):
         raise NeedsAttention("QA has not passed for this production.")
+    from . import channels
+    ch = channels.get(p.get("channel_id"))
+    if ch and not channels.uploads_allowed(ch):
+        msg = f"Uploads are switched off for '{ch['name']}' — the video is kept here, not uploaded."
+        if by.startswith("auto"):                   # automation never uploads to a switched-off channel
+            save(pid, status="awaiting_approval", error=msg)
+            logs.event("info", "pipeline", msg, production_id=pid)
+            return
+        raise NeedsAttention(msg + " Switch uploads on for that channel first.")
+    if by.startswith("auto") and (db.loads(p.get("request"), {}) or {}).get("no_upload"):
+        save(pid, status="awaiting_approval", error="Ready to download — made without a channel, so it isn't "
+                                                    "uploaded automatically.")
+        return
     _nc_voice_guard(p, privacy)
     if p.get("kind") in FINANCE_KINDS:
         from .finance import audit, gate
@@ -565,6 +634,11 @@ def _run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]
     p = load(pid)
     if p["status"] not in ("approved", "uploading"):
         return {"skipped": f"status is {p['status']}"}
+    from . import channels as _ch
+    chan = _ch.get(p.get("channel_id"))
+    if chan and not _ch.uploads_allowed(chan):           # switched off after approval: hold, don't upload
+        save(pid, status="awaiting_approval", error=f"Uploads are switched off for '{chan['name']}' — not uploaded.")
+        return {"held": "uploads switched off for this channel"}
     if p.get("youtube_video_id"):
         # Never upload the same production twice (e.g. a re-approval after a finished upload)
         save(pid, status="uploaded", error=None)

@@ -32,12 +32,14 @@
 <div class="card" style="margin-bottom:16px">
   <div class="spread"><h2>Channels</h2><a class="small" href="/channels">Manage</a></div>
   <table>
-    <tr><th>Channel</th><th>Niche</th><th>Today</th><th>In production</th><th>Review</th><th>Published</th><th>Failed</th><th>YouTube</th><th>Next scheduled</th></tr>
+    <tr><th>Channel</th><th>Niche</th><th>Today</th><th>In production</th><th>Review</th><th>Published</th><th>Failed</th><th>YouTube</th><th>Uploads</th><th>Subscribers</th><th>Next scheduled</th></tr>
     {% for c in channels %}
     <tr><td><a href="/channels/{{ c.id }}"><b>{{ c.name }}</b></a>{% if c.status != 'active' %} <span class="chip warn">paused</span>{% endif %}<div class="muted small">{{ c.language }} · {{ c.workflow|replace('_',' ') }}</div></td>
       <td class="small">{{ c.niche }}</td><td>{{ c.counts.today }}</td><td>{{ c.counts.in_production }}</td><td>{{ c.counts.review }}</td>
       <td>{{ c.counts.published }}</td><td>{% if c.counts.failed %}<span class="chip err">{{ c.counts.failed }}</span>{% else %}0{% endif %}</td>
       <td class="small">{% if c.connected %}<span class="chip ok">{{ c.youtube_title or 'connected' }}</span>{% else %}<a href="/channels/{{ c.id }}?tab=youtube">connect</a>{% endif %}</td>
+      <td>{% if c.uploads_enabled %}<span class="chip ok">on</span>{% else %}<span class="chip warn">off</span>{% endif %}</td>
+      <td class="small">{{ (c.monetization or {}).subscribers if (c.monetization or {}).subscribers is number else '—' }}</td>
       <td class="small muted">{{ c.next_run|dt if c.next_run else 'off' }}</td></tr>
     {% endfor %}
   </table>

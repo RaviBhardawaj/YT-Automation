@@ -37,19 +37,20 @@ def workdir(pid: int) -> Path:
 # ------------------------------------------------------------------ creation
 
 def create(channel_id: int, request: str, *, idea_id: int | None = None, fmt: str | None = None,
-           actor: str = "user", scheduled_for: str | None = None) -> int:
+           actor: str = "user", scheduled_for: str | None = None, plan: dict[str, Any] | None = None) -> int:
     from .. import worker
     ch = channels.get(channel_id)
     if not ch:
         raise ValueError("channel not found")
     idea = db.q1("SELECT * FROM topics WHERE id=?", (idea_id,)) if idea_id else None
-    plan = reqmod.plan(request, ch, idea)
+    plan = dict(plan) if plan else reqmod.plan(request, ch, idea)
     if fmt in ("long", "short", "both"):
         plan["format"] = fmt
     plan["scheduled_for"] = scheduled_for
     plan["make_shorts"] = plan["format"] == "both"
     out_fmt = "short" if plan["format"] == "short" else "long"
-    title = (request or (idea or {}).get("title") or f"{plan['content_type'].title()} episode")[:90]
+    title = ((plan.get("reference") or {}).get("title") or request or (idea or {}).get("title")
+             or f"{plan['content_type'].title()} episode")[:90]
     pid = db.insert("productions", {
         "topic_id": idea_id, "format": out_fmt, "title": title, "status": "queued", "stage": "script", "kind": "story",
         "channel_id": channel_id, "workspace_id": ch["workspace_id"], "language": plan["language"],
@@ -132,23 +133,38 @@ def stage_voice(p: dict[str, Any]) -> None:
     work.mkdir(exist_ok=True)
     lang = "en" if p.get("language") == "English" else "hi"
     paid_before = tts._sarvam_chars["n"]
-    lines_out = []
-    for si, sc in enumerate(p["package"]["scenes"]):
-        for li, ln in enumerate(sc["lines"]):
-            wav = work / f"s{si:02d}_l{li:02d}.wav"
-            if not wav.exists():
-                engine, voice_id, pace = _voice_for(ln["speaker"], cast, ch)
-                audio, sr = tts._synth_sentence(screenplay.clean_text(ln["text"]), engine, voice_id, lang, pace)
-                audio = _resample(audio, sr)
-                with wave.open(str(wav), "wb") as w:
-                    w.setnchannels(1)
-                    w.setsampwidth(2)
-                    w.setframerate(SR)
-                    w.writeframes(audio.tobytes())
-            with wave.open(str(wav), "rb") as w:
-                dur = w.getnframes() / w.getframerate()
-            lines_out.append({"scene": si, "line": li, "wav": str(wav), "duration": round(dur, 3)})
-    tl = {**(p.get("timeline") or {}), "lines": lines_out}
+    for attempt in range(2):
+        lines_out, reused = [], 0
+        try:
+            with tts.track_engines() as used:
+                for si, sc in enumerate(p["package"]["scenes"]):
+                    for li, ln in enumerate(sc["lines"]):
+                        wav = work / f"s{si:02d}_l{li:02d}.wav"
+                        if wav.exists():
+                            reused += 1
+                        else:
+                            engine, voice_id, pace = _voice_for(ln["speaker"], cast, ch)
+                            audio, sr = tts._synth_sentence(screenplay.clean_text(ln["text"]), engine, voice_id,
+                                                            lang, pace)
+                            audio = _resample(audio, sr)
+                            with wave.open(str(wav), "wb") as w:
+                                w.setnchannels(1)
+                                w.setsampwidth(2)
+                                w.setframerate(SR)
+                                w.writeframes(audio.tobytes())
+                        with wave.open(str(wav), "rb") as w:
+                            dur = w.getnframes() / w.getframerate()
+                        lines_out.append({"scene": si, "line": li, "wav": str(wav), "duration": round(dur, 3)})
+                if "fallback" in used and reused:   # earlier lines may be Sarvam: redo them all
+                    raise tts.VoiceSwitched("mixed voices after a retry")
+            break
+        except tts.VoiceSwitched:                   # Sarvam stopped mid-episode: every character re-voiced consistently
+            for f in work.glob("*.wav"):
+                f.unlink()
+    tl = {**(p.get("timeline") or {}), "lines": lines_out, "voice_fallback": "fallback" in used}
+    if "fallback" in used:
+        logs.event("warning", "creative", "Voices made with the free Kokoro fallback because Sarvam is unavailable",
+                   production_id=p["id"])
     pipeline.save(p["id"], timeline=tl)
     paid = tts._sarvam_chars["n"] - paid_before
     logs.event("info", "creative", f"Voices: {len(lines_out)} lines" + (f" ({tts.sarvam_cost_note(paid)})" if paid else ""),

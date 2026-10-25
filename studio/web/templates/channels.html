@@ -15,10 +15,22 @@
       {% if c.counts.failed %}<span class="chip err">{{ c.counts.failed }} failed</span>{% endif %}</div>
     <div class="small" style="margin-top:8px">YouTube: {% if c.connected %}<b>{{ c.youtube_title or 'connected' }}</b>{% else %}<span class="muted">not connected</span>{% endif %}
       · {{ 'auto-publish ' ~ c.publish_privacy if c.auto_publish else 'manual approval' }}</div>
+    {% set m = c.monetization or {} %}{% if m.fetched_at %}
+    <div class="small" style="margin-top:6px">{{ m.subscribers if m.subscribers is number else '?' }} subscribers · {{ m.watch_hours_12m }} watch h · {{ '{:,}'.format(m.shorts_views_90d) }} Shorts views
+      {% set pr = m.tiers.early %}<div class="bar" title="Progress to early monetization (subscribers)"><i style="width:{{ pr.subscribers_pct }}%"></i></div>
+      <span class="muted">{{ 'eligible to apply for monetization' if m.tiers.full.eligible or pr.eligible else 'monetization: ' ~ pr.subscribers_pct ~ '% of the subscriber goal' }}</span></div>{% endif %}
   </a>
+  <div class="row" style="margin:-8px 0 8px 4px">
+    {% if c.uploads_enabled %}<button class="sm" data-post="/api/channels/{{ c.id }}" data-body='{"uploads_enabled": false}' data-confirm="Switch off YouTube uploads for {{ c.name }}? Videos will still be made and kept for download.">Uploads ON — switch off</button>
+    {% else %}<button class="sm primary" data-post="/api/channels/{{ c.id }}" data-body='{"uploads_enabled": true}'>Uploads OFF — switch on</button>{% endif %}
+    {% if not c.connected %}<a class="btn sm" href="/channels/{{ c.id }}?tab=youtube">Connect YouTube</a>{% endif %}
+  </div>
   {% endfor %}
 </div>
 
+<div class="note" style="margin-top:16px"><b>Running many YouTube channels:</b> one Google login can own many YouTube channels (“brand accounts”).
+  To add one: create it on <a href="https://www.youtube.com/channel_switcher" target="_blank" rel="noopener">youtube.com/channel_switcher</a> → “Create a channel” (YouTube doesn't allow apps to create channels),
+  then add it below and click <i>Connect YouTube</i> on its page. Each channel keeps its own niche, characters, schedule, upload switch and login.</div>
 <form class="card" style="margin-top:16px" data-form="/api/channels" data-done="Channel created">
   <h2>Add a channel</h2>
   <div class="grid g3">

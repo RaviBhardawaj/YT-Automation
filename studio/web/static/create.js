@@ -23,7 +23,7 @@
     xhr.setRequestHeader("X-CSRF-Token", CSRF);
     xhr.setRequestHeader("X-Filename", encodeURIComponent(file.name));
     const ch = document.getElementById("channel").value;
-    if (ch) xhr.setRequestHeader("X-Channel", ch);
+    if (ch && ch !== "none") xhr.setRequestHeader("X-Channel", ch);
     xhr.upload.onprogress = e => { if (e.lengthComputable) bar.style.width = (e.loaded / e.total * 100).toFixed(0) + "%"; };
     xhr.onload = () => {
       busy--;
@@ -69,14 +69,26 @@
   document.getElementById("go").addEventListener("click", async e => {
     const state = document.getElementById("gostate");
     if (busy) { state.textContent = "Wait for the uploads to finish."; return; }
+    const chSel = document.getElementById("channel");
+    if (!chSel.value) { toast("Choose which channel this video is for (or “No channel”)", "err"); chSel.focus(); return; }
     const ids = [...uploaded.values(), ...[...document.querySelectorAll(".prev:checked")].map(x => +x.value)];
     if (root.dataset.mode === "edit" && !ids.length) { toast("Add at least one file to edit", "err"); return; }
+    const ai = document.getElementById("aivideo");
+    const wantAi = !!(ai && ai.checked);
+    if (wantAi) {
+      try {
+        const est = await api("/api/videogen/estimate", null, "GET");
+        if (!confirm(`AI video clips will cost about $${est.usd.toFixed(2)} (${est.basis}).\n` +
+                     `Used this month: $${est.spent_this_month.toFixed(2)} of $${est.cap.toFixed(2)}.\n\nStart the job?`)) return;
+      } catch (err) { toast(err.message, "err"); return; }
+    }
     e.target.disabled = true;
     state.textContent = "Starting…";
     try {
       const j = await api("/api/create", {
         request: document.getElementById("req").value, media_ids: ids,
-        channel_id: document.getElementById("channel").value || null, format: document.getElementById("format").value || null,
+        channel_id: chSel.value === "none" ? null : chSel.value, no_upload: chSel.value === "none", ai_video: wantAi,
+        format: document.getElementById("format").value || null,
       });
       toast(j.detail || "Started");
       location.href = j.next;

@@ -178,10 +178,12 @@ class IdeasPageTests(unittest.TestCase):
             auth.register("owner@test.local", "correct horse battery")
         token, _ = auth.login("owner@test.local", "correct horse battery")
         cls.client.cookies.set("sid", token)
-        cls.cid = make_channel(name="Filter Toons")
+        cls.ws = auth.session(token)["workspace"]["id"]
+        cls.cid = channels.create({"name": "Filter Toons", "niche": "animated comedy", "language": "Hindi",
+                                   "workflow": "animated_story", "formats": "both", "styles": ["comedy"]}, cls.ws)
         for i, (fmt, style, kind) in enumerate([("long", "comedy", "ai_original"), ("short", "horror", "evergreen"),
                                                 ("short", "comedy", "ai_original")]):
-            db.insert("topics", {"channel_id": cls.cid, "workspace_id": 1, "title": f"Idea number {i} {style}", "format": fmt, "style": style,
+            db.insert("topics", {"channel_id": cls.cid, "workspace_id": cls.ws, "title": f"Idea number {i} {style}", "format": fmt, "style": style,
                                  "idea_kind": kind, "language": "Hindi", "score": 50 + i, "status": "idea",
                                  "created_at": db.iso(), "updated_at": db.iso()})
 

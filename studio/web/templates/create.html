@@ -24,10 +24,17 @@
   </details>{% endif %}
 
   <div class="grid g3" style="margin-top:14px">
-    <label class="f"><span>Channel (optional)</span><select id="channel"><option value="">{{ 'No channel — just make the video' if mode == 'edit' else 'Pick automatically' }}</option>
-      {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if ch and ch.id == c.id }}>{{ c.name }} · {{ c.niche[:40] }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Which channel is this video for?</span><select id="channel" required>
+      <option value="" disabled {{ 'selected' if not ch }}>Choose a channel…</option>
+      <option value="none">No channel — just make it (I'll download it)</option>
+      {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if ch and ch.id == c.id }}>{{ c.name }}{{ '' if c.uploads_enabled else ' (uploads off)' }}{{ ' · auto-publishes' if c.auto_publish and c.uploads_enabled else '' }}</option>{% endfor %}
+      </select><a class="small" href="/channels">+ Add a new channel</a></label>
     <label class="f"><span>Format</span><select id="format"><option value="">Decide from my request</option><option value="long">Long video (16:9)</option><option value="short">Shorts only (9:16)</option><option value="both">Long video + Shorts</option></select></label>
   </div>
+  {% if mode == 'create' %}
+  <label class="small" style="display:block;margin:4px 0 10px"><input type="checkbox" id="aivideo" {{ 'disabled' if not videogen.enabled }}>
+    Use AI-generated video clips (researched videos) — {% if videogen.enabled %}up to {{ videogen.clips }} clips ≈ <b>${{ '%.2f' % videogen.usd }}</b> (estimate; ${{ '%.2f' % videogen.spent_this_month }} of ${{ '%.2f' % videogen.cap }} monthly cap used){% else %}<span class="muted">off — enable under AI agents &amp; tools</span>{% endif %}</label>
+  {% endif %}
   <button class="primary" id="go">{{ 'Start editing' if mode == 'edit' else 'Create video' }}</button>
   <span class="muted small" id="gostate"></span>
 </div>

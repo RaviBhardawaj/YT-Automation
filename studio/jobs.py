@@ -20,18 +20,19 @@ def _norm(title: str) -> str:
     return re.sub(r"[^\w]+", " ", title.lower()).strip()
 
 
-def plan_for(channel_id: int, request: str, idea: dict[str, Any] | None = None) -> dict[str, Any]:
+def plan_for(channel_id: int, request: str, idea: dict[str, Any] | None = None, hint: str | None = None) -> dict[str, Any]:
     ch = channels.get(channel_id)
-    plan = reqmod.plan(request, ch, idea)
-    # nothing explicit in the request: the channel's own workflow decides
-    if plan["decided_by"] != "request" and ch.get("workflow") in ("animated_story", "factual"):
+    plan = reqmod.plan(request, ch, idea, hint=hint)
+    # nothing explicit in the request (or a linked video): the channel's own workflow decides
+    if plan["decided_by"] not in ("request", "reference") and ch.get("workflow") in ("animated_story", "factual"):
         plan["workflow"] = ch["workflow"]
         plan["animated"] = ch["workflow"] == "animated_story"
     return plan
 
 
 def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fmt: str | None = None,
-           actor: str = "user", scheduled_for: str | None = None) -> dict[str, Any]:
+           actor: str = "user", scheduled_for: str | None = None, no_upload: bool = False,
+           ai_video: bool = False) -> dict[str, Any]:
     """Queue a job. Returns {"production_ids": [...]} or {"task_id": n} for the NIFTY daily episode."""
     ch = channels.get(channel_id)
     if not ch:
@@ -50,15 +51,28 @@ def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fm
         return {"task_id": tid, "production_ids": []}
     if not request and not idea:
         raise ValueError("describe the video you want (or pick an idea)")
-    plan = plan_for(channel_id, request, idea)
+    ref = None
+    if request:
+        from .creative import reference
+        ref = reference.resolve(request)            # a YouTube link: its subject drives the video, not the channel
+    if ref:
+        plan = plan_for(channel_id, ref["user_text"], idea, hint=ref["content_type"])
+        r = ref["reference"]
+        if not fmt and plan["decided_by"] != "request" and ("/shorts/" in request or 0 < r["duration_s"] <= 61):
+            plan["format"] = "short"
+        plan.update({"request": ref["brief"], "reference": {k: r[k] for k in ("id", "url", "title", "channel", "via")}})
+    else:
+        plan = plan_for(channel_id, request, idea)
     if fmt:
         plan["format"] = fmt
     plan["scheduled_for"] = scheduled_for
     plan["actor"] = actor
+    plan["no_upload"] = bool(no_upload)                # "No channel — just make it": never auto-uploaded
+    plan["ai_video"] = bool(ai_video)                  # opted in to paid AI-generated clips (researched videos)
     if plan["workflow"] == "animated_story":
         from .creative import workflow
-        pid = workflow.create(channel_id, request, idea_id=idea_id, fmt=plan["format"], actor=actor,
-                              scheduled_for=scheduled_for)
+        pid = workflow.create(channel_id, plan["request"], idea_id=idea_id, fmt=plan["format"], actor=actor,
+                              scheduled_for=scheduled_for, plan=plan)
         return {"production_ids": [pid], "plan": plan}
     return {"production_ids": _factual(ch, plan, idea), "plan": plan}
 
@@ -72,12 +86,13 @@ def _factual(ch: dict[str, Any], plan: dict[str, Any], idea: dict[str, Any] | No
         if not idea.get("channel_id"):
             db.update("topics", tid, {"channel_id": ch["id"], "updated_at": db.iso()})
     else:
-        title = req if len(req) <= 110 else req[:107].rsplit(" ", 1)[0] + "…"
+        subject = (plan.get("reference") or {}).get("title") or req
+        title = subject if len(subject) <= 110 else subject[:107].rsplit(" ", 1)[0] + "…"
         tid = db.insert("topics", {
             "channel_id": ch["id"], "title": title, "angle": f"Do exactly what the request asks: {req}",
             "format": "short" if plan["format"] == "short" else "long", "hook_idea": "", "why_now": "requested",
             "status": "approved", "score": 0, "idea_kind": "request", "style": plan["content_type"],
-            "language": plan["language"], "summary": req, "search_query": req[:200], "norm_title": _norm(title),
+            "language": plan["language"], "summary": req, "search_query": subject[:200], "norm_title": _norm(title),
             "workspace_id": ch["workspace_id"], "created_at": db.iso(), "updated_at": db.iso()})
     extra = {"channel_id": ch["id"], "workspace_id": ch["workspace_id"], "language": plan["language"],
              "request": json.dumps(plan, ensure_ascii=False)}

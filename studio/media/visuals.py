@@ -333,7 +333,7 @@ def credits(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for a in assets:
-        if a["provider"] in ("procedural", "local_sd", "gemini_image") or not a.get("license"):
+        if a["provider"] in ("procedural", "local_sd", "gemini_image", "gemini_video") or not a.get("license"):
             continue
         lic = a["license"]
         required = bool(_REQUIRES_ATTRIBUTION.search(lic)) and "CC0" not in lic.upper()

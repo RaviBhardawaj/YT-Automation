@@ -6,4 +6,23 @@
   {% for name, ok, how in rows %}<tr><td>{{ name }}</td><td>{% if ok %}<span class="chip ok">available</span>{% else %}<span class="chip warn">not available</span>{% endif %}</td><td class="small">{{ how }}</td></tr>{% endfor %}</table>
   <div class="muted small" style="margin-top:8px">When a job asks for something marked “not available”, the studio says so on the job and completes everything else.</div>
 </div>
+
+<div class="card" style="margin-top:16px">
+  <div class="spread"><h2>AI video clips (text-to-video)</h2>{% if vg.enabled %}<span class="chip ok">ON</span>{% else %}<span class="chip">OFF</span>{% endif %}</div>
+  <div class="small muted">Uses <b>Google Gemini Omni Flash</b> through your Gemini API key (Google retired Veo from the Gemini API on 22 Oct 2026; Omni Flash replaced it).
+    It is <b>paid only</b> — about ${{ '%.2f' % vg.usd_per_second }} per second at {{ vg.resolution }}, so one ~{{ vg.seconds_per_clip }}-second clip ≈ ${{ '%.2f' % (vg.seconds_per_clip * vg.usd_per_second) }}.
+    Billing must be turned on for your key's project in Google AI Studio. When on, researched videos you tick “Use AI video clips” for get up to {{ vg.max_clips }} AI clips; other scenes use stock or original visuals.</div>
+  <div class="kv" style="margin-top:10px"><div>Spent this month</div><div>${{ '%.2f' % vg_spent }} of ${{ '%.2f' % vg.monthly_cap_usd }} cap</div>
+    <div>Per video (estimate)</div><div>{{ vg_est.basis }} ≈ <b>${{ '%.2f' % vg_est.usd }}</b></div></div>
+  {% if is_admin %}
+  <div class="row" style="margin-top:10px"><button data-post="/api/admin/videogen/check" data-reload="no">Check access with my Gemini key</button></div>
+  <form data-form="/api/admin/videogen/save" data-done="Saved" style="margin-top:12px">
+    <label class="small"><input type="checkbox" name="enabled" {{ 'checked' if vg.enabled }}> <b>Enable AI video clips</b> (checks access first; nothing is generated until a job opts in)</label>
+    <div class="grid g3" style="margin-top:8px">
+      <label class="f"><span>Monthly cap (USD) — no clip starts past it</span><input name="monthly_cap_usd" data-type="number" type="number" min="0" max="500" step="0.5" value="{{ vg.monthly_cap_usd }}"></label>
+      <label class="f"><span>Max AI clips per video</span><input name="max_clips_per_video" data-type="number" type="number" min="1" max="10" value="{{ vg.max_clips }}"></label>
+    </div>
+    <button type="submit">Save</button>
+  </form>{% else %}<div class="muted small" style="margin-top:8px">The platform admin turns this on.</div>{% endif %}
+</div>
 {% endblock %}

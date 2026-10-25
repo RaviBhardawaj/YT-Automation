@@ -122,21 +122,54 @@
     {% if connected %}
     <div class="note ok">Connected to <b>{{ ch.youtube_title or 'a YouTube channel' }}</b>{% if ch.youtube_channel_id %} <span class="mono">({{ ch.youtube_channel_id }})</span>{% endif %}. Every upload first checks that the authorized account is still this channel.</div>
     <div class="row"><button data-post="/api/channels/{{ ch.id }}/youtube/verify" data-reload="no">Verify destination</button>
+      {% if ch.youtube_channel_id %}<a class="btn" href="https://studio.youtube.com/channel/{{ ch.youtube_channel_id }}" target="_blank" rel="noopener">Open in YouTube Studio</a>{% endif %}
       <button class="danger" data-post="/api/channels/{{ ch.id }}/youtube/disconnect" data-confirm="Disconnect YouTube for {{ ch.name }}?">Disconnect</button></div>
     {% elif not oauth_ready %}
-    <div class="note warn">Add your Google OAuth client first in <a href="/settings?tab=youtube">Settings → YouTube</a>. All channels share it; each channel signs in separately.</div>
+    <div class="note warn">The platform admin must add a Google OAuth client first (Settings → YouTube). All channels share it; each channel signs in separately.</div>
     {% else %}
-    <div class="muted small" style="margin-bottom:8px">Sign in with Google and choose the YouTube channel (or brand account) for <b>{{ ch.name }}</b>. This login is stored only for this studio channel.</div>
-    <button class="primary" data-post="/api/channels/{{ ch.id }}/youtube/connect" data-navigate>Connect YouTube</button>
+    <div class="muted small" style="margin-bottom:8px">Link a YouTube channel to <b>{{ ch.name }}</b> in three steps. YouTube doesn't let any app create channels, so step 1 happens on youtube.com — it takes a minute and costs nothing.</div>
+    <ol class="small" style="line-height:1.7">
+      <li><b>Create the channel on YouTube</b> (skip if it already exists): open <a href="https://www.youtube.com/channel_switcher" target="_blank" rel="noopener">youtube.com/channel_switcher</a> → <i>Create a channel</i> → give it a name. Each extra channel is a separate “brand account” under your Google login, so one Google account can own many channels.</li>
+      <li><b>Connect it here:</b> click the button below, and in Google's window choose <b>that</b> channel (not your personal one).</li>
+      <li><b>Done:</b> this page shows the channel name and ID; every upload checks it again before sending.</li>
+    </ol>
+    <button class="primary" data-post="/api/channels/{{ ch.id }}/youtube/connect" data-navigate>Connect YouTube channel</button>
     {% endif %}
   </div>
   <form class="card" data-form="/api/channels/{{ ch.id }}" data-done="Publishing settings saved">
-    <h2>Publishing</h2>
-    <label class="small"><input type="checkbox" name="auto_publish" {{ 'checked' if ch.auto_publish }}> Publish automatically when a video passes its checks</label>
+    <h2>Uploading &amp; publishing</h2>
+    <label class="small"><input type="checkbox" name="uploads_enabled" {{ 'checked' if ch.uploads_enabled }}> <b>Uploads to YouTube enabled</b> — when off, nothing is uploaded to this channel (videos are still made and kept for download)</label>
+    <label class="small" style="display:block;margin-top:6px"><input type="checkbox" name="auto_publish" {{ 'checked' if ch.auto_publish }}> Publish automatically when a video passes its checks</label>
     <label class="f" style="margin-top:8px"><span>Privacy when publishing</span><select name="publish_privacy">{% for v in ['public','unlisted','private'] %}<option {{ 'selected' if ch.publish_privacy == v }}>{{ v }}</option>{% endfor %}</select></label>
     <div class="muted small">Long episodes upload first; their Shorts wait for the episode's video ID so they can link back to it.</div>
     <button class="primary" type="submit" style="margin-top:8px">Save</button>
   </form>
+</div>
+
+<div class="card" style="margin-top:16px">
+  {% set m = ch.monetization or {} %}
+  <div class="spread"><h2>Growth &amp; monetization</h2>
+    {% if connected %}<button class="sm" data-post="/api/channels/{{ ch.id }}/growth">Refresh numbers</button>{% endif %}</div>
+  {% if m.fetched_at %}
+  <div class="grid g4" style="margin:10px 0">
+    <div class="card tight stat"><div class="n">{{ m.subscribers if m.subscribers is number else 'hidden' }}</div><div class="l">Subscribers</div></div>
+    <div class="card tight stat"><div class="n">{{ m.watch_hours_12m }}</div><div class="l">Watch hours, long videos (12 months)</div></div>
+    <div class="card tight stat"><div class="n">{{ '{:,}'.format(m.shorts_views_90d) }}</div><div class="l">Shorts views (90 days)</div></div>
+    <div class="card tight stat"><div class="n">{{ m.public_uploads_90d }}</div><div class="l">Public uploads (90 days)</div></div>
+  </div>
+  {% for key, t in tiers.items() %}{% set pr = m.tiers[key] %}
+  <div style="margin:12px 0"><div class="spread"><b>{{ t.label }}</b>{% if pr.eligible %}<span class="chip ok">eligible — apply in YouTube Studio → Earn</span>{% else %}<span class="chip">not yet</span>{% endif %}</div>
+    <div class="small muted">{{ t.subscribers }} subscribers{% if t.public_uploads_90d %} + {{ t.public_uploads_90d }} public uploads in 90 days{% endif %} + either {{ '{:,}'.format(t.watch_hours_12m) }} watch hours in 12 months or {{ '{:,}'.format(t.shorts_views_90d) }} Shorts views in 90 days</div>
+    <div class="grid g3 small" style="margin-top:6px">
+      <div>Subscribers {{ pr.subscribers_pct }}%<div class="bar"><i style="width:{{ pr.subscribers_pct }}%"></i></div></div>
+      <div>Watch hours {{ pr.watch_pct }}%<div class="bar"><i style="width:{{ pr.watch_pct }}%"></i></div></div>
+      <div>Shorts views {{ pr.shorts_pct }}%<div class="bar"><i style="width:{{ pr.shorts_pct }}%"></i></div></div>
+    </div></div>{% endfor %}
+  <div class="muted small">Updated {{ m.fetched_at|dt }} from YouTube Data + Analytics APIs (estimates; YouTube counts public views only). {{ m.note }}</div>
+  {% elif connected %}<div class="muted small">Click “Refresh numbers” to load this channel's progress. It also refreshes every morning.</div>
+  {% else %}<div class="muted small">Connect the channel to track its progress toward monetization.</div>{% endif %}
+  <div class="note small" style="margin-top:10px"><b>How monetization works:</b> when a channel is eligible, its owner applies in YouTube Studio → Earn, links an AdSense account and YouTube reviews the channel (usually about a month). No app can switch monetization on.
+    YouTube doesn't pay for “inauthentic” mass-produced or repetitive content, so each channel needs original videos with a clear human creative voice — the same template re-used across many channels is a common reason for rejection.</div>
 </div>
 {% endif %}
 {% endblock %}

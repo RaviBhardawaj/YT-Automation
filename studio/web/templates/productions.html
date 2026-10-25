@@ -2,7 +2,7 @@
 {% block content %}
 <div class="head">
   <div><h1>Video library{% if ch %} · {{ ch.name }}{% endif %}</h1><div class="muted">Every video and Short, from request to upload, with its files and status.</div></div>
-  <div class="row">{% if ch %}<a class="btn primary" href="/channels/{{ ch.id }}">Create video</a>{% endif %}<a class="btn" href="/ideas{{ '?channel=' ~ ch.id if ch }}">Ideas</a></div>
+  <div class="row"><a class="btn" href="/storage">Storage &amp; delete</a>{% if ch %}<a class="btn primary" href="/channels/{{ ch.id }}">Create video</a>{% endif %}<a class="btn" href="/ideas{{ '?channel=' ~ ch.id if ch }}">Ideas</a></div>
 </div>
 {% if task_counts.get('running') %}<div data-autorefresh="20"></div>{% endif %}
 <div class="tabs"><a href="/productions" class="on">Finished videos</a><a href="/uploads">Uploads (originals)</a></div>

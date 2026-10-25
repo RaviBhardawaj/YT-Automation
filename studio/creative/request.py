@@ -54,7 +54,8 @@ def detect_types(text: str) -> list[str]:
     return [k for k in PRIORITY if any(_has(t, w) for w in TYPE_WORDS[k])]
 
 
-def plan(request: str, channel: dict[str, Any] | None = None, idea: dict[str, Any] | None = None) -> dict[str, Any]:
+def plan(request: str, channel: dict[str, Any] | None = None, idea: dict[str, Any] | None = None,
+         hint: str | None = None) -> dict[str, Any]:
     """Decide content type, workflow, format, language and duration for one job."""
     ch = channel or {}
     req = (request or "").strip()
@@ -72,6 +73,8 @@ def plan(request: str, channel: dict[str, Any] | None = None, idea: dict[str, An
         content_type = factual[0]
     elif animated or storyish:
         content_type = "story"
+    elif hint:                                  # a linked YouTube video decides when the words don't
+        content_type, source = hint, "reference"
     else:                                       # nothing explicit: idea, then channel styles, then default
         source = "idea" if idea and idea.get("style") else "channel"
         hint = (idea or {}).get("style") or next(iter(ch.get("styles") or []), "") or ""
@@ -109,6 +112,6 @@ def plan(request: str, channel: dict[str, Any] | None = None, idea: dict[str, An
             "format": fmt, "language": language, "long_minutes": max(1.0, min(20.0, minutes)),
             "short_seconds": max(15, min(120, short_seconds)),
             # the channel's tone belongs to the channel's own genres; a request for another genre sets its own tone
-            "tone": (ch.get("tone") or "") if source != "request" or content_type in (ch.get("styles") or [])
+            "tone": (ch.get("tone") or "") if source not in ("request", "reference") or content_type in (ch.get("styles") or [])
             or content_type == "story" else "",
             "decided_by": source, "matched_types": explicit, "idea_id": (idea or {}).get("id")}

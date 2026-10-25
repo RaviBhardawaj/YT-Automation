@@ -12,12 +12,13 @@ import shutil
 import threading
 import time
 import wave
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from .. import config, db, net, settings
+from .. import config, db, logs, net, settings
 
 log = logging.getLogger(__name__)
 _lock = threading.Lock()          # espeak-ng keeps process-global state
@@ -374,10 +375,95 @@ def split_sentences(text: str) -> list[str]:
     return parts or [text.strip()]
 
 
-def _synth_sentence(text: str, engine: str, voice_id: str, lang: str, speed: float) -> tuple[np.ndarray, int]:
+# ------------------------------------------------------------------ Sarvam → free Kokoro fallback
+# When Sarvam fails (credits used up, key problem, outage), videos are voiced with the free, commercially
+# licensed Kokoro voices instead of failing. The state is saved so the dashboard can warn; Sarvam is tried
+# again every 30 minutes and the warning clears by itself once it works.
+SARVAM_STATUS = "voice.sarvam_status"
+SARVAM_RETRY_SECONDS = 30 * 60
+SARVAM_FEMALE = {"ritu", "priya", "neha", "kavya", "pooja", "simran", "ishita", "shreya", "roopa", "anushka",
+                 "manisha", "vidya", "arya", "tanya", "shruti", "suhani", "kavitha", "rupali", "sophia", "amelia"}
+_track = threading.local()
+
+
+class VoiceSwitched(Exception):
+    """Sarvam stopped part-way through a video: redo that video's audio with one voice throughout."""
+
+
+def sarvam_status() -> dict[str, Any]:
+    return settings.get(SARVAM_STATUS) or {"ok": True}
+
+
+def _sarvam_worth_trying() -> bool:
+    st = sarvam_status()
+    if st.get("ok", True):
+        return True
+    last = db.parse_iso(st.get("last_try"))
+    return not last or (db.parse_iso(db.iso()) - last).total_seconds() >= SARVAM_RETRY_SECONDS
+
+
+def _sarvam_failed(err: Exception) -> None:
+    st = sarvam_status()
+    was_ok = st.get("ok", True)
+    settings.set(SARVAM_STATUS, {"ok": False, "since": st.get("since") if not was_ok else db.iso(),
+                                 "error": logs.redact(str(err))[:300], "last_try": db.iso()})
+    if was_ok:
+        logs.event("warning", "voice", f"Sarvam voice unavailable ({logs.redact(str(err))[:160]}). Videos now use "
+                   f"the free Kokoro voice until Sarvam works again.")
+
+
+def _sarvam_worked() -> None:
+    if not sarvam_status().get("ok", True):
+        settings.set(SARVAM_STATUS, {"ok": True, "recovered_at": db.iso()})
+        logs.event("info", "voice", "Sarvam voice is working again — new videos use it.")
+
+
+def fallback_voice(sarvam_speaker: str, text: str) -> tuple[str, str]:
+    """(kokoro voice, kokoro language) matching the Sarvam speaker's gender and the text's script."""
+    letters = [c for c in text if c.isalpha()]
+    hindi = (sum(1 for c in letters if "ऀ" <= c <= "ॿ") / len(letters) if letters else 1.0) >= 0.2
+    female = sarvam_speaker.lower() in SARVAM_FEMALE
+    if hindi:
+        return ("hf_alpha" if female else "hm_omega"), "hi"
+    return ("af_heart" if female else "am_michael"), "en-us"
+
+
+@contextmanager
+def track_engines():
+    """Collects which engines voiced the sentences of one video ('sarvam' and/or 'fallback')."""
+    _track.engines = set()
+    try:
+        yield _track.engines
+    finally:
+        _track.engines = None
+
+
+def _synth_sentence(text: str, engine: str, voice_id: str, lang: str, speed: float,
+                    allow_fallback: bool = True) -> tuple[np.ndarray, int]:
     text = spoken_numbers(text)
     if engine == "sarvam":                     # network call: no espeak state, so no global lock
-        return _sarvam_say(text, voice_id, lang, speed)
+        used = getattr(_track, "engines", None)
+        if not allow_fallback:
+            return _sarvam_say(text, voice_id, lang, speed)
+        if not (used and "fallback" in used) and _sarvam_worth_trying():
+            try:
+                out = _sarvam_say(text, voice_id, lang, speed)
+            except Exception as e:
+                _sarvam_failed(e)
+                if used is not None and "sarvam" in used:
+                    raise VoiceSwitched(str(e)) from e
+            else:
+                _sarvam_worked()
+                if used is not None:
+                    used.add("sarvam")
+                return out
+        if not kokoro_installed():
+            raise RuntimeError("Sarvam voice failed and the free Kokoro fallback voice is not installed "
+                               "(Settings › Voice › download Kokoro)")
+        if used is not None:
+            used.add("fallback")
+        k_voice, k_lang = fallback_voice(voice_id, text)
+        return _synth_sentence(text, "kokoro", k_voice, k_lang, speed)
     with _lock:
         if engine == "parler":
             return _parler_say(text, voice_id)
@@ -432,7 +518,7 @@ def sample(engine: str, voice_id: str) -> Path:
         raise KeyError("voice not installed")
     lang = "hi" if voice["lang"].startswith("hi") else "en"
     out = config.SAMPLES_DIR / f"{engine}_{voice_id}.wav"
-    audio, sr = _synth_sentence(SAMPLE_TEXT[lang], engine, voice_id, voice["lang"], 1.0)
+    audio, sr = _synth_sentence(SAMPLE_TEXT[lang], engine, voice_id, voice["lang"], 1.0, allow_fallback=False)
     with wave.open(str(out), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)

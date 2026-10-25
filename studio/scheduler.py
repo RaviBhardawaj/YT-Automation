@@ -18,6 +18,8 @@ DEFAULT_SCHEDULES = [
     {"name": "Daily production plan", "task_type": "daily_plan", "kind": "daily", "time_of_day": "08:00"},
     {"name": "YouTube analytics sync", "task_type": "analytics_sync", "kind": "interval", "interval_minutes": 360},
     {"name": "Housekeeping", "task_type": "housekeeping", "kind": "daily", "time_of_day": "03:30"},
+    {"name": "Channel growth & monetization progress", "task_type": "channel_stats", "kind": "daily",
+     "time_of_day": "06:00"},
     # 7-part 'फिबोनाची पिवट सीखें' series: one lesson generated per day; switches itself off after part 7.
     {"name": "Fibonacci lesson series (daily 4 PM, 7 parts)", "task_type": "fib_lesson_daily", "kind": "daily",
      "time_of_day": "16:00"},

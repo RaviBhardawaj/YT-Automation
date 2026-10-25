@@ -137,6 +137,14 @@ def _channel_ideas(payload: dict[str, Any], task: dict[str, Any]) -> Any:
                                     "focus": payload.get("focus")})
 
 
+@worker.handler("channel_stats")
+def _channel_stats(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from .youtube import growth
+    if payload.get("channel_id"):
+        return growth.refresh(int(payload["channel_id"]))
+    return growth.refresh_all()
+
+
 @worker.handler("channel_daily")
 def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     """A channel's scheduled video: its best saved/approved idea, else a fresh idea, else its own brief."""
@@ -244,15 +252,22 @@ def _nifty_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
 def _housekeeping(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     logs.prune()
     db.ex("DELETE FROM tasks WHERE status IN ('done','cancelled') AND updated_at < ?", (db.iso_in(-30 * 86400),))
-    freed = 0
-    # Intermediate render files of finished productions can be regenerated; keep final outputs.
-    for p in db.q("SELECT id FROM productions WHERE status IN ('uploaded','rejected') AND updated_at < ?",
-                  (db.iso_in(-3 * 86400),)):
-        d = config.PRODUCTIONS_DIR / f"{p['id']:05d}"
-        for sub in ("clips", "overlays"):
-            target = d / sub
-            if target.exists():
-                freed += sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
-                shutil.rmtree(target, ignore_errors=True)
-        (d / "video_noaudio.mp4").unlink(missing_ok=True)
-    return {"freed_mb": round(freed / 1e6, 1)}
+    from . import storage
+    freed, deleted = 0, 0
+    days = int(settings.get("storage.auto_clean_days") or 0)
+    if days:                          # working files of finished videos; the final video/thumbnail/subtitles stay
+        for p in db.q("SELECT id FROM productions WHERE status IN ('uploaded','rejected','failed') AND updated_at < ?",
+                      (db.iso_in(-days * 86400),)):
+            freed += storage.clear_working_files(p["id"])
+    rdays = int(settings.get("storage.auto_delete_rejected_days") or 0)
+    if rdays:
+        for p in db.q("SELECT id FROM productions WHERE status='rejected' AND parent_id IS NULL AND updated_at < ?",
+                      (db.iso_in(-rdays * 86400),)):
+            try:
+                freed += storage.delete_video(p["id"])
+                deleted += 1
+            except ValueError:
+                pass
+    if freed:
+        logs.event("info", "storage", f"Housekeeping freed {freed / 1e6:.0f} MB ({deleted} rejected video(s) deleted)")
+    return {"freed_mb": round(freed / 1e6, 1), "deleted": deleted}

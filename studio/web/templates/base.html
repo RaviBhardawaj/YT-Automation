@@ -23,6 +23,7 @@
       <a href="/schedule" class="{{ 'on' if page == 'schedule' }}">Automation &amp; schedules</a>
       <a href="/publishing" class="{{ 'on' if page == 'publishing' }}">Publishing</a>
       <a href="/billing" class="{{ 'on' if page == 'billing' }}">Usage &amp; billing</a>
+      <a href="/storage" class="{{ 'on' if page == 'storage' }}">Storage</a>
       <a href="/queue" class="{{ 'on' if page == 'queue' }}">Queue &amp; logs{% if task_counts.get('failed') %} <span class="badge">{{ task_counts.get('failed') }}</span>{% endif %}</a>
       {% if is_admin %}
       <div class="muted small" style="margin:12px 10px 4px;text-transform:uppercase;letter-spacing:.05em">Platform admin</div>
@@ -41,6 +42,8 @@
     </div>
   </aside>
   <main>
+    {% if not sarvam.ok %}<div class="note warn"><b>Sarvam voice is unavailable</b> since {{ sarvam.since|dt }} — new videos are being voiced with the free Kokoro voice so they still get made.
+      Reason: {{ sarvam.error }}. Top up or check your key at dashboard.sarvam.ai; the studio retries Sarvam every 30 minutes and this warning clears by itself.</div>{% endif %}
     {% block content %}{% endblock %}
   </main>
 </div>

@@ -177,7 +177,8 @@ def common(request: Request | None = None) -> dict[str, Any]:
                               (ws,))["n"],
             "media_url": media_url, "loads": db.loads, "me": sess["user"] if sess else None,
             "workspace": sess["workspace"] if sess else None, "role": sess["role"] if sess else None,
-            "is_admin": bool(sess and sess["user"]["is_admin"])}
+            "is_admin": bool(sess and sess["user"]["is_admin"]),
+            "sarvam": tts.sarvam_status() if settings.has_secret("sarvam_api_key") else {"ok": True}}
 
 
 def page(request: Request, name: str, **ctx: Any) -> HTMLResponse:
@@ -1342,7 +1343,8 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
     chars = characters.for_channel(cid)
     recent = db.q("SELECT id, title, format, kind, status, stage, updated_at, youtube_video_id, parent_id, error "
                   "FROM productions WHERE channel_id=? ORDER BY id DESC LIMIT 12", (cid,))
-    resp = page(request, "channel.html", ch=ch, counts=channels.counts(cid), connected=oauth.connected(cid),
+    from ..youtube import growth
+    resp = page(request, "channel.html", ch=ch, counts=channels.counts(cid), connected=oauth.connected(cid), tiers=growth.TIERS,
                 oauth_ready=oauth.configured(), characters=chars, productions=recent, tab=tab,
                 workflows=channels.WORKFLOWS, styles=channels.STYLES, languages=channels.LANGUAGES,
                 options=characters.OPTIONS, voices=sorted({v for vs in characters.VOICES.values() for v in vs}),
@@ -1412,6 +1414,17 @@ async def api_channel_job(request: Request, cid: int):
               f"({'animated story' if plan.get('animated') else 'researched video'})") if plan else "Daily episode queued"
     return ok(production_ids=pids, task_id=res.get("task_id"), detail=detail,
               next=f"/productions/{pids[0]}" if pids else "/queue")
+
+
+@app.post("/api/channels/{cid}/growth")
+def api_channel_growth(cid: int):
+    from ..youtube import growth
+    try:
+        m = growth.refresh(cid)
+    except Exception as e:
+        return bad(f"Couldn't read this channel's numbers: {e}")
+    return ok(detail=f"{m['subscribers']} subscribers · {m['watch_hours_12m']} watch hours · "
+                     f"{m['shorts_views_90d']:,} Shorts views (90 days)")
 
 
 @app.post("/api/channels/{cid}/plan")
@@ -1498,7 +1511,9 @@ def create_page(request: Request, media: str = "", channel: str = ""):
     picked = [m for m in (uploads_mod().get(i, ws) for i in chosen) if m]
     recent = db.q("SELECT * FROM media WHERE workspace_id=? AND status='ready' ORDER BY id DESC LIMIT 30", (ws,))
     lim = plans.limits(ws)
+    from ..ai import videogen
     return page(request, "create.html", mode="edit" if request.url.path == "/edit" else "create",
+                videogen=videogen.estimate(),
                 channels=chmod.all_channels(ws), ch=chmod.get(_channel_arg(request, channel)), picked=picked,
                 recent=recent, limits=lim, accept=",".join(sorted(e for ex in uploads_mod().KINDS.values() for e in ex)))
 
@@ -1545,12 +1560,30 @@ async def api_create(request: Request):
             return ok(production_ids=[pid], next=f"/productions/{pid}", detail="Edit job started")
         if not req:
             return bad("Describe the video you want, or add files to edit.")
-        if not cid:                                  # no channel picked: the workspace's first, or a general one
+        if not cid:                                  # no channel picked: a general-purpose one, never the NIFTY slot
             mine = chmod.all_channels(ws)
-            cid = mine[0]["id"] if mine else chmod.create({"name": "My channel", "workflow": "auto",
-                                                           "language": editing.output_language(req, None),
-                                                           "formats": "both"}, ws)
-        res = jobs.create(cid, req, fmt=fmt)
+            general = [c for c in mine if c["workflow"] in ("auto", "factual", "animated_story")]
+            auto = [c for c in general if c["workflow"] == "auto"]
+            if auto or general:
+                cid = (auto or general)[0]["id"]
+            else:
+                try:
+                    plans.check(ws, "channel")
+                    cid = chmod.create({"name": "General videos", "workflow": "auto", "formats": "both",
+                                        "language": editing.output_language(req, None)}, ws)
+                except plans.LimitExceeded:
+                    cid = mine[0]["id"] if mine else None
+                if not cid:
+                    return bad("Create a channel first.")
+        if data.get("ai_video"):
+            from ..ai import videogen
+            est = videogen.estimate()
+            if not est["enabled"]:
+                return bad("AI video is switched off — the platform admin can enable it under AI agents & tools.")
+            if not est["fits_cap"]:
+                return bad(f"This job's AI clips (~${est['usd']:.2f}) would pass the monthly cap "
+                           f"(${est['spent_this_month']:.2f} of ${est['cap']:.2f} used).")
+        res = jobs.create(cid, req, fmt=fmt, no_upload=bool(data.get("no_upload")), ai_video=bool(data.get("ai_video")))
     except (ValueError, plans.LimitExceeded) as e:
         return bad(str(e))
     pids = res.get("production_ids") or []
@@ -1643,6 +1676,9 @@ async def api_publish(request: Request, pid: int):
     cid = int(data.get("channel_id") or p.get("channel_id") or 0)
     if not cid or not auth.owns(ws_id(request), "channels", cid):
         return bad("Pick one of your channels to publish to.")
+    if not chmod.uploads_allowed(chmod.get(cid)):
+        return bad(f"Uploads are switched off for '{chmod.get(cid)['name']}'. Switch them on under YouTube channels, "
+                   f"or download the video.")
     if not oauth.connected(cid):
         return bad(f"'{chmod.get(cid)['name']}' isn't connected to YouTube yet. Connect it under Channels → YouTube & "
                    f"publishing, or download the video and upload it yourself.")
@@ -1753,6 +1789,8 @@ async def api_admin_signup(request: Request):
 def tools_page(request: Request):
     """Which production capabilities are available right now, and what powers each one."""
     import shutil as _sh
+    from ..ai import videogen
+    vg = videogen.cfg()
     prov = providers.status_all()
     llm_ok = any(p["ok"] for p in prov)
     whisper = (config.DATA_DIR / "models" / "whisper").exists()
@@ -1773,7 +1811,99 @@ def tools_page(request: Request):
         ("Quality checks", True, "ffprobe validation of every output"),
         ("Publishing to YouTube", yt, "official YouTube Data API (OAuth per channel)" if yt else "add a Google OAuth client in Settings"),
         ("AI image generation", settings.has_secret("gemini_api_key"), "Gemini images (optional)"),
-        ("AI video generation (text-to-video)", False, "not connected — no text-to-video provider is configured"),
+        ("AI video generation (text-to-video)", vg["enabled"], f"Google Gemini Omni Flash with your Gemini key — "
+         + ("on" if vg["enabled"] else "off until enabled below") + f"; ${videogen.month_spent():.2f} of "
+         f"${vg['monthly_cap_usd']:.2f} monthly cap used"),
         ("Voice replacement / dubbing of uploads", False, "not available yet"),
     ]
-    return page(request, "tools.html", rows=rows, providers=prov)
+    return page(request, "tools.html", rows=rows, providers=prov, vg=vg, vg_est=videogen.estimate(),
+                vg_spent=videogen.month_spent())
+
+
+# ------------------------------------------------------------------ storage: delete videos, free space
+
+@app.get("/storage", response_class=HTMLResponse)
+def storage_page(request: Request):
+    from .. import storage
+    rep = storage.report(ws_id(request))
+    if not is_admin(request):
+        rep.pop("cache_bytes", None)
+        rep.pop("disk_free_bytes", None)
+    return page(request, "storage.html", rep=rep, lim=plans.limits(ws_id(request)),
+                auto_clean=settings.get("storage.auto_clean_days"),
+                auto_delete=settings.get("storage.auto_delete_rejected_days"))
+
+
+@app.post("/api/productions/{pid}/delete")
+def api_delete_video(pid: int):
+    from .. import storage
+    try:
+        freed = storage.delete_video(pid)
+    except ValueError as e:
+        return bad(str(e))
+    return ok(detail=f"Deleted — {freed / 1e6:.0f} MB freed", next="/productions")
+
+
+@app.post("/api/productions/{pid}/clean")
+def api_clean_video(pid: int):
+    from .. import storage
+    freed = storage.clear_working_files(pid)
+    return ok(detail=f"{freed / 1e6:.0f} MB of working files cleared" if freed else "Nothing to clear")
+
+
+@app.post("/api/storage/{action}")
+async def api_storage(request: Request, action: str):
+    from .. import storage
+    ws = ws_id(request)
+    data = await body(request)
+    if action == "delete":
+        ids = [int(x) for x in data.get("ids") or [] if str(x).isdigit()]
+        if not ids or any(not auth.owns(ws, "productions", i) for i in ids):
+            return bad("Select videos from your library.")
+        freed, errors = 0, []
+        for i in ids:
+            if not db.q1("SELECT 1 FROM productions WHERE id=?", (i,)):
+                continue                                # already removed with its parent
+            try:
+                freed += storage.delete_video(i)
+            except ValueError as e:
+                errors.append(str(e))
+        return ok(detail=f"Deleted {len(ids) - len(errors)} video(s), {freed / 1e6:.0f} MB freed"
+                  + (f". Skipped: {'; '.join(errors)}" if errors else ""))
+    if action == "clean":
+        freed = sum(storage.clear_working_files(r["id"]) for r in
+                    db.q("SELECT id FROM productions WHERE workspace_id=?", (ws,)))
+        return ok(detail=f"{freed / 1e6:.0f} MB of working files cleared (final videos kept)")
+    if action == "settings" and is_admin(request):
+        settings.set("storage.auto_clean_days", max(0, min(365, int(data.get("auto_clean_days") or 0))))
+        settings.set("storage.auto_delete_rejected_days", max(0, min(365, int(data.get("auto_delete_days") or 0))))
+        return ok()
+    if action == "cache" and is_admin(request):
+        freed = storage.clear_cache(int(data.get("older_than_days") or 0))
+        return ok(detail=f"Download cache: {freed / 1e6:.0f} MB freed")
+    return bad("unknown action", 404)
+
+
+# ------------------------------------------------------------------ AI video (text-to-video)
+
+@app.get("/api/videogen/estimate")
+def api_videogen_estimate():
+    from ..ai import videogen
+    return ok(**videogen.estimate())
+
+
+@app.post("/api/admin/videogen/{action}")
+async def api_videogen_admin(request: Request, action: str):
+    from ..ai import videogen
+    data = await body(request)
+    if action == "check":
+        return ok(**videogen.check_access(), detail=videogen.check_access()["detail"])
+    if action == "save":
+        enable = bool(data.get("enabled"))
+        if enable and not videogen.check_access()["available"]:
+            return bad(videogen.check_access()["detail"])
+        settings.set("videogen.enabled", enable)
+        settings.set("videogen.monthly_cap_usd", max(0.0, min(500.0, float(data.get("monthly_cap_usd") or 0))))
+        settings.set("videogen.max_clips_per_video", max(1, min(10, int(data.get("max_clips_per_video") or 3))))
+        return ok(detail="AI video " + ("enabled" if enable else "switched off"))
+    return bad("unknown action", 404)
