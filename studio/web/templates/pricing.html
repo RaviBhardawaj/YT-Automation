@@ -1,0 +1,22 @@
+{% extends "public_base.html" %}
+{% block title %}Pricing · {{ site_name }}{% endblock %}
+{% block content %}
+<h1 style="text-align:center">Simple plans</h1>
+<p class="lead" style="text-align:center">Everything is free during beta. Paid plans with bigger limits are coming — tell us which one you'd use.</p>
+<div class="grid g4" style="margin-top:16px">
+  {% for k, pl in plans_table.items() %}
+  <div class="card {{ 'plan-on' if k == current }}">
+    <h2>{{ pl.label }}</h2>
+    <div class="price">{% if k == 'free' %}Free{% else %}Coming soon{% endif %}</div>
+    <ul class="small" style="padding-left:18px">
+      <li>{{ pl.videos_per_month }} videos / month</li><li>{{ pl.render_minutes_per_month }} min of rendering</li>
+      <li>{{ pl.storage_gb }} GB storage</li><li>{{ pl.channels }} channel{{ 's' if pl.channels != 1 }}</li>
+      <li>Uploads up to {{ pl.max_upload_mb }} MB / {{ pl.max_upload_minutes }} min</li>
+      {% for f, label in features.items() %}{% if f in plan_features[k] %}<li>{{ label }}</li>{% endif %}{% endfor %}
+    </ul>
+    {% if k == current %}<span class="chip ok">your plan</span>
+    {% elif k != 'free' %}{% if me %}<button class="sm" data-post="/api/upgrade-request" data-body='{"plan": "{{ k }}"}' data-reload="no" data-done="Thanks — we'll let you know">I'm interested</button>
+      {% else %}<a class="btn sm" href="/signup">Start free</a>{% endif %}{% endif %}
+  </div>{% endfor %}
+</div>
+{% endblock %}

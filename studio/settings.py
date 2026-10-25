@@ -133,6 +133,11 @@ DEFAULTS: dict[str, Any] = {
     "billing.rates": {},                     # per-unit USD estimate rates overriding plans.DEFAULT_RATES
     "billing.provider": "",                  # e.g. "stripe" once keys are configured; empty = billing not live
     "auth.allow_signup": True,               # new creators can register their own workspace
+    "auth.require_approval": True,           # new sign-ups wait until the superadmin approves them
+    "site.name": "AI Video Studio",          # public website name
+    "site.contact_email": "",                # shown on the public pages (privacy/terms/contact) when set
+    "ads.enabled": False,                    # show the ad slot to Free-plan users (superadmin sets the code)
+    "ads.html": "",                          # ad unit HTML from the ad network (e.g. Google AdSense)
     "transcribe.model": "small",             # faster-whisper model: tiny | base | small | medium
     "compliance.owner_override": None,       # {active, accepted_at, accepted_by, statement}: see finance.gate.owner_override
     "production.test_mode": False,

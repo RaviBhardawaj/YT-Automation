@@ -1,0 +1,48 @@
+{% extends "public_base.html" %}
+{% block title %}Privacy policy · {{ site_name }}{% endblock %}
+{% block content %}
+<article class="card legal">
+<h1>Privacy policy</h1>
+<p class="muted small">Last updated {{ updated }}</p>
+<p>This policy explains what {{ site_name }} (“we”) collects when you use the service, why, and the choices you have.</p>
+
+<h2>What we collect</h2>
+<ul>
+  <li><b>Account details:</b> your email, your name if you give it, and your password stored only as a one-way hash.</li>
+  <li><b>Your content:</b> files you upload, your requests, the scripts, voices, videos, thumbnails and subtitles made for you, your channel settings and your ideas.</li>
+  <li><b>YouTube connection:</b> when you connect a channel through Google's sign-in, we keep a token that lets the service upload videos and read that channel's details and statistics. We never see or store your Google password.</li>
+  <li><b>Usage and technical data:</b> what was produced and how much (for plan limits), error logs, and your IP address for security (such as limiting sign-in attempts).</li>
+</ul>
+
+<h2>How we use it</h2>
+<ul>
+  <li>To make, store and deliver your videos, and to upload them to the YouTube channel <i>you</i> chose, at the time and visibility <i>you</i> chose.</li>
+  <li>To show your channel's growth and monetization progress to you.</li>
+  <li>To keep the service secure, enforce plan limits and fix problems.</li>
+</ul>
+<p>We don't sell your data and don't use your content to advertise to you.</p>
+
+<h2>Google and YouTube data</h2>
+<p>{{ site_name }} uses YouTube API Services. Information received from Google APIs is used only to provide the features you use here, in line with the
+<a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>, including its Limited Use requirements.
+By connecting YouTube you also agree to the <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">YouTube Terms of Service</a>; Google's handling is described in the
+<a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google Privacy Policy</a>.
+You can remove our access at any time at <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">myaccount.google.com/permissions</a> or with “Disconnect” on your channel page.</p>
+
+<h2>Services that process your content</h2>
+<p>To produce videos, parts of your requests and content are sent to the AI and infrastructure providers the service uses: script and planning models (Ollama), voice generation (Sarvam AI),
+optional image and video generation (Google Gemini), YouTube (for uploads you approve) and Cloudflare (to deliver the website). Each processes the data only to provide its part of the service.</p>
+
+<h2>Who can see your content</h2>
+<p>Your channels, videos, uploads and ideas are visible only to your account. The service operator can access stored data when needed to run, secure or support the service.</p>
+
+<h2>Keeping and deleting data</h2>
+<p>You can delete videos, uploads and channels at any time; deleted files are removed from our storage. To delete your whole account{% if contact %}, email <a href="mailto:{{ contact }}">{{ contact }}</a>{% else %}, contact the operator of this site{% endif %}. Deleting here doesn't remove videos already published on YouTube; manage those in YouTube Studio.</p>
+
+<h2>Children</h2>
+<p>Accounts are for adults (18+) who run YouTube channels. Channels marked “made for kids” are uploaded with YouTube's made-for-kids setting; we don't knowingly collect personal data from children.</p>
+
+<h2>Changes and contact</h2>
+<p>We'll update this page when practices change.{% if contact %} Questions: <a href="mailto:{{ contact }}">{{ contact }}</a>.{% endif %}</p>
+</article>
+{% endblock %}

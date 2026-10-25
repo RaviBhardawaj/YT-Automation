@@ -11,6 +11,7 @@ from typing import Literal
 
 _TMP = tempfile.mkdtemp(prefix="studio-test-")
 os.environ["STUDIO_DATA_DIR"] = _TMP
+os.environ.setdefault("STUDIO_KEYRING_SERVICE", "yt-automation-studio-tests")  # never the real Keychain logins
 
 from pydantic import BaseModel, Field  # noqa: E402
 

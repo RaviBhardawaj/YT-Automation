@@ -23,6 +23,13 @@ PLANS: dict[str, dict[str, Any]] = {
     "studio": {"label": "Studio", "videos_per_month": 1000, "render_minutes_per_month": 10000, "storage_gb": 1000,
                "max_upload_mb": 20000, "max_upload_minutes": 600, "channels": 50, "concurrent_jobs": 8},
 }
+# Features the superadmin can switch on or off per workspace (plan defaults first, then overrides).
+FEATURES = {"create": "Create videos from a prompt", "upload_edit": "Upload & edit videos",
+            "publish": "Publish to YouTube", "schedules": "Automatic daily videos", "ai_video": "AI video clips (paid)"}
+PLAN_FEATURES = {"free": {"create", "upload_edit", "publish", "schedules"},
+                 "creator": {"create", "upload_edit", "publish", "schedules"},
+                 "pro": set(FEATURES), "studio": set(FEATURES)}
+
 LIMIT_LABELS = {"videos_per_month": "Videos per month", "render_minutes_per_month": "Rendered minutes per month",
                 "storage_gb": "Storage (GB)", "max_upload_mb": "Largest upload (MB)",
                 "max_upload_minutes": "Longest upload (minutes)", "channels": "Channels",
@@ -116,3 +123,24 @@ def record(ws_id: int, kind: str, quantity: float, *, production_id: int | None 
     db.ex("INSERT OR IGNORE INTO usage (workspace_id, kind, quantity, cost_usd, cost_basis, production_id, idem_key, "
           "created_at) VALUES (?,?,?,?,?,?,?,?)",
           (ws_id, kind, quantity, cost_usd, basis, production_id, idem_key, db.iso()))
+
+
+def features(ws_id: int) -> dict[str, bool]:
+    w = db.q1("SELECT plan, permissions FROM workspaces WHERE id=?", (ws_id,)) or {"plan": "free", "permissions": "{}"}
+    base = PLAN_FEATURES.get(w["plan"], PLAN_FEATURES["free"])
+    over = db.loads(w.get("permissions"), {}) or {}
+    return {k: bool(over[k]) if k in over else (k in base) for k in FEATURES}
+
+
+def can(ws_id: int, feature: str) -> bool:
+    return features(ws_id).get(feature, False)
+
+
+class NotAllowed(ValueError):
+    pass
+
+
+def require(ws_id: int, feature: str) -> None:
+    if not can(ws_id, feature):
+        raise NotAllowed(f"“{FEATURES[feature]}” isn't enabled for your account. Ask the administrator, "
+                         f"or see Pricing for plans that include it.")

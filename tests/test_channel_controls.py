@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 os.environ.setdefault("STUDIO_DATA_DIR", tempfile.mkdtemp(prefix="studio-test-"))
+os.environ.setdefault("STUDIO_KEYRING_SERVICE", "yt-automation-studio-tests")  # never the real Keychain logins
 
 from studio import config, db  # noqa: E402
 
@@ -114,8 +115,8 @@ class StorageTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         from studio.web import app as webapp
         if not db.q1("SELECT id FROM users WHERE email='store-a@test.local'"):
-            auth.register("store-a@test.local", "a long enough password")
-            auth.register("store-b@test.local", "a long enough password")
+            auth.approve(auth.register("store-a@test.local", "a long enough password")["user_id"], 1)  # approval is on by default
+            auth.approve(auth.register("store-b@test.local", "a long enough password")["user_id"], 1)  # approval is on by default
         tok_a, _ = auth.login("store-a@test.local", "a long enough password")
         tok_b, _ = auth.login("store-b@test.local", "a long enough password")
         ws_a = auth.session(tok_a)["workspace"]["id"]
@@ -136,6 +137,11 @@ class StorageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeychainSafetyTests(unittest.TestCase):
+    def test_tests_never_use_the_real_keychain(self):
+        self.assertNotEqual(config.KEYRING_SERVICE, "yt-automation-studio")
 
 
 class ChannelManagementTests(unittest.TestCase):
@@ -230,7 +236,7 @@ class SetupAndPublishTimeTests(unittest.TestCase):
         self.assertTrue(steps["Niche, style and language"])
         self.assertFalse(steps["Connect YouTube (one Google sign-in)"])
         if not db.q1("SELECT id FROM users WHERE email='setup@test.local'"):
-            auth.register("setup@test.local", "a long enough password")
+            auth.approve(auth.register("setup@test.local", "a long enough password")["user_id"], 1)  # approval is on by default
         tok, _ = auth.login("setup@test.local", "a long enough password")
         c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False)
         c.cookies.set("sid", tok)

@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 os.environ.setdefault("STUDIO_DATA_DIR", tempfile.mkdtemp(prefix="studio-test-"))
+os.environ.setdefault("STUDIO_KEYRING_SERVICE", "yt-automation-studio-tests")  # never the real Keychain logins
 
 from studio import config, db  # noqa: E402
 
@@ -43,7 +44,7 @@ def save(ws: int, name: str, data: bytes) -> dict:
 
 def account(email: str) -> tuple[int, str]:
     if not db.q1("SELECT id FROM users WHERE email=?", (email,)):
-        auth.register(email, "a long enough password")
+        auth.approve(auth.register(email, "a long enough password")["user_id"], 1)  # approval is on by default
     token, u = auth.login(email, "a long enough password")
     return auth.session(token)["workspace"]["id"], token
 

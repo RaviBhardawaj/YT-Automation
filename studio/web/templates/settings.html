@@ -200,25 +200,40 @@
 
 {% elif tab == 'youtube' %}
 <div class="card">
-  <h2>Connect your channel</h2>
-  {% if yt_connected %}
-    <div class="note ok">Connected to <b>{{ s['youtube.channel'].get('title') }}</b> — <a href="{{ s['youtube.channel'].get('url') }}" target="_blank" rel="noopener">open channel</a> · {{ s['youtube.channel'].get('subscribers') }} subscribers</div>
-    <button class="danger" data-post="/api/youtube/disconnect" data-confirm="Disconnect and revoke this app's access to your channel?">Disconnect</button>
+  <div class="spread"><h2>Your YouTube channels</h2><a class="btn sm" href="/channels/new">Set up a new channel</a></div>
+  <div class="small muted" style="margin-bottom:8px">Each studio channel signs in to its own YouTube channel. Click <b>Connect</b> and, in Google's window, choose that channel — a channel linked by @handle refuses any other account.</div>
+  <table>
+    <tr><th>Studio channel</th><th>YouTube channel</th><th>Status</th><th>Uploads</th><th></th></tr>
+    {% for c in yt_channels %}
+    <tr><td><a href="/channels/{{ c.id }}?tab=setup"><b>{{ c.name }}</b></a>{% if c.made_for_kids %} <span class="chip info">made for kids</span>{% endif %}</td>
+      <td class="small">{% if c.youtube_title or c.youtube_handle %}{{ c.youtube_title or '' }} {{ c.youtube_handle or '' }}
+        <div class="mono muted">{{ c.youtube_channel_id or c.youtube_expected_id or '' }}</div>{% else %}<span class="muted">not linked</span>{% endif %}</td>
+      <td>{% if c.connected %}<span class="chip ok">connected</span>{% elif c.youtube_expected_id %}<span class="chip warn">linked — connect to upload</span>{% else %}<span class="chip">not connected</span>{% endif %}</td>
+      <td>{% if c.uploads_enabled %}<span class="chip ok">on</span>{% else %}<span class="chip warn">off</span>{% endif %}</td>
+      <td class="row">{% if c.connected %}
+          <button class="sm" data-post="/api/channels/{{ c.id }}/youtube/verify" data-reload="no">Verify</button>
+          <button class="sm danger" data-post="/api/channels/{{ c.id }}/youtube/disconnect" data-confirm="Disconnect YouTube for {{ c.name }}?">Disconnect</button>
+        {% else %}
+          <button class="sm primary" data-post="/api/channels/{{ c.id }}/youtube/connect" data-navigate {{ 'disabled' if not yt_configured }}>Connect</button>
+        {% endif %}
+        <a class="btn sm" href="/channels/{{ c.id }}?tab=youtube">Manage</a></td></tr>
+    {% else %}<tr><td colspan="5" class="empty">No channels yet. <a href="/channels/new">Set one up</a>.</td></tr>{% endfor %}
+  </table>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>Google OAuth client (shared by all channels)</h2>
+  {% if yt_configured %}<div class="note ok small">OAuth client saved. Redirect URI used: <span class="mono">{{ redirect_uri }}</span></div>
   {% else %}
   <ol class="small">
     <li>In <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>, create a project and enable <b>YouTube Data API v3</b> and <b>YouTube Analytics API</b>.</li>
-    <li>Configure the OAuth consent screen (External, Testing) and add your own Google account as a test user.</li>
-    <li>Create credentials → OAuth client ID → application type <b>Desktop app</b>. Download the JSON.</li>
-    <li>Upload that JSON here (the client secret goes to the Keychain), then click Connect. You sign in on Google's page — this app never sees your password.</li>
-  </ol>
+    <li>Configure the OAuth consent screen and add your Google account as a test user.</li>
+    <li>Create credentials → OAuth client ID. Download the JSON.</li>
+    <li>Upload that JSON here (the client secret goes to the Keychain), then click Connect for each channel above. You sign in on Google's page — this app never sees your password.</li>
+  </ol>{% endif %}
   <div class="row"><input type="file" accept="application/json,.json" data-upload="yt-client" style="max-width:340px">
-    {% if yt_configured %}<span class="chip ok">OAuth client saved</span>{% endif %}</div>
-  <div class="row" style="margin-top:12px">
-    <button class="primary" data-post="/api/youtube/connect" data-navigate {{ 'disabled' if not yt_configured }}>Connect YouTube channel</button>
-    <span class="muted small">Redirect URI used: <span class="mono">{{ redirect_uri }}</span> (Desktop-app clients accept loopback addresses automatically)</span>
-  </div>
+    <span class="muted small">{{ 'Replace the OAuth client' if yt_configured else 'Upload the OAuth client JSON' }}</span></div>
   <p class="muted small">Requested permissions: upload videos, read your channel, read YouTube Analytics{{ ', manage captions' if s['youtube.upload_captions'] }}.</p>
-  {% endif %}
 </div>
 <form class="card" style="margin-top:16px" data-form="/api/settings">
   <h2>Publishing</h2>
@@ -230,7 +245,7 @@
     <label class="f"><span>Shorts publishing times (local, HH:MM, comma-separated)</span><input name="publish.slots::short" data-type="list" value="{{ s['publish.slots'].get('short', [])|join(', ') }}" placeholder="18:30"></label>
     <label class="f"><span>Long-form publishing times (local, HH:MM, comma-separated)</span><input name="publish.slots::long" data-type="list" value="{{ s['publish.slots'].get('long', [])|join(', ') }}" placeholder="19:30"></label>
   </div>
-  <label><input type="checkbox" name="youtube.made_for_kids" {{ 'checked' if s['youtube.made_for_kids'] }}> Videos are made for kids (COPPA)</label><br>
+  <div class="small muted">“Made for kids” is set per channel (Manage → Uploading &amp; publishing).</div>
   <label><input type="checkbox" name="youtube.disclose_tts" {{ 'checked' if s['youtube.disclose_tts'] }}> Mention the synthetic narration voice in descriptions</label><br>
   <label><input type="checkbox" name="youtube.upload_captions" {{ 'checked' if s['youtube.upload_captions'] }}> Upload subtitle files (needs the broader “manage YouTube account” permission — reconnect after enabling)</label>
   <div style="margin-top:12px"><button type="submit" class="primary">Save publishing</button></div>

@@ -68,7 +68,8 @@ import jinja2  # noqa: E402
 templates.env.undefined = jinja2.ChainableUndefined
 
 
-PUBLIC = ("/login", "/signup", "/api/auth/login", "/api/auth/signup", "/static/", "/oauth/google/callback", "/favicon.ico")
+PENDING_OK = ("/pending", "/api/auth/logout", "/pricing", "/privacy", "/terms")
+PUBLIC = ("/home", "/pricing", "/privacy", "/terms", "/login", "/signup", "/api/auth/login", "/api/auth/signup", "/static/", "/oauth/google/callback", "/favicon.ico")
 ADMIN_ONLY = ("/analytics", "/settings", "/compliance", "/niches", "/setup", "/admin", "/api/settings", "/api/secrets/",
               "/api/providers/", "/api/ollama/", "/api/voice/", "/api/youtube/", "/api/compliance/", "/api/datasources/",
               "/api/datasets/", "/api/niches/", "/api/interview/", "/api/feeds", "/api/upload/", "/api/lessons/",
@@ -111,6 +112,8 @@ def _deny(request: Request, code: int, msg: str):
     if request.url.path.startswith("/api/"):
         return JSONResponse({"ok": False, "error": msg}, status_code=code)
     if code == 401:
+        if request.url.path == "/":                      # visitors land on the public home page
+            return RedirectResponse("/home", status_code=303)
         return RedirectResponse("/login?next=" + request.url.path, status_code=303)
     return HTMLResponse(f"<h1>{msg}</h1><p><a href='/'>Back</a></p>", status_code=code)
 
@@ -129,6 +132,9 @@ async def guard(request: Request, call_next):
         if not sess:
             return _deny(request, 401, "Sign in first")
         request.state.sess = sess
+        if sess["user"]["status"] == "pending" and not path.startswith(PENDING_OK):
+            return _deny(request, 403, "Your account is waiting for approval") if path.startswith("/api/") else \
+                RedirectResponse("/pending", status_code=303)
         ws_id = sess["workspace"]["id"]
         if path.startswith(ADMIN_ONLY) and not sess["user"]["is_admin"]:
             return _deny(request, 403, "Only the platform admin can open this")
@@ -166,9 +172,13 @@ async def guard(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    ads = settings.get("ads.enabled")             # the ad network's scripts/frames are allowed only when ads are on
+    ad_hosts = " https://pagead2.googlesyndication.com https://*.googlesyndication.com https://*.doubleclick.net " \
+               "https://www.googletagservices.com https://*.google.com" if ads else ""
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        f"default-src 'self'; img-src 'self' data:{' https:' if ads else ''}; media-src 'self'; "
+        f"style-src 'self' 'unsafe-inline'; script-src 'self'{ad_hosts}; connect-src 'self'{ad_hosts}; "
+        f"frame-src 'self'{ad_hosts}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
     return response
 
 
@@ -216,6 +226,46 @@ def is_admin(request: Request) -> bool:
     return bool(request.state.sess and request.state.sess["user"]["is_admin"])
 
 
+PAGE_HELP = {
+    "dashboard": "Your studio at a glance. Start with <b>Create video</b> or <b>Upload &amp; edit</b>; finished videos land in the <b>Video library</b>.",
+    "create": "Describe the video in your own words — topic, style, language, length. You can also paste a YouTube link for inspiration "
+              "(its topic is used, never its content). Pick the channel it's for, then <b>Create video</b>. It's made in the background; you can leave the page.",
+    "edit": "Upload your video or audio (or pick an earlier upload), then say what to change: “remove pauses and add Hindi subtitles”, "
+            "“make 3 vertical Shorts of the best moments”. Your original file is never changed.",
+    "ideas": "Ideas are made for each channel's niche. Pick a channel, click <b>Generate ideas</b>, then <b>Generate video</b> on any idea you like. "
+             "<b>Save</b> keeps it for the daily schedule; <b>Reject</b> removes it.",
+    "projects": "Every job and its progress. A job shows each step as it really happens; <b>Retry</b> continues from the step that failed.",
+    "productions": "All finished videos and Shorts. Open one to preview it, download the video, subtitles or thumbnail, or publish it to a connected channel.",
+    "uploads": "Your original files. They're read-only — every edit is saved as a new video. Use <b>Edit with AI</b> to start a new edit.",
+    "channels": "Each channel has its own niche, language, characters, schedule and YouTube login. Open a channel's <b>Setup</b> tab and follow the steps.",
+    "channel": "Follow the <b>Setup</b> checklist. To upload, connect YouTube once: click <b>Connect</b> and choose this channel in Google's window.",
+    "channel_setup": "Fill in what the channel is about, what kind of videos it makes, when to make them and when they go public. You can change everything later.",
+    "schedule": "Automatic jobs. Each channel's daily video is set on the channel itself (Settings tab); the times here are your computer's local time.",
+    "publishing": "Videos ready to publish and what's been uploaded. A video only shows as published after YouTube confirms it.",
+    "billing": "Your plan and this month's usage. Limits reset on the 1st of each month.",
+    "storage": "Delete videos you no longer need and clear working files so your space doesn't fill up. Nothing on YouTube is deleted.",
+    "tools": "What the studio can do right now and what powers each capability. It picks the right tools for each job automatically.",
+    "queue": "Background jobs and recent activity. Failed jobs retry automatically; you can also retry or cancel them here.",
+}
+
+
+def _getting_started(ws: int) -> list[dict[str, Any]]:
+    from .. import channels as chmod
+    chans = chmod.all_channels(ws)
+    vids = db.q1("SELECT COUNT(*) AS n FROM productions WHERE workspace_id=?", (ws,))["n"]
+    ready = db.q1("SELECT COUNT(*) AS n FROM productions WHERE workspace_id=? AND status IN "
+                  "('awaiting_approval','approved','uploading','uploaded')", (ws,))["n"]
+    return [
+        {"name": "Set up your first channel", "done": bool(chans), "href": "/channels/new"},
+        {"name": "Connect it to YouTube (or skip and just download)", "done": any(oauth.connected(c["id"]) for c in chans),
+         "href": f"/channels/{chans[0]['id']}?tab=youtube" if chans else "/channels/new"},
+        {"name": "Make your first video", "done": vids > 0, "href": "/create"},
+        {"name": "Preview, download or publish it", "done": ready > 0, "href": "/productions"},
+        {"name": "Turn on daily videos (optional)", "done": any(c.get("schedule_enabled") for c in chans),
+         "href": f"/channels/{chans[0]['id']}?tab=settings" if chans else "/channels/new"},
+    ]
+
+
 def _my_usage(ws: int) -> dict[str, Any]:
     lim, use = plans.limits(ws), plans.used(ws)
     return {"videos": use["videos"], "limit": lim["videos_per_month"],
@@ -240,11 +290,17 @@ def common(request: Request | None = None) -> dict[str, Any]:
             "workspace": sess["workspace"] if sess else None, "role": sess["role"] if sess else None,
             "is_admin": bool(sess and sess["user"]["is_admin"]),
             "sarvam": tts.sarvam_status() if settings.has_secret("sarvam_api_key") else {"ok": True},
-            "my_usage": _my_usage(ws) if sess and not sess["user"]["is_admin"] else None}
+            "my_usage": _my_usage(ws) if sess and not sess["user"]["is_admin"] else None,
+            "show_ads": bool(settings.get("ads.enabled") and settings.get("ads.html") and sess
+                             and not sess["user"]["is_admin"] and sess["workspace"]["plan"] == "free"),
+            "ads_html": settings.get("ads.html")}
 
 
 def page(request: Request, name: str, **ctx: Any) -> HTMLResponse:
-    return templates.TemplateResponse(request, name, {**common(request), **ctx, "page": name.removesuffix(".html")})
+    key = name.removesuffix(".html")
+    help_key = ctx.get("mode") if key == "create" else key
+    return templates.TemplateResponse(request, name, {**common(request), **ctx, "page": key,
+                                                      "page_help": PAGE_HELP.get(help_key)})
 
 
 def _fmt_dt(value: str | None) -> str:
@@ -344,6 +400,7 @@ def home(request: Request):
         c["next_run"] = sched["next_run_at"] if sched else None
     ch = chmod.get(cid)
     resp = page(request, "dashboard.html", productions=prods, ideas=ideas, channels=chans, ch=ch,
+                getting_started=_getting_started(ws),
                 totals=chmod.counts(cid, ws), providers=providers.status_all(),
                 schedules=db.q("SELECT s.* FROM schedules s JOIN channels c ON c.id=s.channel_id WHERE s.enabled=1 "
                                "AND c.workspace_id=? ORDER BY s.next_run_at", (ws,)),
@@ -581,7 +638,11 @@ def settings_page(request: Request, tab: str = "ai"):
     all_voices = tts.all_voices() if tab == "voice" else []
     main_voices = [v for v in all_voices if v["lang"].startswith(lang) or v["id"] == voice.get("voice_id")]
     other_voices = [v for v in all_voices if v not in main_voices]
-    return page(request, "settings.html", tab=tab, s=settings.all_settings(), secrets=settings.secret_status(),
+    from .. import channels as chmod
+    yt_channels = chmod.all_channels(ws_id(request)) if tab == "youtube" else []
+    for c in yt_channels:
+        c["connected"] = oauth.connected(c["id"])
+    return page(request, "settings.html", tab=tab, yt_channels=yt_channels, s=settings.all_settings(), secrets=settings.secret_status(),
                 providers=providers.status_all() if tab == "ai" else [], provider_names=settings.PROVIDERS,
                 ai_tasks=settings.AI_TASKS, voices=main_voices, other_voices=other_voices, channel_lang=profile.language(),
                 voice=voice, kokoro_installed=tts.kokoro_installed(), voice_hi=tts.current_voice("Hindi"),
@@ -900,6 +961,8 @@ async def api_topic(request: Request, tid: int, action: str):
         return bad("not found", 404)
     if action in ("video", "long", "short", "both"):
         from .. import jobs
+        if not plans.can(ws_id(request), "create"):
+            return bad(f"“{plans.FEATURES['create']}” isn't enabled for your account.")
         if not t.get("channel_id"):
             return bad("This idea is not assigned to a channel.")
         try:
@@ -944,6 +1007,8 @@ async def api_selftest(request: Request):
 @app.post("/api/productions/{pid}/approve")
 async def api_approve(request: Request, pid: int):
     data = await body(request)
+    if not plans.can(ws_id(request), "publish"):
+        return bad(f"“{plans.FEATURES['publish']}” isn't enabled for your account.")
     return _approve(pid, data.get("privacy", "private"), data.get("publish_at_local"))
 
 
@@ -1479,6 +1544,8 @@ async def api_channel_create(request: Request):
     from .. import channels, scheduler
     try:
         data = await body(request)
+        if data.get("schedule_enabled") and not plans.can(ws_id(request), "schedules"):
+            return bad(f"“{plans.FEATURES['schedules']}” isn't enabled for your account.")
         plans.check(ws_id(request), "channel")
         info = channels.lookup_youtube(data["youtube"]) if str(data.get("youtube") or "").strip() else None
         cid = channels.create(data, ws_id(request))
@@ -1496,8 +1563,11 @@ async def api_channel_update(request: Request, cid: int):
     from .. import channels, scheduler
     if not channels.get(cid):
         return bad("not found", 404)
+    data = await body(request)
+    if data.get("schedule_enabled") and not plans.can(ws_id(request), "schedules"):
+        return bad(f"“{plans.FEATURES['schedules']}” isn't enabled for your account.")
     try:
-        channels.update(cid, await body(request))
+        channels.update(cid, data)
     except (ValueError, TypeError) as e:
         return bad(str(e))
     scheduler.sync_channels()
@@ -1539,6 +1609,8 @@ async def api_channel_youtube(request: Request, cid: int, action: str):
         return ok(detail=f"Locked to “{info['title']}” ({info['handle']}). Now click Connect and pick that channel.")
     try:
         if action == "connect":
+            if not plans.can(ws_id(request), "publish"):
+                return bad(f"“{plans.FEATURES['publish']}” isn't enabled for your account.")
             return ok(url=oauth.auth_url(cid))
         if action == "disconnect":
             oauth.disconnect(cid)
@@ -1558,6 +1630,7 @@ async def api_channel_job(request: Request, cid: int):
     from .. import jobs
     data = await body(request)
     try:
+        plans.require(ws_id(request), "create")
         res = jobs.create(cid, str(data.get("request") or ""), idea_id=data.get("idea_id") or None,
                           fmt=data.get("format") or None)
     except ValueError as e:
@@ -1692,6 +1765,8 @@ async def api_media_upload(request: Request):
     name = unquote(request.headers.get("x-filename", ""))[:255]
     if not name:
         return bad("missing file name")
+    if not plans.can(ws_id(request), "upload_edit"):
+        return bad(f"“{plans.FEATURES['upload_edit']}” isn't enabled for your account.")
     ch = request.headers.get("x-channel", "")
     channel_id = int(ch) if ch.isdigit() and auth.owns(ws_id(request), "channels", int(ch)) else None
     try:
@@ -1716,6 +1791,9 @@ async def api_create(request: Request):
     if cid and not auth.owns(ws, "channels", cid):
         return bad("channel not found", 404)
     try:
+        plans.require(ws, "upload_edit" if media_ids else "create")
+        if data.get("ai_video"):
+            plans.require(ws, "ai_video")
         if media_ids:
             pid = editing.create(ws, req, media_ids, channel_id=cid, fmt=fmt, user_id=request.state.sess["user"]["id"])
             return ok(production_ids=[pid], next=f"/productions/{pid}", detail="Edit job started")
@@ -1829,6 +1907,8 @@ async def api_publish(request: Request, pid: int):
     """Choose the destination channel, confirm metadata, then publish now / schedule / keep private."""
     from .. import channels as chmod
     data = await body(request)
+    if not plans.can(ws_id(request), "publish"):
+        return bad(f"“{plans.FEATURES['publish']}” isn't enabled for your account — download the video instead.")
     p = pipeline.load(pid)
     if not p.get("video_path") or not Path(p["video_path"]).is_file():
         return bad("This video hasn't been rendered yet — nothing to publish.")
@@ -1910,9 +1990,17 @@ def admin_page(request: Request):
                       "(SELECT email FROM users u WHERE u.id=w.owner_user_id) AS owner FROM workspaces w ORDER BY w.id")
     for w in workspaces:
         w["used"] = plans.used(w["id"])
+        w["features"] = plans.features(w["id"])
     errors = db.q("SELECT * FROM logs WHERE level='error' ORDER BY id DESC LIMIT 30")
+    pending = [u for u in users if u["status"] == "pending"]
+    upgrades = db.q("SELECT r.*, u.email, w.name AS ws_name, w.plan AS current FROM upgrade_requests r "
+                    "JOIN users u ON u.id=r.user_id JOIN workspaces w ON w.id=r.workspace_id "
+                    "WHERE r.status='pending' ORDER BY r.id")
+    demand = db.q("SELECT plan, COUNT(*) AS n FROM upgrade_requests GROUP BY plan")
     return page(request, "admin.html", users=users, workspaces=workspaces, errors=errors, plans_table=plans.PLANS,
-                allow_signup=settings.get("auth.allow_signup"))
+                allow_signup=settings.get("auth.allow_signup"), pending=pending, upgrades=upgrades, demand=demand,
+                features=plans.FEATURES, site={k: settings.get(k) for k in ("site.name", "site.contact_email",
+                "auth.require_approval", "ads.enabled", "ads.html")})
 
 
 @app.post("/api/admin/workspaces/{wid}")
@@ -1950,6 +2038,62 @@ async def api_admin_user(request: Request, uid: int):
     if data["status"] == "disabled":
         db.ex("DELETE FROM sessions WHERE user_id=?", (uid,))
     return ok()
+
+
+@app.post("/api/admin/users/{uid}/approve")
+async def api_admin_approve(request: Request, uid: int):
+    data = await body(request)
+    auth.approve(uid, request.state.sess["user"]["id"], data.get("plan") or "free")
+    return ok(detail="Approved — they can sign in and start now")
+
+
+@app.post("/api/admin/users/{uid}/reject")
+def api_admin_reject(request: Request, uid: int):
+    if uid == request.state.sess["user"]["id"]:
+        return bad("You can't reject yourself.")
+    auth.reject(uid, request.state.sess["user"]["id"])
+    return ok(detail="Rejected")
+
+
+@app.post("/api/admin/workspaces/{wid}/features")
+async def api_admin_features(request: Request, wid: int):
+    data = await body(request)
+    if not db.q1("SELECT id FROM workspaces WHERE id=?", (wid,)):
+        return bad("not found", 404)
+    w = db.q1("SELECT plan FROM workspaces WHERE id=?", (wid,))
+    base = plans.PLAN_FEATURES.get(w["plan"], plans.PLAN_FEATURES["free"])
+    # store only differences from the plan, so plan changes keep working
+    over = {f: bool(data.get(f)) for f in plans.FEATURES if bool(data.get(f)) != (f in base)}
+    db.ex("UPDATE workspaces SET permissions=? WHERE id=?", (db.dumps(over), wid))
+    logs.event("info", "admin", f"Workspace #{wid} features: " + ", ".join(f"{k}={'on' if v else 'off'}"
+                                                                        for k, v in plans.features(wid).items()))
+    return ok(detail="Permissions saved")
+
+
+@app.post("/api/admin/upgrades/{rid}/{action}")
+def api_admin_upgrade(request: Request, rid: int, action: str):
+    r = db.q1("SELECT * FROM upgrade_requests WHERE id=?", (rid,))
+    if not r or action not in ("approve", "decline"):
+        return bad("not found", 404)
+    if action == "approve":
+        db.ex("UPDATE workspaces SET plan=? WHERE id=?", (r["plan"], r["workspace_id"]))
+    db.ex("UPDATE upgrade_requests SET status=?, decided_at=?, decided_by=? WHERE id=?",
+          ("approved" if action == "approve" else "declined", db.iso(), request.state.sess["user"]["id"], rid))
+    return ok(detail="Plan changed" if action == "approve" else "Declined")
+
+
+@app.post("/api/admin/site")
+async def api_admin_site(request: Request):
+    data = await body(request)
+    settings.set("site.name", str(data.get("site_name") or "AI Video Studio").strip()[:60])
+    email = str(data.get("contact_email") or "").strip()[:120]
+    if email and not auth.EMAIL.match(email):
+        return bad("contact email doesn't look valid")
+    settings.set("site.contact_email", email)
+    settings.set("auth.require_approval", bool(data.get("require_approval")))
+    settings.set("ads.enabled", bool(data.get("ads_enabled")))
+    settings.set("ads.html", str(data.get("ads_html") or "")[:5000])
+    return ok(detail="Site settings saved")
 
 
 @app.post("/api/admin/signup")
@@ -2110,3 +2254,57 @@ async def api_welcome(request: Request):
         return bad(str(e))
     scheduler.sync_channels()
     return ok(next=f"/channels/{cid}?tab=youtube")
+
+
+# ------------------------------------------------------------------ public website
+
+def pub_page(request: Request, name: str, **ctx: Any) -> HTMLResponse:
+    sess = getattr(request.state, "sess", None) or auth.session(request.cookies.get("sid"))
+    return templates.TemplateResponse(request, name, {
+        "csrf": csrf_token(request), "static_v": templates.env.globals["static_v"],
+        "site_name": settings.get("site.name") or config.APP_NAME, "contact": settings.get("site.contact_email"),
+        "year": datetime.now().year, "me": sess["user"] if sess else None, **ctx})
+
+
+@app.get("/home", response_class=HTMLResponse)
+def home_public(request: Request):
+    return pub_page(request, "home.html")
+
+
+@app.get("/pricing", response_class=HTMLResponse)
+def pricing_page(request: Request):
+    sess = getattr(request.state, "sess", None) or auth.session(request.cookies.get("sid"))
+    current = sess["workspace"]["plan"] if sess else None
+    return pub_page(request, "pricing.html", plans_table=plans.PLANS, features=plans.FEATURES,
+                    plan_features=plans.PLAN_FEATURES, current=current)
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_page(request: Request):
+    return pub_page(request, "privacy.html", updated="25 October 2026")
+
+
+@app.get("/terms", response_class=HTMLResponse)
+def terms_page(request: Request):
+    return pub_page(request, "terms.html", updated="25 October 2026")
+
+
+@app.get("/pending", response_class=HTMLResponse)
+def pending_page(request: Request):
+    if request.state.sess["user"]["status"] != "pending":
+        return RedirectResponse("/", status_code=303)
+    return pub_page(request, "pending.html")
+
+
+@app.post("/api/upgrade-request")
+async def api_upgrade_request(request: Request):
+    data = await body(request)
+    plan = str(data.get("plan") or "")
+    if plan not in plans.PLANS or plan == "free":
+        return bad("unknown plan")
+    sess = request.state.sess
+    if not db.q1("SELECT 1 FROM upgrade_requests WHERE workspace_id=? AND plan=? AND status='pending'",
+                 (sess["workspace"]["id"], plan)):
+        db.insert("upgrade_requests", {"workspace_id": sess["workspace"]["id"], "user_id": sess["user"]["id"],
+                                       "plan": plan, "note": str(data.get("note") or "")[:300], "created_at": db.iso()})
+    return ok(detail="Thanks — we'll let you know when it's available")

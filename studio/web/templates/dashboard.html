@@ -9,6 +9,14 @@
     <a class="btn" href="/edit">Upload &amp; edit</a>
   </form>
 </div>
+{% set gs_done = getting_started|selectattr('done')|list|length %}
+{% if gs_done < getting_started|length %}
+<div class="card" style="margin-bottom:16px;border-left:3px solid var(--accent)">
+  <div class="spread"><h2>Getting started · {{ gs_done }}/{{ getting_started|length }}</h2><a class="small" href="/home#how">How it works</a></div>
+  {% for s in getting_started %}<div class="spread small" style="padding:5px 0">
+    <span>{% if s.done %}<span class="chip ok">✓</span>{% else %}<span class="chip">{{ loop.index }}</span>{% endif %} {{ s.name }}</span>
+    {% if not s.done %}<a class="btn sm {{ 'primary' if loop.index0 == gs_done }}" href="{{ s.href }}">Do it</a>{% endif %}</div>{% endfor %}
+</div>{% endif %}
 {% if awaiting %}
 <div class="note ok"><b>{{ awaiting }}</b> video(s) are rendered, checked and waiting for your approval. <a href="/productions?status=review">Review them</a>.</div>
 {% endif %}

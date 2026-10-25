@@ -42,7 +42,8 @@ PUBLIC_URL = os.environ.get("STUDIO_PUBLIC_URL", "").rstrip("/")
 BASE_URL = PUBLIC_URL or f"http://127.0.0.1:{PORT}"
 SECURE_COOKIES = BASE_URL.startswith("https://")
 
-KEYRING_SERVICE = "yt-automation-studio"
+# Tests set STUDIO_KEYRING_SERVICE so they can never read, change or revoke the real logins in the Keychain.
+KEYRING_SERVICE = os.environ.get("STUDIO_KEYRING_SERVICE", "yt-automation-studio")
 USER_AGENT = f"YTAutomationStudio/{APP_VERSION} (personal local research tool; honours robots.txt)"
 
 FFMPEG = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"

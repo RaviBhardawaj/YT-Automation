@@ -601,6 +601,13 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
             logs.event("info", "pipeline", msg, production_id=pid)
             return
         raise NeedsAttention(msg + " Switch uploads on for that channel first.")
+    from . import plans
+    if not plans.can(p.get("workspace_id") or 1, "publish"):
+        msg = "Publishing to YouTube isn't enabled for this account — the video is kept here for download."
+        if by.startswith("auto"):
+            save(pid, status="awaiting_approval", error=msg)
+            return
+        raise NeedsAttention(msg)
     if by.startswith("auto") and ch and privacy == "public" and channels.next_publish_slot(ch):
         privacy, publish_at = "scheduled", channels.next_publish_slot(ch)   # goes public at the channel's time
     if by.startswith("auto") and (db.loads(p.get("request"), {}) or {}).get("no_upload"):

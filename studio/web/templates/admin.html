@@ -2,6 +2,22 @@
 {% block content %}
 <div class="head"><div><h1>Admin</h1><div class="muted">Creators, workspaces, plans and errors across the platform.</div></div>
   <div class="row"><button data-post="/api/admin/signup" data-body='{"allow": {{ 'false' if allow_signup else 'true' }}}'>{{ 'Close sign-ups' if allow_signup else 'Open sign-ups' }}</button></div></div>
+{% if pending %}
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--warn)"><h2>Waiting for your approval ({{ pending|length }})</h2>
+  <table><tr><th>Email</th><th>Name</th><th>Signed up</th><th>Plan on approval</th><th></th></tr>
+  {% for u in pending %}<tr><td>{{ u.email }}</td><td>{{ u.name }}</td><td class="small muted">{{ u.created_at|dt }}</td>
+    <td><span id="ap-{{ u.id }}"><select name="plan" style="width:auto">{% for k, pl in plans_table.items() %}<option value="{{ k }}">{{ pl.label }}</option>{% endfor %}</select></span></td>
+    <td class="row"><button class="sm primary" data-post="/api/admin/users/{{ u.id }}/approve" data-collect="#ap-{{ u.id }}">Approve</button>
+      <button class="sm danger" data-post="/api/admin/users/{{ u.id }}/reject" data-confirm="Reject {{ u.email }}?">Reject</button></td></tr>{% endfor %}</table>
+</div>{% endif %}
+
+{% if upgrades %}
+<div class="card" style="margin-bottom:14px"><h2>Upgrade requests ({{ upgrades|length }})</h2>
+  <table><tr><th>Who</th><th>Now</th><th>Wants</th><th>When</th><th></th></tr>
+  {% for r in upgrades %}<tr><td>{{ r.email }} <span class="muted small">{{ r.ws_name }}</span></td><td>{{ r.current }}</td><td><b>{{ r.plan }}</b></td><td class="small muted">{{ r.created_at|dt }}</td>
+    <td class="row"><button class="sm primary" data-post="/api/admin/upgrades/{{ r.id }}/approve">Give plan</button><button class="sm" data-post="/api/admin/upgrades/{{ r.id }}/decline">Decline</button></td></tr>{% endfor %}</table>
+</div>{% endif %}
+
 <div class="card" style="margin-bottom:14px"><h2>Workspaces</h2>
   <table><tr><th>#</th><th>Name</th><th>Owner</th><th>Plan</th><th>Channels</th><th>Videos</th><th>This month</th></tr>
   {% for w in workspaces %}<tr><td>{{ w.id }}</td><td>{{ w.name }}</td><td class="small">{{ w.owner or '—' }}</td>
@@ -9,12 +25,33 @@
       <button class="sm" data-post="/api/admin/workspaces/{{ w.id }}" data-collect="#plan-{{ w.id }}">Save</button></span></td>
     <td>{{ w.channels }}</td><td>{{ w.videos }}</td>
     <td class="small">{{ w.used.videos }} videos · {{ '%.1f' % (w.used.render_minutes or 0) }} render min · {{ '%.2f' % (w.used.storage_bytes / 1024**3) }} GB{% if w.used.cost_usd %} · ${{ w.used.cost_usd }}{% endif %}</td></tr>{% endfor %}</table></div>
+<div class="card" style="margin-bottom:14px"><h2>Feature permissions</h2>
+  <div class="small muted" style="margin-bottom:6px">Plan defaults are ticked automatically; change a box to override it for that workspace.</div>
+  <table><tr><th>Workspace</th>{% for f, label in features.items() %}<th class="small">{{ label }}</th>{% endfor %}<th></th></tr>
+  {% for w in workspaces %}<tr id="feat-{{ w.id }}"><td>{{ w.name }} <span class="muted small">{{ w.plan }}</span></td>
+    {% for f in features %}<td><input type="checkbox" name="{{ f }}" {{ 'checked' if w.features[f] }}></td>{% endfor %}
+    <td><button class="sm" data-post="/api/admin/workspaces/{{ w.id }}/features" data-collect="#feat-{{ w.id }}">Save</button></td></tr>{% endfor %}</table>
+</div>
+
 <div class="card" style="margin-bottom:14px"><h2>Users</h2>
   <table><tr><th>#</th><th>Email</th><th>Workspaces</th><th>Role</th><th>Last sign-in</th><th>Status</th></tr>
   {% for u in users %}<tr><td>{{ u.id }}</td><td>{{ u.email }}{% if u.name %} <span class="muted small">({{ u.name }})</span>{% endif %}</td><td>{{ u.ws }}</td>
     <td>{{ 'platform admin' if u.is_admin else 'creator' }}</td><td class="small muted">{{ u.last_login_at|dt }}</td>
     <td>{% if u.id != me.id %}<button class="sm" data-post="/api/admin/users/{{ u.id }}/reset-password" data-reload="no" data-confirm="Create a new one-time password for {{ u.email }}? Their current sessions are signed out.">Reset password</button>
       <button class="sm {{ 'danger' if u.status == 'active' }}" data-post="/api/admin/users/{{ u.id }}" data-body='{"status": "{{ 'disabled' if u.status == 'active' else 'active' }}"}'>{{ 'Disable' if u.status == 'active' else 'Enable' }}</button>{% else %}you{% endif %}</td></tr>{% endfor %}</table></div>
+<form class="card" style="margin-bottom:14px" data-form="/api/admin/site" data-done="Saved">
+  <h2>Website</h2>
+  <div class="grid g2">
+    <label class="f"><span>Website name</span><input name="site_name" value="{{ site['site.name'] }}"></label>
+    <label class="f"><span>Contact email (shown on privacy/terms pages)</span><input name="contact_email" type="email" value="{{ site['site.contact_email'] }}"></label>
+  </div>
+  <label class="small"><input type="checkbox" name="require_approval" {{ 'checked' if site['auth.require_approval'] }}> New sign-ups wait for my approval</label><br>
+  <label class="small"><input type="checkbox" name="ads_enabled" {{ 'checked' if site['ads.enabled'] }}> Show an ad to Free-plan users (dashboard and library)</label>
+  <label class="f" style="margin-top:6px"><span>Ad code from your ad network (e.g. Google AdSense ad unit)</span><textarea name="ads_html" rows="3" class="mono">{{ site['ads.html'] }}</textarea></label>
+  {% if demand %}<div class="small muted">Plan interest so far: {% for d in demand %}{{ d.plan }} {{ d.n }}{{ ', ' if not loop.last }}{% endfor %}</div>{% endif %}
+  <button type="submit" class="primary">Save</button>
+</form>
+
 <div class="card"><h2>Recent errors</h2>
   <div class="events">{% for e in errors %}<div class="lvl-error"><span class="muted">{{ e.created_at|dt }}</span> · <span class="chip">{{ e.source }}</span> {{ e.message }}{% if e.production_id %} #{{ e.production_id }}{% endif %}</div>{% else %}<div class="muted">No errors.</div>{% endfor %}</div></div>
 {% endblock %}

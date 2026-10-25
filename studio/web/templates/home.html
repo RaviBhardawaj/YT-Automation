@@ -1,0 +1,38 @@
+{% extends "public_base.html" %}
+{% block content %}
+<section class="hero">
+  <h1>Make YouTube videos with AI —<br>from one sentence or your own footage</h1>
+  <p class="lead">Describe a video, paste a YouTube link for inspiration, or upload a clip. {{ site_name }} writes, voices, animates, edits, adds subtitles and publishes to your channels — in Hindi, Hinglish or English.</p>
+  <div class="row" style="justify-content:center">{% if me %}<a class="btn primary big" href="/">Open my studio</a>{% else %}<a class="btn primary big" href="/signup">Start free</a><a class="btn big" href="/login">Sign in</a>{% endif %}</div>
+  <div class="muted small" style="margin-top:8px">Free during beta · no credit card · your Google password is never asked for</div>
+</section>
+
+<section class="grid g3 feats">
+  {% for icon, t, d in [
+    ('✍️','Create from a prompt','“A funny Hindi cartoon about a lazy superhero”, “Explain UPI in 2 minutes” — the right workflow is picked for you.'),
+    ('✂️','Upload & edit','Remove pauses, add subtitles with highlighted words, intro, music, and cut long videos into vertical Shorts.'),
+    ('🎭','Recurring characters','Animated series keep the same characters, looks and voices in every episode.'),
+    ('🗣️','Natural Indian voices','Hindi, Hinglish and English narration and dialogue.'),
+    ('📺','Many channels','Each channel has its own niche, language, characters, schedule and YouTube login.'),
+    ('⏰','Daily automation','A new video every day at your time, published when you choose — or approve each one.')] %}
+  <div class="card"><div style="font-size:28px">{{ icon }}</div><h3>{{ t }}</h3><div class="small muted">{{ d }}</div></div>{% endfor %}
+</section>
+
+<section id="how" class="card" style="margin-top:24px">
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><b>Create your free account</b> — the team approves new accounts quickly.</li>
+    <li><b>Set up a channel</b> — niche, language, style, and (optionally) your YouTube channel's @handle.</li>
+    <li><b>Connect YouTube once</b> — official Google sign-in; you choose the channel. Skip it to just download videos.</li>
+    <li><b>Make videos</b> — type what you want, paste a link, or upload footage. Preview, download or publish.</li>
+  </ol>
+</section>
+
+<section class="card" style="margin-top:16px">
+  <h2>Questions</h2>
+  <details><summary><b>Is it really free?</b></summary><p class="small">Yes during beta, with monthly limits per account. Paid plans with higher limits are planned — see <a href="/pricing">Pricing</a>.</p></details>
+  <details><summary><b>Do you get my Google password?</b></summary><p class="small">No. YouTube is connected through Google's official sign-in; you can remove access any time at myaccount.google.com/permissions.</p></details>
+  <details><summary><b>Who owns the videos?</b></summary><p class="small">You do. Make sure what you upload is yours or licensed, and follow YouTube's rules for AI-generated and kids content.</p></details>
+  <details><summary><b>Can I just download the videos?</b></summary><p class="small">Yes — every finished video, Short, subtitle file and thumbnail can be downloaded.</p></details>
+</section>
+{% endblock %}

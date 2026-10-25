@@ -346,3 +346,13 @@ document.addEventListener("change", e => {
   const el = e.target.closest("[data-autosubmit]");
   if (el && el.form) el.form.submit();
 });
+
+// page tips: hidden once dismissed (per page, this browser) -------------------
+document.querySelectorAll("[data-help]").forEach(box => {
+  const key = "help-hidden:" + box.dataset.help;
+  try { if (localStorage.getItem(key)) box.remove(); } catch { /* storage blocked: keep showing */ }
+  box.querySelector(".x")?.addEventListener("click", () => {
+    box.remove();
+    try { localStorage.setItem(key, "1"); } catch { /* ignore */ }
+  });
+});

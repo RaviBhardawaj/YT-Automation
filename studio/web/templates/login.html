@@ -8,7 +8,7 @@
 </head>
 <body>
 <div style="max-width:420px;margin:8vh auto;padding:0 16px">
-  <div class="brand" style="padding:0 0 18px"><div class="logo">▶</div><div>{{ app_name }}<div class="muted small" style="font-weight:400">Create, edit and publish videos for any niche</div></div></div>
+  <a class="brand" href="/home" style="padding:0 0 18px;color:inherit;text-decoration:none"><div class="logo">▶</div><div>{{ app_name }}<div class="muted small" style="font-weight:400">Create, edit and publish videos for any niche</div></div></a>
   <form class="card" data-form="/api/auth/{{ mode }}" data-done="{{ 'Signed in' if mode == 'login' else 'Account created' }}">
     <h2>{% if mode == 'login' %}Sign in{% elif first %}Create the owner account{% else %}Create your studio{% endif %}</h2>
     {% if mode == 'signup' and first %}<div class="note small">This first account becomes the platform admin and owns the studio's existing channels and videos.</div>{% endif %}
@@ -18,6 +18,7 @@
     <label class="f"><span>Email</span><input name="email" type="email" required autocomplete="email"></label>
     <label class="f"><span>Password{% if mode == 'signup' %} (10+ characters){% endif %}</span><input name="password" type="password" required minlength="{{ 10 if mode == 'signup' else 1 }}" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}"></label>
     <input type="hidden" name="next" value="{{ next }}">
+    {% if mode == 'signup' %}<div class="small muted" style="margin-bottom:8px">By creating an account you agree to the <a href="/terms" target="_blank">Terms of use</a> and <a href="/privacy" target="_blank">Privacy policy</a>.{% if not first %} New accounts are approved by the team.{% endif %}</div>{% endif %}
     <button class="primary" type="submit" style="width:100%">{{ 'Sign in' if mode == 'login' else 'Create account' }}</button>
     <div class="small muted" style="margin-top:10px;text-align:center">
       {% if mode == 'login' and allow_signup %}New here? <a href="/signup">Create an account</a>{% elif mode == 'signup' and not first %}Have an account? <a href="/login">Sign in</a>{% endif %}</div>

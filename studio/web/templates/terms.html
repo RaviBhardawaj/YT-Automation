@@ -1,0 +1,38 @@
+{% extends "public_base.html" %}
+{% block title %}Terms of use · {{ site_name }}{% endblock %}
+{% block content %}
+<article class="card legal">
+<h1>Terms of use</h1>
+<p class="muted small">Last updated {{ updated }}</p>
+
+<h2>The service</h2>
+<p>{{ site_name }} helps you create, edit and publish videos with AI. It is offered free during beta, with monthly limits, and may change, pause or end. Paid plans, if introduced, will be announced first.</p>
+
+<h2>Your account</h2>
+<ul>
+  <li>You must be 18 or older and give a real email address. New accounts may need approval.</li>
+  <li>Keep your password private; you're responsible for activity in your account.</li>
+  <li>We may limit, suspend or close accounts that break these terms or put the service at risk.</li>
+</ul>
+
+<h2>Your content and your channels</h2>
+<ul>
+  <li>You keep ownership of what you upload and of the videos made for you.</li>
+  <li>Upload only material you own or have the right to use. Don't use the service to copy other creators' videos, music or characters.</li>
+  <li>You're responsible for what you publish and must follow the <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">YouTube Terms of Service</a> and Community Guidelines, including disclosing realistic AI-generated content and marking children's content as “made for kids”.</li>
+  <li>You give us permission to store and process your content only to provide the service to you.</li>
+</ul>
+
+<h2>What you may not do</h2>
+<p>No illegal, hateful, violent, sexual or harassing content; no content that exploits children; no spam, scams, impersonation of real people or misleading “news”; no attempts to break, overload or get around the service's limits or security.</p>
+
+<h2>AI output</h2>
+<p>AI-generated scripts, voices and visuals can be wrong or unexpected. Review videos before publishing. Nothing produced by the service is financial, legal or medical advice.</p>
+
+<h2>No guarantees</h2>
+<p>The service is provided “as is”, without warranties. To the extent the law allows, we aren't liable for lost data, lost revenue, channel strikes or other indirect losses from using it. Keep your own copies of important videos.</p>
+
+<h2>Changes and contact</h2>
+<p>We may update these terms; continuing to use the service means you accept the new version.{% if contact %} Questions: <a href="mailto:{{ contact }}">{{ contact }}</a>.{% endif %}</p>
+</article>
+{% endblock %}

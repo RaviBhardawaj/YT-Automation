@@ -50,7 +50,9 @@
   <main>
     {% if is_admin and not sarvam.ok %}<div class="note warn"><b>Sarvam voice is unavailable</b> since {{ sarvam.since|dt }} — new videos are being voiced with the free Kokoro voice so they still get made.
       Reason: {{ sarvam.error }}. Top up or check your key at dashboard.sarvam.ai; the studio retries Sarvam every 30 minutes and this warning clears by itself.</div>{% endif %}
+    {% if page_help %}<div class="helpbox" data-help="{{ page }}"><button class="x" type="button" title="Hide this tip">✕</button>💡 {{ page_help|safe }}</div>{% endif %}
     {% block content %}{% endblock %}
+    {% if show_ads and page in ('dashboard', 'productions') %}<div class="adslot">{{ ads_html|safe }}</div>{% endif %}
   </main>
 </div>
 <script src="/static/app.js?v={{ static_v }}"></script>

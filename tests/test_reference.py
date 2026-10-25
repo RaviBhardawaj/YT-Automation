@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 os.environ.setdefault("STUDIO_DATA_DIR", tempfile.mkdtemp(prefix="studio-test-"))
+os.environ.setdefault("STUDIO_KEYRING_SERVICE", "yt-automation-studio-tests")  # never the real Keychain logins
 
 from studio import config, db  # noqa: E402
 

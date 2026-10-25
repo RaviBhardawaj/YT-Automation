@@ -49,8 +49,11 @@ def register(email: str, password: str, name: str = "", workspace_name: str = ""
     if db.q1("SELECT id FROM users WHERE email=?", (email,)):
         raise AuthError("an account with this email already exists — sign in instead")
     first = not has_users()
+    from . import settings
+    pending = not first and bool(settings.get("auth.require_approval"))
     uid = db.insert("users", {"email": email, "name": name.strip()[:80], "password_hash": _hash_pw(password),
-                              "is_admin": int(first), "status": "active", "created_at": db.iso()})
+                              "is_admin": int(first), "status": "pending" if pending else "active",
+                              "approved_at": None if pending else db.iso(), "created_at": db.iso()})
     if first and db.q1("SELECT id FROM workspaces WHERE id=1"):
         ws = 1                                       # existing studio data (created by migrations/bootstrap)
         db.ex("UPDATE workspaces SET owner_user_id=? WHERE id=1", (uid,))
@@ -67,7 +70,7 @@ def login(email: str, password: str) -> tuple[str, dict[str, Any]]:
     u = db.q1("SELECT * FROM users WHERE email=?", (email.strip().lower(),))
     if not u or not _check_pw(password, u["password_hash"]):
         raise AuthError("wrong email or password")
-    if u["status"] != "active":
+    if u["status"] not in ("active", "pending"):
         raise AuthError("this account is disabled")
     ws = db.q1("SELECT workspace_id FROM workspace_members WHERE user_id=? ORDER BY workspace_id LIMIT 1", (u["id"],))
     if not ws:
@@ -89,7 +92,7 @@ def session(token: str | None) -> dict[str, Any] | None:
     if not s:
         return None
     u = db.q1("SELECT id, email, name, is_admin, status FROM users WHERE id=?", (s["user_id"],))
-    if not u or u["status"] != "active":
+    if not u or u["status"] not in ("active", "pending"):      # pending: may only see the waiting page
         return None
     m = db.q1("SELECT role FROM workspace_members WHERE workspace_id=? AND user_id=?", (s["workspace_id"], u["id"]))
     if not m:
@@ -122,3 +125,19 @@ def owns(ws_id: int, table: str, row_id: int) -> bool:
     else:
         r = db.q1(f"SELECT {OWNED[table]} AS workspace_id FROM {table} WHERE id=?", (row_id,))
     return bool(r) and r["workspace_id"] == ws_id
+
+
+def approve(user_id: int, by: int, plan: str | None = None) -> None:
+    from . import logs, plans
+    db.ex("UPDATE users SET status='active', approved_at=?, approved_by=? WHERE id=?", (db.iso(), by, user_id))
+    if plan in plans.PLANS:
+        db.ex("UPDATE workspaces SET plan=? WHERE id IN (SELECT workspace_id FROM workspace_members WHERE user_id=? "
+              "AND role='owner')", (plan, user_id))
+    logs.event("info", "admin", f"User #{user_id} approved by #{by}" + (f" on the {plan} plan" if plan else ""))
+
+
+def reject(user_id: int, by: int) -> None:
+    from . import logs
+    db.ex("UPDATE users SET status='disabled' WHERE id=?", (user_id,))
+    db.ex("DELETE FROM sessions WHERE user_id=?", (user_id,))
+    logs.event("info", "admin", f"User #{user_id} rejected by #{by}")

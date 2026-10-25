@@ -1,0 +1,10 @@
+{% extends "public_base.html" %}
+{% block title %}Waiting for approval · {{ site_name }}{% endblock %}
+{% block content %}
+<div class="card" style="max-width:560px;margin:40px auto;text-align:center">
+  <div style="font-size:40px">⏳</div>
+  <h1>Thanks for signing up{% if me.name %}, {{ me.name }}{% endif %}!</h1>
+  <p>Your account <b>{{ me.email }}</b> is waiting for approval. You'll be able to set up your channels and make videos as soon as it's approved — just sign in again later.</p>
+  <button data-post="/api/auth/logout">Sign out</button>
+</div>
+{% endblock %}

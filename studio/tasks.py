@@ -152,6 +152,9 @@ def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     ch = channels.get(int(payload["channel_id"]))
     if not ch or ch["status"] != "active":
         return {"skipped": "channel paused or deleted"}
+    from . import plans
+    if not plans.can(ch["workspace_id"], "schedules"):
+        return {"skipped": "automatic daily videos aren't enabled for this account"}
     from datetime import datetime
     day = datetime.now().astimezone().date().isoformat()
     done = db.q1("SELECT id FROM productions WHERE channel_id=? AND json_extract(request, '$.scheduled_for')=? "

@@ -111,3 +111,23 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .filerow .bar { margin-top: 4px; }
 .pick { display: flex; gap: 6px; align-items: center; padding: 4px 0; font-size: 13px; }
 .examples button { margin: 0 6px 6px 0; }
+
+/* public website */
+.pub-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; gap: 8px; }
+.pub-head nav a:not(.btn) { color: var(--text); padding: 6px 8px; }
+.pub-main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 40px; }
+.pub-foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 18px 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.pub-foot a { color: var(--muted); margin-left: 10px; }
+.hero { text-align: center; padding: 40px 0 28px; }
+.hero h1 { font-size: clamp(28px, 4.6vw, 46px); line-height: 1.15; margin: 0 0 14px; }
+.lead { font-size: 17px; color: var(--muted); max-width: 720px; margin: 0 auto 18px; }
+.btn.big { padding: 11px 22px; font-size: 16px; }
+.feats h3 { margin: 6px 0 4px; }
+.steps li { margin-bottom: 8px; }
+.price { font-size: 24px; font-weight: 700; margin: 4px 0 8px; }
+.plan-on { outline: 2px solid var(--accent); }
+.legal { max-width: 820px; margin: 0 auto; line-height: 1.6; }
+.legal h2 { margin-top: 22px; }
+.helpbox { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; position: relative; }
+.helpbox .x { position: absolute; top: 6px; right: 8px; border: 0; background: none; cursor: pointer; color: var(--muted); }
+.adslot { margin: 14px 0; min-height: 60px; text-align: center; }

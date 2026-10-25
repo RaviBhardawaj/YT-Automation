@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 os.environ.setdefault("STUDIO_DATA_DIR", tempfile.mkdtemp(prefix="studio-test-"))
+os.environ.setdefault("STUDIO_KEYRING_SERVICE", "yt-automation-studio-tests")  # never the real Keychain logins
 
 from studio import config, db, settings  # noqa: E402
 
@@ -175,7 +176,7 @@ class IdeasPageTests(unittest.TestCase):
         cls.client = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False)
         auth.ensure_default_workspace()
         if not db.q1("SELECT id FROM users WHERE email='owner@test.local'"):
-            auth.register("owner@test.local", "correct horse battery")
+            auth.approve(auth.register("owner@test.local", "correct horse battery")["user_id"], 1)  # approval is on by default
         token, _ = auth.login("owner@test.local", "correct horse battery")
         cls.client.cookies.set("sid", token)
         cls.ws = auth.session(token)["workspace"]["id"]

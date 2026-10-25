@@ -489,6 +489,23 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE channels ADD COLUMN publish_time TEXT;
     """,
+    # v11: superadmin approval of sign-ups, per-workspace feature permissions, upgrade requests
+    """
+    ALTER TABLE users ADD COLUMN approved_at TEXT;
+    ALTER TABLE users ADD COLUMN approved_by INTEGER;
+    ALTER TABLE workspaces ADD COLUMN permissions TEXT NOT NULL DEFAULT '{}';
+    CREATE TABLE upgrade_requests (
+        id INTEGER PRIMARY KEY,
+        workspace_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        plan TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',      -- pending | approved | declined
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        decided_by INTEGER
+    );
+    """,
 ]
 
 
