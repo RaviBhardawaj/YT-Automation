@@ -66,6 +66,7 @@ document.addEventListener("click", async e => {
     const j = await api(b.dataset.post, payload);
     if (j.url && b.dataset.navigate !== undefined) { location.href = j.url; return; }
     toast(b.dataset.done || j.detail || "Done");
+    if (j.show) window.prompt("Copy this now and give it to the user — it won't be shown again:", j.show);
     if (j.next) location.href = j.next;
     else if (b.dataset.reload !== "no") setTimeout(() => location.reload(), 700);
   } catch (err) { toast(err.message, "err"); }

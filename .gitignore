@@ -32,3 +32,6 @@ secrets/
 
 # macOS
 .DS_Store
+
+# Machine-specific online settings (written by scripts/go_public.sh)
+deploy/public.env

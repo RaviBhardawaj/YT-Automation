@@ -36,13 +36,19 @@
     </nav>
     {% if me %}<div class="spend" style="margin-top:14px"><b style="color:var(--text)">{{ workspace.name }}</b><br>{{ me.email }} · {{ role }}
       <div style="margin-top:6px"><button class="sm" data-post="/api/auth/logout" data-done="Signed out">Sign out</button></div></div>{% endif %}
-    <div class="spend">AI spend this month<br><b style="color:var(--text)">${{ '%.2f' % spend }}</b> of ${{ '%.2f' % budget }} limit
+    {% if is_admin %}
+    <div class="spend">Platform AI spend this month<br><b style="color:var(--text)">${{ '%.2f' % spend }}</b> of ${{ '%.2f' % budget }} limit
       <div class="bar {{ 'hot' if spend_pct >= 80 }}"><i style="width:{{ spend_pct }}%"></i></div>
       <div style="margin-top:8px">{{ task_counts.get('running', 0) }} running · {{ task_counts.get('pending', 0) }} queued</div>
     </div>
+    {% elif my_usage %}
+    <div class="spend">This month: <b style="color:var(--text)">{{ my_usage.videos }}</b> of {{ my_usage.limit }} videos
+      <div class="bar {{ 'hot' if my_usage.pct >= 80 }}"><i style="width:{{ my_usage.pct }}%"></i></div>
+      <div style="margin-top:8px">{{ task_counts.get('running', 0) }} running · {{ task_counts.get('pending', 0) }} queued</div>
+    </div>{% endif %}
   </aside>
   <main>
-    {% if not sarvam.ok %}<div class="note warn"><b>Sarvam voice is unavailable</b> since {{ sarvam.since|dt }} — new videos are being voiced with the free Kokoro voice so they still get made.
+    {% if is_admin and not sarvam.ok %}<div class="note warn"><b>Sarvam voice is unavailable</b> since {{ sarvam.since|dt }} — new videos are being voiced with the free Kokoro voice so they still get made.
       Reason: {{ sarvam.error }}. Top up or check your key at dashboard.sarvam.ai; the studio retries Sarvam every 30 minutes and this warning clears by itself.</div>{% endif %}
     {% block content %}{% endblock %}
   </main>

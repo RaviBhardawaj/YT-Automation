@@ -478,6 +478,17 @@ MIGRATIONS: list[str] = [
     ALTER TABLE channels ADD COLUMN uploads_enabled INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE channels ADD COLUMN monetization TEXT NOT NULL DEFAULT '{}';
     """,
+    # v9: channel management — link by @handle (locked target), made-for-kids, YouTube upload readiness
+    """
+    ALTER TABLE channels ADD COLUMN made_for_kids INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE channels ADD COLUMN youtube_expected_id TEXT;
+    ALTER TABLE channels ADD COLUMN youtube_handle TEXT;
+    ALTER TABLE channels ADD COLUMN youtube_status TEXT NOT NULL DEFAULT '{}';
+    """,
+    # v10: the time of day a channel's videos go public (YouTube scheduled publishing); NULL = right away
+    """
+    ALTER TABLE channels ADD COLUMN publish_time TEXT;
+    """,
 ]
 
 

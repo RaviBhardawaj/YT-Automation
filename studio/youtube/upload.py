@@ -53,6 +53,13 @@ def privacy_for(production: dict[str, Any]) -> dict[str, Any]:
     return {"status": status, "note": note}
 
 
+def _made_for_kids(production: dict[str, Any]) -> bool:
+    """The destination channel's made-for-kids setting (required by YouTube/COPPA for kid-directed videos)."""
+    from .. import channels
+    ch = channels.get(production.get("channel_id"))
+    return bool(ch["made_for_kids"]) if ch else bool(profile.made_for_kids())
+
+
 def upload(production: dict[str, Any], pkg: dict[str, Any], assets: list[dict[str, Any]]) -> dict[str, Any]:
     video = Path(production["video_path"])
     total = video.stat().st_size
@@ -64,7 +71,7 @@ def upload(production: dict[str, Any], pkg: dict[str, Any], assets: list[dict[st
             "tags": pkg.get("tags", []), "categoryId": str(settings.get("youtube.category_id")),
             "defaultLanguage": lang, "defaultAudioLanguage": lang,
         },
-        "status": {**priv["status"], "selfDeclaredMadeForKids": bool(profile.made_for_kids()),
+        "status": {**priv["status"], "selfDeclaredMadeForKids": _made_for_kids(production),
                    "containsSyntheticMedia": any(a.get("synthetic") for a in assets),
                    "embeddable": True, "license": "youtube"},
     }

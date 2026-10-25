@@ -12,7 +12,7 @@
   <div class="small muted">Uses <b>Google Gemini Omni Flash</b> through your Gemini API key (Google retired Veo from the Gemini API on 22 Oct 2026; Omni Flash replaced it).
     It is <b>paid only</b> — about ${{ '%.2f' % vg.usd_per_second }} per second at {{ vg.resolution }}, so one ~{{ vg.seconds_per_clip }}-second clip ≈ ${{ '%.2f' % (vg.seconds_per_clip * vg.usd_per_second) }}.
     Billing must be turned on for your key's project in Google AI Studio. When on, researched videos you tick “Use AI video clips” for get up to {{ vg.max_clips }} AI clips; other scenes use stock or original visuals.</div>
-  <div class="kv" style="margin-top:10px"><div>Spent this month</div><div>${{ '%.2f' % vg_spent }} of ${{ '%.2f' % vg.monthly_cap_usd }} cap</div>
+  <div class="kv" style="margin-top:10px">{% if is_admin %}<div>Spent this month</div><div>${{ '%.2f' % vg_spent }} of ${{ '%.2f' % vg.monthly_cap_usd }} cap</div>{% endif %}
     <div>Per video (estimate)</div><div>{{ vg_est.basis }} ≈ <b>${{ '%.2f' % vg_est.usd }}</b></div></div>
   {% if is_admin %}
   <div class="row" style="margin-top:10px"><button data-post="/api/admin/videogen/check" data-reload="no">Check access with my Gemini key</button></div>

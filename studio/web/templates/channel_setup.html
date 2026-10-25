@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="max-width:860px">
+  {% if welcome %}<h1>Welcome{% if me.name %}, {{ me.name }}{% endif %} 👋</h1>
+  <div class="muted">Set up your first channel. Everything in your studio is private — no other user can see your channels, videos, uploads or ideas.</div>
+  {% else %}<div class="muted small"><a href="/channels">← YouTube channels</a></div><h1>Set up a new channel</h1>
+  <div class="muted">Tell the studio what this channel is about, when to make videos and when to publish them. You can change everything later.</div>{% endif %}
+
+  <form data-form="/api/channels" data-done="Channel created" style="margin-top:16px">
+    <div class="card">
+      <h2>1 · About the channel</h2>
+      <div class="grid g2">
+        <label class="f"><span>Channel name</span><input name="name" required placeholder="e.g. Kids and Comedy"></label>
+        <label class="f"><span>Niche — what is it about?</span><input name="niche" required placeholder="e.g. funny cartoon stories for kids"></label>
+        <label class="f"><span>Sub-topics (optional)</span><input name="sub_niche" placeholder="e.g. school life, family, friendship"></label>
+        <label class="f"><span>Who watches it?</span><input name="audience" placeholder="e.g. kids 4–10 and parents"></label>
+        <label class="f"><span>Language</span><select name="language">{% for l in languages %}<option>{{ l }}</option>{% endfor %}</select></label>
+        <label class="f"><span>Tone</span><input name="tone" placeholder="e.g. funny, warm, simple words"></label>
+      </div>
+      <label class="small"><input type="checkbox" name="made_for_kids"> <b>Made for kids</b> (required by YouTube for content aimed at children — comments and personalised ads are switched off)</label>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h2>2 · Videos</h2>
+      <label class="f"><span>What kind of videos?</span><select name="workflow">
+        <option value="animated_story">Animated stories & cartoons (comedy, kids, horror, drama…) with recurring characters</option>
+        <option value="factual">Explainers & researched videos (tech, finance, education, news…)</option>
+        <option value="auto">Mixed — decide per video from the request</option></select></label>
+      <div class="f"><span class="small muted" style="font-weight:600">Styles</span><div class="row" style="margin-top:4px">
+        {% for s in styles %}<label class="small"><input type="checkbox" name="styles::{{ s }}"> {{ s }}</label>{% endfor %}</div></div>
+      <div class="grid g3" style="margin-top:8px">
+        <label class="f"><span>Formats</span><select name="formats"><option value="both">Long videos + Shorts</option><option value="long">Long videos only</option><option value="short">Shorts only</option></select></label>
+        <label class="f"><span>Long video length (minutes)</span><input name="long_minutes" data-type="number" type="number" min="1" max="30" step="0.5" value="6"></label>
+        <label class="f"><span>Shorts per long video</span><input name="shorts_per_episode" data-type="number" type="number" min="0" max="8" value="3"></label>
+      </div>
+      <label class="f"><span>Instructions every video must follow (optional)</span><textarea name="instructions" rows="2" placeholder="e.g. Always end with a moral. Keep the same characters."></textarea></label>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h2>3 · Daily schedule — when to make a new video</h2>
+      <label class="small"><input type="checkbox" name="schedule_enabled"> Make a new video automatically</label>
+      <div class="row" style="margin-top:6px">
+        <label class="small">every</label>
+        {% for d, n in [(0,'Mon'),(1,'Tue'),(2,'Wed'),(3,'Thu'),(4,'Fri'),(5,'Sat'),(6,'Sun')] %}<label class="small"><input type="checkbox" name="schedule_days::{{ d }}" checked> {{ n }}</label>{% endfor %}
+        <label class="small">at <input name="schedule_time" value="10:00" style="width:80px"></label>
+      </div>
+      <div class="muted small">The studio picks the channel's best idea (and makes new ideas when it runs low). One scheduled video per day at most.</div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h2>4 · Publishing</h2>
+      <label class="f"><span>YouTube channel (@handle or link — optional, you can add it later)</span>
+        <span class="row" id="ytlook"><input name="youtube" placeholder="@YourChannel" style="flex:1;min-width:220px">
+          <button type="button" class="sm" data-post="/api/channels/lookup" data-collect="#ytlook" data-reload="no">Check</button></span></label>
+      <label class="small"><input type="checkbox" name="auto_publish"> Publish automatically when a video passes its checks (otherwise you approve each one)</label>
+      <div class="grid g2" style="margin-top:8px">
+        <label class="f"><span>Go public at (your time; empty = as soon as it's uploaded)</span><input name="publish_time" placeholder="e.g. 18:00" style="width:120px"></label>
+        <label class="f"><span>Visibility</span><select name="publish_privacy"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private" selected>Private (I'll publish myself)</option></select></label>
+      </div>
+      <div class="muted small">After creating the channel you'll connect YouTube with one Google sign-in — Google requires that the owner approves uploads once; after that everything is automatic.</div>
+    </div>
+    <div style="margin:14px 0"><button class="primary" type="submit">Create channel</button></div>
+  </form>
+</div>
+{% endblock %}

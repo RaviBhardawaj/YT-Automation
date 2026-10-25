@@ -1,14 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="head">
-  <div><h1>Channels</h1><div class="muted">One studio, many YouTube channels. Each has its own niche, language, style, characters, ideas, library, schedule and YouTube login.</div></div>
+  <div><h1>YouTube channels</h1><div class="muted">One studio, many YouTube channels. Each has its own niche, language, style, characters, ideas, library, schedule and YouTube login.</div></div>
 </div>
 <div class="grid g3">
   {% for c in channels %}
-  <a class="card" href="/channels/{{ c.id }}" style="color:inherit;text-decoration:none">
+  <a class="card" href="/channels/{{ c.id }}?tab=setup" style="color:inherit;text-decoration:none">
     <div class="spread"><b style="font-size:15px">{{ c.name }}</b>
       {% if c.status == 'active' %}<span class="chip ok">active</span>{% else %}<span class="chip warn">paused</span>{% endif %}</div>
-    <div class="muted small" style="margin:4px 0 8px">{{ c.niche }} · {{ c.language }} · {{ c.workflow|replace('_',' ') }}</div>
+    <div class="muted small" style="margin:4px 0 8px">{{ c.niche }} · {{ c.language }} · {{ c.workflow|replace('_',' ') }}
+      {% if c.youtube_handle %} · {{ c.youtube_handle }}{% endif %}{% if c.made_for_kids %} <span class="chip info">made for kids</span>{% endif %}</div>
+    <div class="small" style="margin-bottom:6px">Setup {{ c.setup_done }}/{{ c.setup_total }}<div class="bar"><i style="width:{{ (c.setup_done / c.setup_total * 100)|int }}%"></i></div></div>
     <div class="row small">
       <span class="chip">{{ c.counts.today }} today</span><span class="chip info">{{ c.counts.in_production }} in production</span>
       <span class="chip ok">{{ c.counts.review }} review</span><span class="chip">{{ c.counts.published }} published</span>
@@ -31,20 +33,7 @@
 <div class="note" style="margin-top:16px"><b>Running many YouTube channels:</b> one Google login can own many YouTube channels (“brand accounts”).
   To add one: create it on <a href="https://www.youtube.com/channel_switcher" target="_blank" rel="noopener">youtube.com/channel_switcher</a> → “Create a channel” (YouTube doesn't allow apps to create channels),
   then add it below and click <i>Connect YouTube</i> on its page. Each channel keeps its own niche, characters, schedule, upload switch and login.</div>
-<form class="card" style="margin-top:16px" data-form="/api/channels" data-done="Channel created">
-  <h2>Add a channel</h2>
-  <div class="grid g3">
-    <label class="f"><span>Channel name</span><input name="name" required placeholder="e.g. Raat Ki Kahaniyan"></label>
-    <label class="f"><span>Niche</span><input name="niche" placeholder="e.g. Hindi animated horror stories"></label>
-    <label class="f"><span>Sub-niche</span><input name="sub_niche" placeholder="e.g. village folklore, haunted houses"></label>
-    <label class="f"><span>Audience</span><input name="audience" placeholder="e.g. Hindi speakers 16–35"></label>
-    <label class="f"><span>Language</span><select name="language">{% for l in languages %}<option>{{ l }}</option>{% endfor %}</select></label>
-    <label class="f"><span>Tone</span><input name="tone" placeholder="e.g. suspenseful, slow-burn"></label>
-    <label class="f"><span>Workflow</span><select name="workflow">{% for k, l in workflows.items() %}{% if k != 'nifty_daily' %}<option value="{{ k }}">{{ k|replace('_',' ') }} — {{ l }}</option>{% endif %}{% endfor %}</select></label>
-    <label class="f"><span>Formats</span><select name="formats"><option value="both">Long + Shorts</option><option value="long">Long only</option><option value="short">Shorts only</option></select></label>
-    <label class="f"><span>Styles (comma separated)</span><input name="styles" data-type="list" placeholder="{{ styles[:4]|join(', ') }}"></label>
-  </div>
-  <label class="f"><span>Channel instructions (what every video must be like)</span><textarea name="instructions" rows="3"></textarea></label>
-  <button class="primary" type="submit">Create channel</button>
-</form>
+<div class="card" style="margin-top:16px"><div class="spread"><div><h2>Add a channel</h2>
+  <div class="small muted">Step-by-step setup: niche, video style, language, daily schedule, publishing time and the YouTube link.</div></div>
+  <a class="btn primary" href="/channels/new">Set up a new channel</a></div></div>
 {% endblock %}

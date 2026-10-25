@@ -17,6 +17,13 @@ fi
 
 [[ -x .venv/bin/python ]] || { echo "Run install/install-mac.sh first."; exit 1; }
 mkdir -p "$HOME/Library/LaunchAgents" data/logs
+# Online settings (written by scripts/go_public.sh) travel with the service
+EXTRA_ENV=""
+if [[ -f deploy/public.env ]]; then
+  while IFS='=' read -r k v; do
+    [[ "$k" =~ ^STUDIO_[A-Z_]+$ ]] && EXTRA_ENV+="<key>$k</key><string>$v</string>"
+  done < deploy/public.env
+fi
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -26,7 +33,7 @@ cat > "$PLIST" <<EOF
     <string>/usr/bin/caffeinate</string><string>-i</string>
     <string>$PWD/.venv/bin/python</string><string>-m</string><string>studio</string></array>
   <key>WorkingDirectory</key><string>$PWD</string>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>$EXTRA_ENV</dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>30</integer>

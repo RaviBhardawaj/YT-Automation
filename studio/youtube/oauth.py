@@ -111,11 +111,22 @@ def handle_callback(code: str, state: str) -> dict[str, Any]:
         raise AuthError("Google did not return a refresh token. Remove the app's access at "
                         "myaccount.google.com/permissions and connect again.")
     cid = entry[2]
+    old = settings.secret(_secret(cid))
     settings.set_secret(_secret(cid), tok["refresh_token"])
     settings.set("youtube.granted_scopes", tok.get("scope", "").split())
     with _lock:
         _cache(cid).update(access=tok["access_token"], expires=time.time() + int(tok.get("expires_in", 3600)) - 60)
-    channel = fetch_channel(cid)
+    try:
+        channel = fetch_channel(cid)
+    except AuthError:                         # wrong channel picked: discard the new login, keep the previous one
+        # (not revoked at Google: revoking can also cut off another studio channel that uses that Google identity)
+        if old:
+            settings.set_secret(_secret(cid), old)
+        else:
+            settings.delete_secret(_secret(cid))
+        with _lock:
+            _cache(cid).update(access=None, expires=0)
+        raise
     logs.event("info", "youtube", f"Studio channel #{cid} connected to YouTube channel: {channel.get('title')}")
     return {**channel, "studio_channel_id": cid}
 
@@ -168,10 +179,20 @@ def fetch_channel(channel_id: int | None = None) -> dict[str, Any]:
     channel = {"id": c["id"], "title": c["snippet"]["title"], "url": f"https://www.youtube.com/channel/{c['id']}",
                "subscribers": c.get("statistics", {}).get("subscriberCount"),
                "videos": c.get("statistics", {}).get("videoCount"), "fetched_at": db.iso()}
+    from .. import channels as chmod
+    studio = chmod.get(cid) or {}
+    expected = studio.get("youtube_expected_id")
+    if expected and expected != c["id"]:
+        raise AuthError(f"You signed in to “{c['snippet']['title']}”, but this studio channel is locked to "
+                        f"{studio.get('youtube_handle') or expected} (“{studio.get('youtube_title')}”). Click Connect "
+                        f"again and choose that channel in Google's window.")
+    st = c.get("status", {})
+    readiness = {"long_uploads": st.get("longUploadsStatus"), "privacy": st.get("privacyStatus"),
+                 "linked": st.get("isLinked"), "checked_at": db.iso()}
     if cid == 1:
         settings.set("youtube.channel", channel)
-    db.ex("UPDATE channels SET youtube_channel_id=?, youtube_title=?, updated_at=? WHERE id=?",
-          (channel["id"], channel["title"], db.iso(), cid))
+    db.ex("UPDATE channels SET youtube_channel_id=?, youtube_title=?, youtube_status=?, updated_at=? WHERE id=?",
+          (channel["id"], channel["title"], db.dumps(readiness), db.iso(), cid))
     return channel
 
 
@@ -189,6 +210,9 @@ def verify_destination(channel_id: int) -> dict[str, Any]:
     if not items:
         raise AuthError(f"could not read the YouTube channel for '{ch['name']}' (HTTP {r.status_code})")
     actual = items[0]["id"]
+    if ch.get("youtube_expected_id") and actual != ch["youtube_expected_id"]:
+        raise AuthError(f"authorized account is YouTube channel {actual}, but '{ch['name']}' is locked to "
+                        f"{ch.get('youtube_handle') or ch['youtube_expected_id']} — refusing to upload to the wrong channel")
     if ch.get("youtube_channel_id") and actual != ch["youtube_channel_id"]:
         raise AuthError(f"authorized account is YouTube channel {actual}, but '{ch['name']}' is linked to "
                         f"{ch['youtube_channel_id']} — refusing to upload to the wrong channel")

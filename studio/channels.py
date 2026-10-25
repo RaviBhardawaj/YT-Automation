@@ -7,6 +7,7 @@ ideas, library and YouTube authorization. Code that produces or uploads for a ch
 from __future__ import annotations
 
 import contextvars
+import re
 import json
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -22,7 +23,7 @@ WORKFLOWS = {
 STYLES = ["comedy", "drama", "horror", "storytelling", "documentary", "education", "satire", "news", "motivation",
           "kids", "thriller", "romance", "mystery", "tech", "finance"]
 LANGUAGES = ["Hindi", "Hinglish", "English", "Marathi", "Tamil", "Telugu", "Bengali", "Gujarati"]
-JSON_FIELDS = ("styles", "branding", "voice", "schedule_days", "monetization")
+JSON_FIELDS = ("styles", "branding", "voice", "schedule_days", "monetization", "youtube_status")
 
 _current: contextvars.ContextVar[int | None] = contextvars.ContextVar("current_channel", default=None)
 
@@ -67,7 +68,7 @@ def using(channel_id: int | None) -> Iterator[None]:
 FIELDS = ("name", "niche", "sub_niche", "audience", "language", "tone", "styles", "workflow", "formats", "long_minutes",
           "short_seconds", "shorts_per_episode", "instructions", "restrictions", "research_required", "branding",
           "voice", "schedule_enabled", "schedule_time", "schedule_days", "timezone", "auto_publish",
-          "publish_privacy", "status", "uploads_enabled")
+          "publish_privacy", "status", "uploads_enabled", "made_for_kids", "publish_time")
 
 
 def clean(data: dict[str, Any], partial: bool = False) -> dict[str, Any]:
@@ -87,6 +88,8 @@ def clean(data: dict[str, Any], partial: bool = False) -> dict[str, Any]:
             if v not in ("long", "short", "both"):
                 raise ValueError("formats must be long, short or both")
         elif k == "styles":
+            if isinstance(v, dict):                       # checkboxes: {"comedy": true, ...}
+                v = [s for s, on in v.items() if on]
             v = [str(s).strip().lower() for s in (v if isinstance(v, list) else str(v).split(",")) if str(s).strip()]
         elif k in ("long_minutes",):
             v = max(1.0, min(30.0, float(v)))
@@ -94,15 +97,20 @@ def clean(data: dict[str, Any], partial: bool = False) -> dict[str, Any]:
             v = max(15, min(180, int(v)))
         elif k == "shorts_per_episode":
             v = max(0, min(8, int(v)))
-        elif k in ("research_required", "schedule_enabled", "auto_publish", "uploads_enabled"):
+        elif k in ("research_required", "schedule_enabled", "auto_publish", "uploads_enabled", "made_for_kids"):
             v = 1 if v in (True, 1, "1", "true", "on", "yes") else 0
         elif k == "schedule_time":
-            import re
             if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(v)):
                 raise ValueError("schedule time must be HH:MM")
         elif k == "schedule_days":
+            if isinstance(v, dict):                       # checkboxes: {"0": true, ...}
+                v = [d for d, on in v.items() if on]
             v = sorted({int(x) for x in (v if isinstance(v, list) else str(v).split(",")) if str(x).strip() != ""
                         and 0 <= int(x) <= 6})
+        elif k == "publish_time":
+            v = str(v or "").strip() or None
+            if v and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+                raise ValueError("publish time must be HH:MM (or empty to publish right away)")
         elif k == "publish_privacy":
             if v not in ("private", "unlisted", "public"):
                 raise ValueError("privacy must be private, unlisted or public")
@@ -158,6 +166,72 @@ def ensure_default() -> None:
 
 
 # ------------------------------------------------------------------ helpers used by the pipelines
+
+HANDLE_URL = re.compile(r"(?:youtube\.com/)?(@[\w.\-]{3,100})|youtube\.com/channel/(UC[\w\-]{22})|^(UC[\w\-]{22})$")
+
+
+def lookup_youtube(text: str) -> dict[str, Any]:
+    """Public details of a YouTube channel from an @handle, a channel URL or a UC… id (YouTube Data API)."""
+    from .research import sources
+    m = HANDLE_URL.search((text or "").strip())
+    if not m:
+        raise ValueError("enter the channel's @handle (like @KidsandComedy) or its youtube.com link")
+    handle, cid = m.group(1), m.group(2) or m.group(3)
+    params = {"part": "snippet,statistics,status", **({"forHandle": handle} if handle else {"id": cid})}
+    items = sources._yt("channels", params, 1).get("items", [])
+    if not items:
+        raise ValueError(f"no YouTube channel found for {handle or cid}")
+    c = items[0]
+    sn, st = c["snippet"], c.get("statistics", {})
+    return {"id": c["id"], "title": sn.get("title", ""), "handle": sn.get("customUrl") or handle or "",
+            "created": (sn.get("publishedAt") or "")[:10], "subscribers": st.get("subscriberCount"),
+            "videos": st.get("videoCount"), "thumbnail": (sn.get("thumbnails", {}).get("default") or {}).get("url"),
+            "privacy": c.get("status", {}).get("privacyStatus")}
+
+
+def link_youtube(channel_id: int, text: str) -> dict[str, Any]:
+    """Lock a studio channel to one YouTube channel: connecting any other account is refused."""
+    info = lookup_youtube(text)
+    other = db.q1("SELECT id, name FROM channels WHERE (youtube_expected_id=? OR youtube_channel_id=?) AND id<>?",
+                  (info["id"], info["id"], channel_id))
+    if other:
+        raise ValueError(f"that YouTube channel is already linked to studio channel '{other['name']}'")
+    db.update("channels", channel_id, {"youtube_expected_id": info["id"], "youtube_handle": info["handle"],
+                                       "youtube_title": info["title"], "updated_at": db.iso()})
+    return info
+
+
+def remove(channel_id: int) -> dict[str, int]:
+    """Delete a studio channel. Its videos stay in the library (unassigned); its schedule and characters go."""
+    if db.q1("SELECT 1 FROM tasks t JOIN productions p ON p.id=t.production_id WHERE p.channel_id=? "
+             "AND t.status IN ('running')", (channel_id,)):
+        raise ValueError("a video for this channel is being made right now — wait for it or cancel it first")
+    from .youtube import oauth
+    if oauth.connected(channel_id):
+        oauth.disconnect(channel_id)
+    db.ex("UPDATE tasks SET status='cancelled', updated_at=? WHERE status IN ('pending','paused') AND production_id IN "
+          "(SELECT id FROM productions WHERE channel_id=?)", (db.iso(), channel_id))
+    kept = db.ex("UPDATE productions SET channel_id=NULL WHERE channel_id=?", (channel_id,))
+    db.ex("UPDATE topics SET channel_id=NULL, status=CASE WHEN status IN ('idea','approved') THEN 'rejected' "
+          "ELSE status END WHERE channel_id=?", (channel_id,))
+    db.ex("DELETE FROM schedules WHERE channel_id=?", (channel_id,))
+    db.ex("DELETE FROM characters WHERE channel_id=?", (channel_id,))
+    db.ex("DELETE FROM channels WHERE id=?", (channel_id,))
+    return {"videos_kept": kept}
+
+
+def next_publish_slot(ch: dict[str, Any]) -> str | None:
+    """Next occurrence of the channel's publish time (local), at least 20 minutes ahead; None = publish now."""
+    from datetime import datetime, timedelta
+    if not ch or not ch.get("publish_time"):
+        return None
+    hh, mm = (int(x) for x in ch["publish_time"].split(":"))
+    now = datetime.now().astimezone()
+    slot = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if slot <= now + timedelta(minutes=20):
+        slot += timedelta(days=1)
+    return db.iso(slot)
+
 
 def uploads_allowed(ch: dict[str, Any] | None) -> bool:
     """The channel's YouTube upload switch (off = videos are made and kept, never uploaded)."""

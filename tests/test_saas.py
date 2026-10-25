@@ -53,7 +53,7 @@ def client(token: str):
     from studio.web import app as webapp
     c = TestClient(webapp.app, base_url=BASE, follow_redirects=False)
     c.cookies.set("sid", token)
-    c.headers["X-CSRF-Token"] = webapp.CSRF
+    c.headers["X-CSRF-Token"] = webapp.csrf_for_seed(token)
     return c
 
 

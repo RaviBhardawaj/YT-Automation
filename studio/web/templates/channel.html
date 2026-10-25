@@ -18,11 +18,22 @@
 </div>
 
 <div class="tabs">
-  {% for k, l in [('overview','Create & recent'),('settings','Channel settings'),('characters','Characters (' ~ characters|length ~ ')'),('youtube','YouTube & publishing')] %}
+  {% for k, l in [('setup','Setup ' ~ (checklist|selectattr('done')|list|length) ~ '/' ~ checklist|length),('overview','Create & recent'),('settings','Channel settings'),('characters','Characters (' ~ characters|length ~ ')'),('youtube','YouTube & publishing')] %}
   <a href="/channels/{{ ch.id }}?tab={{ k }}" class="{{ 'on' if tab == k }}">{{ l }}</a>{% endfor %}
 </div>
 
-{% if tab == 'overview' %}
+{% if tab == 'setup' %}
+<div class="card">
+  <h2>Setup checklist</h2>
+  {% for s in checklist %}
+  <div class="spread" style="padding:10px 0;border-bottom:1px dashed var(--line)">
+    <div style="min-width:0">{% if s.done %}<span class="chip ok">✓ done</span>{% elif s.optional %}<span class="chip">optional</span>{% else %}<span class="chip warn">to do</span>{% endif %}
+      <b>{{ loop.index }}. {{ s.name }}</b><div class="small muted" style="margin-top:2px">{{ s.detail }}</div></div>
+    <a class="btn sm {{ '' if s.done else 'primary' }}" href="{{ s.href }}" {{ 'target=_blank rel=noopener' if s.href.startswith('http') }}>{{ 'Change' if s.done else s.action }}</a>
+  </div>{% endfor %}
+</div>
+
+{% elif tab == 'overview' %}
 <form class="card" data-form="/api/channels/{{ ch.id }}/create">
   <h2>Create a video</h2>
   <div class="muted small" style="margin-bottom:8px">Describe what you want. Your request decides the content; the channel settings fill in anything you don't say.</div>
@@ -80,6 +91,9 @@
   {% endif %}
   <div style="margin-top:12px"><button class="primary" type="submit">Save channel</button></div>
 </form>
+<div class="card" style="margin-top:16px"><h2>Remove this channel</h2>
+  <div class="small muted">Disconnects YouTube and deletes this studio channel's schedule, characters and open ideas. Its videos stay in your library. Nothing is deleted on YouTube.</div>
+  <button class="danger" style="margin-top:8px" data-post="/api/channels/{{ ch.id }}/delete" data-confirm="Remove the studio channel '{{ ch.name }}'?{{ ' Its daily NIFTY automation stops.' if ch.workflow == 'nifty_daily' }} Videos are kept; YouTube is not touched.">Remove channel</button></div>
 
 {% elif tab == 'characters' %}
 <div class="grid g3">
@@ -119,6 +133,7 @@
 <div class="grid g2">
   <div class="card">
     <h2>YouTube account</h2>
+    {% if ch.youtube_expected_id %}<div class="small" style="margin-bottom:8px">Locked to <b>{{ ch.youtube_title }}</b> {{ ch.youtube_handle or '' }} <span class="mono muted">{{ ch.youtube_expected_id }}</span> — connecting any other YouTube channel is refused.</div>{% endif %}
     {% if connected %}
     <div class="note ok">Connected to <b>{{ ch.youtube_title or 'a YouTube channel' }}</b>{% if ch.youtube_channel_id %} <span class="mono">({{ ch.youtube_channel_id }})</span>{% endif %}. Every upload first checks that the authorized account is still this channel.</div>
     <div class="row"><button data-post="/api/channels/{{ ch.id }}/youtube/verify" data-reload="no">Verify destination</button>
@@ -127,6 +142,9 @@
     {% elif not oauth_ready %}
     <div class="note warn">The platform admin must add a Google OAuth client first (Settings → YouTube). All channels share it; each channel signs in separately.</div>
     {% else %}
+    {% if not ch.youtube_expected_id %}
+    <div class="row" id="linkyt" style="margin-bottom:10px"><input name="youtube" placeholder="@YourChannel or youtube.com/@YourChannel" style="flex:1;min-width:220px">
+      <button data-post="/api/channels/{{ ch.id }}/youtube/link" data-collect="#linkyt">Link this channel</button></div>{% endif %}
     <div class="muted small" style="margin-bottom:8px">Link a YouTube channel to <b>{{ ch.name }}</b> in three steps. YouTube doesn't let any app create channels, so step 1 happens on youtube.com — it takes a minute and costs nothing.</div>
     <ol class="small" style="line-height:1.7">
       <li><b>Create the channel on YouTube</b> (skip if it already exists): open <a href="https://www.youtube.com/channel_switcher" target="_blank" rel="noopener">youtube.com/channel_switcher</a> → <i>Create a channel</i> → give it a name. Each extra channel is a separate “brand account” under your Google login, so one Google account can own many channels.</li>
@@ -139,11 +157,29 @@
   <form class="card" data-form="/api/channels/{{ ch.id }}" data-done="Publishing settings saved">
     <h2>Uploading &amp; publishing</h2>
     <label class="small"><input type="checkbox" name="uploads_enabled" {{ 'checked' if ch.uploads_enabled }}> <b>Uploads to YouTube enabled</b> — when off, nothing is uploaded to this channel (videos are still made and kept for download)</label>
+    <label class="small" style="display:block;margin-top:6px"><input type="checkbox" name="made_for_kids" {{ 'checked' if ch.made_for_kids }}> <b>Made for kids</b> — every upload is marked “made for kids”. Required by YouTube and US law (COPPA) for content aimed at children; YouTube then turns off comments and personalised ads (lower ad revenue) and some features.</label>
     <label class="small" style="display:block;margin-top:6px"><input type="checkbox" name="auto_publish" {{ 'checked' if ch.auto_publish }}> Publish automatically when a video passes its checks</label>
-    <label class="f" style="margin-top:8px"><span>Privacy when publishing</span><select name="publish_privacy">{% for v in ['public','unlisted','private'] %}<option {{ 'selected' if ch.publish_privacy == v }}>{{ v }}</option>{% endfor %}</select></label>
+    <div class="grid g2" style="margin-top:8px">
+      <label class="f"><span>Privacy when publishing</span><select name="publish_privacy">{% for v in ['public','unlisted','private'] %}<option {{ 'selected' if ch.publish_privacy == v }}>{{ v }}</option>{% endfor %}</select></label>
+      <label class="f"><span>Go public at (empty = right away)</span><input name="publish_time" value="{{ ch.publish_time or '' }}" placeholder="18:00" style="width:110px"></label>
+    </div>
     <div class="muted small">Long episodes upload first; their Shorts wait for the episode's video ID so they can link back to it.</div>
+    {% set ys = ch.youtube_status or {} %}{% if ys.checked_at %}
+    <div class="small" style="margin-top:8px"><b>Upload readiness</b> (checked {{ ys.checked_at|dt }}):
+      {% if ys.long_uploads == 'allowed' %}<span class="chip ok">videos over 15 min allowed</span>
+      {% else %}<span class="chip warn">videos up to 15 min</span> — <a href="https://www.youtube.com/verify" target="_blank" rel="noopener">verify the channel by phone</a> to upload longer videos and use custom thumbnails{% endif %}</div>{% endif %}
     <button class="primary" type="submit" style="margin-top:8px">Save</button>
   </form>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="spread"><h2>Channel art</h2><button class="sm" data-post="/api/channels/{{ ch.id }}/branding">{{ 'Make new art' if art else 'Create channel art' }}</button></div>
+  <div class="small muted">A banner and profile picture drawn from this channel's own characters. YouTube doesn't let apps change them, so download them and upload in
+    <a href="https://studio.youtube.com/channel/{{ ch.youtube_channel_id or ch.youtube_expected_id or '' }}/editing/images" target="_blank" rel="noopener">YouTube Studio → Customization → Branding</a>.</div>
+  {% if art %}<div class="row" style="margin-top:10px;align-items:flex-start">
+    {% if art.avatar %}<div><img src="{{ art.avatar }}" alt="profile picture" style="width:140px;height:140px;border-radius:50%;object-fit:cover"><div class="small"><a href="{{ art.avatar }}" download>Download profile picture (800×800)</a></div></div>{% endif %}
+    {% if art.banner %}<div style="flex:1;min-width:280px"><img src="{{ art.banner }}" alt="banner" style="width:100%;border-radius:8px"><div class="small"><a href="{{ art.banner }}" download>Download banner (2560×1440)</a> · title kept inside the area phones show</div></div>{% endif %}
+  </div>{% endif %}
 </div>
 
 <div class="card" style="margin-top:16px">

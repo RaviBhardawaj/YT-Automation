@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import logging
 import mimetypes
+import os
 import re
 import secrets
 from contextlib import asynccontextmanager
@@ -26,9 +27,29 @@ from ..youtube import analytics, oauth
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
 MODEL_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,60}(:[A-Za-z0-9._-]{1,40})?")
-CSRF = secrets.token_urlsafe(32)
+CSRF_SECRET = secrets.token_bytes(32)
 ALLOWED_HOSTS = {f"127.0.0.1:{config.PORT}", f"localhost:{config.PORT}"}
 ALLOWED_ORIGINS = {f"http://{h}" for h in ALLOWED_HOSTS}
+if config.PUBLIC_URL:                                   # online: the public address is also accepted
+    from urllib.parse import urlsplit as _us
+    ALLOWED_HOSTS.add(_us(config.PUBLIC_URL).netloc)
+    ALLOWED_ORIGINS.add(f"{_us(config.PUBLIC_URL).scheme}://{_us(config.PUBLIC_URL).netloc}")
+
+
+def csrf_token(request: Request) -> str:
+    """Per-browser token: derived from the session (or a pre-login cookie), never shared between users."""
+    seed = request.cookies.get("sid") or request.cookies.get("pre") or getattr(request.state, "pre", "")
+    return csrf_for_seed(seed)
+
+
+def csrf_for_seed(seed: str) -> str:
+    import hashlib
+    import hmac
+    return hmac.new(CSRF_SECRET, seed.encode(), hashlib.sha256).hexdigest()
+
+
+def set_cookie(resp, name: str, value: str, max_age: int) -> None:
+    resp.set_cookie(name, value, httponly=True, samesite="lax", max_age=max_age, secure=config.SECURE_COOKIES)
 
 
 @asynccontextmanager
@@ -64,6 +85,28 @@ OWNED_PATHS = [(re.compile(r"^/(?:api/)?productions/(\d+)"), "productions"),
                (re.compile(r"^/media/channels/(\d+)/"), "channels")]
 
 
+_attempts: dict[str, list[float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    # behind Cloudflare / a reverse proxy the real visitor address arrives in a header
+    if os.environ.get("STUDIO_TRUST_PROXY") == "1":
+        return (request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0]
+                or (request.client.host if request.client else "?")).strip()
+    return request.client.host if request.client else "?"
+
+
+def _rate_ok(request: Request, path: str) -> bool:
+    """Brute-force guard: 10 sign-in or 5 sign-up attempts per address per 15 minutes."""
+    import time
+    key, limit = f"{path}:{_client_ip(request)}", (10 if path.endswith("login") else 5)
+    now = time.time()
+    hits = [t for t in _attempts.get(key, []) if now - t < 900]
+    hits.append(now)
+    _attempts[key] = hits
+    return len(hits) <= limit
+
+
 def _deny(request: Request, code: int, msg: str):
     if request.url.path.startswith("/api/"):
         return JSONResponse({"ok": False, "error": msg}, status_code=code)
@@ -96,18 +139,30 @@ async def guard(request: Request, call_next):
                 continue                                   # system tasks (research, schedules): platform admin
             if m and not auth.owns(ws_id, table, int(m.group(1))):
                 return _deny(request, 404, "Not found")
+        if path.startswith("/media/samples/") and not sess["user"]["is_admin"]:
+            return _deny(request, 404, "Not found")
         if path.startswith("/media/workspaces/") and not path.startswith(f"/media/workspaces/{ws_id:05d}/"):
             return _deny(request, 404, "Not found")
         if request.method not in ("GET", "HEAD", "OPTIONS") and sess["role"] == "viewer":
             return _deny(request, 403, "Viewers can't change anything in this workspace")
         plans._current.set(ws_id)
+    new_pre = None
+    if not request.cookies.get("sid") and not request.cookies.get("pre"):
+        new_pre = request.state.pre = secrets.token_urlsafe(24)
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
         if origin and origin not in ALLOWED_ORIGINS:
             return PlainTextResponse("Forbidden origin", status_code=403)
-        if not secrets.compare_digest(request.headers.get("x-csrf-token", ""), CSRF):
+        if not secrets.compare_digest(request.headers.get("x-csrf-token", ""), csrf_token(request)):
             return PlainTextResponse("Missing or invalid CSRF token — reload the page", status_code=403)
+        if path in ("/api/auth/login", "/api/auth/signup") and not _rate_ok(request, path):
+            return JSONResponse({"ok": False, "error": "Too many attempts — wait 15 minutes and try again."},
+                                status_code=429)
     response = await call_next(request)
+    if new_pre:
+        set_cookie(response, "pre", new_pre, 86400)
+    if config.SECURE_COOKIES:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
@@ -161,6 +216,12 @@ def is_admin(request: Request) -> bool:
     return bool(request.state.sess and request.state.sess["user"]["is_admin"])
 
 
+def _my_usage(ws: int) -> dict[str, Any]:
+    lim, use = plans.limits(ws), plans.used(ws)
+    return {"videos": use["videos"], "limit": lim["videos_per_month"],
+            "pct": min(100, int(use["videos"] / lim["videos_per_month"] * 100)) if lim["videos_per_month"] else 0}
+
+
 def common(request: Request | None = None) -> dict[str, Any]:
     spend = router.month_spend()
     budget = float(settings.get("ai.monthly_budget_usd"))
@@ -170,7 +231,7 @@ def common(request: Request | None = None) -> dict[str, Any]:
         "SELECT t.status, COUNT(*) AS n FROM tasks t LEFT JOIN productions p ON p.id=t.production_id "
         "WHERE p.workspace_id=? OR (? AND t.production_id IS NULL) GROUP BY t.status",
         (ws, int(bool(sess and sess["user"]["is_admin"]))))}
-    return {"csrf": CSRF, "app_name": config.APP_NAME, "spend": spend, "budget": budget,
+    return {"csrf": csrf_token(request) if request else "", "app_name": config.APP_NAME, "spend": spend, "budget": budget,
             "spend_pct": min(100, int(spend / budget * 100)) if budget else 0,
             "brand": settings.get("brand"), "interview_done": profile.complete(), "task_counts": counts,
             "awaiting": db.q1("SELECT COUNT(*) AS n FROM productions WHERE status='awaiting_approval' AND workspace_id=?",
@@ -178,7 +239,8 @@ def common(request: Request | None = None) -> dict[str, Any]:
             "media_url": media_url, "loads": db.loads, "me": sess["user"] if sess else None,
             "workspace": sess["workspace"] if sess else None, "role": sess["role"] if sess else None,
             "is_admin": bool(sess and sess["user"]["is_admin"]),
-            "sarvam": tts.sarvam_status() if settings.has_secret("sarvam_api_key") else {"ok": True}}
+            "sarvam": tts.sarvam_status() if settings.has_secret("sarvam_api_key") else {"ok": True},
+            "my_usage": _my_usage(ws) if sess and not sess["user"]["is_admin"] else None}
 
 
 def page(request: Request, name: str, **ctx: Any) -> HTMLResponse:
@@ -209,7 +271,7 @@ def _login_response(token: str, next_url: str) -> RedirectResponse:
     resp = RedirectResponse(next_url if next_url.startswith("/") and not next_url.startswith("//") else "/",
                             status_code=303)
     # Lax (not Strict) so the session survives the redirect back from Google's YouTube authorization
-    resp.set_cookie("sid", token, httponly=True, samesite="lax", max_age=auth.SESSION_DAYS * 86400)
+    set_cookie(resp, "sid", token, auth.SESSION_DAYS * 86400)
     return resp
 
 
@@ -217,7 +279,7 @@ def _login_response(token: str, next_url: str) -> RedirectResponse:
 def login_page(request: Request, next: str = "/", error: str = ""):
     if not auth.has_users():
         return RedirectResponse("/signup", status_code=303)
-    return templates.TemplateResponse(request, "login.html", {"csrf": CSRF, "app_name": config.APP_NAME,
+    return templates.TemplateResponse(request, "login.html", {"csrf": csrf_token(request), "app_name": config.APP_NAME,
                                       "static_v": templates.env.globals["static_v"], "next": next, "error": error,
                                       "mode": "login", "allow_signup": settings.get("auth.allow_signup")})
 
@@ -227,7 +289,7 @@ def signup_page(request: Request, error: str = ""):
     first = not auth.has_users()
     if not first and not settings.get("auth.allow_signup"):
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "login.html", {"csrf": CSRF, "app_name": config.APP_NAME,
+    return templates.TemplateResponse(request, "login.html", {"csrf": csrf_token(request), "app_name": config.APP_NAME,
                                       "static_v": templates.env.globals["static_v"], "next": "/", "error": error,
                                       "mode": "signup", "first": first, "allow_signup": True})
 
@@ -245,7 +307,7 @@ async def api_auth(request: Request, action: str):
         if action == "login":
             token, _ = auth.login(str(data.get("email", "")), str(data.get("password", "")))
             resp = JSONResponse({"ok": True, "next": str(data.get("next") or "/")})
-            resp.set_cookie("sid", token, httponly=True, samesite="lax", max_age=auth.SESSION_DAYS * 86400)
+            set_cookie(resp, "sid", token, auth.SESSION_DAYS * 86400)
             return resp
     except auth.AuthError as e:
         return bad(str(e))
@@ -261,6 +323,8 @@ async def api_auth(request: Request, action: str):
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
+    if not db.q1("SELECT 1 FROM channels WHERE workspace_id=?", (ws_id(request),)) and not is_admin(request):
+        return RedirectResponse("/welcome", status_code=303)
     from .. import channels as chmod
     cid = _channel_arg(request, request.query_params.get("channel"))
     ws = ws_id(request)
@@ -547,10 +611,10 @@ def oauth_callback(request: Request, code: str = "", state: str = "", error: str
     try:
         ch = oauth.handle_callback(code, state)
     except oauth.AuthError as e:
-        return page(request, "message.html", title="YouTube not connected", message=str(e))
+        return page(request, "message.html", title="YouTube not connected", message=str(e), link="/channels")
     return page(request, "message.html", title="YouTube connected",
-                message=f"Connected to channel “{ch.get('title')}”. You can close this tab or go back to Settings.",
-                link="/settings?tab=youtube")
+                message=f"Connected to channel “{ch.get('title')}”. Uploads for this studio channel now go there.",
+                link=f"/channels/{ch.get('studio_channel_id')}?tab=youtube")
 
 
 # ------------------------------------------------------------------ compliance (finance content)
@@ -1318,7 +1382,8 @@ def _channel_arg(request: Request, channel: str | int | None) -> int | None:
 
 
 def _with_cookie(resp: HTMLResponse, cid: int | None) -> HTMLResponse:
-    resp.set_cookie("channel", str(cid or 0), samesite="strict", httponly=True, max_age=365 * 86400)
+    resp.set_cookie("channel", str(cid or 0), samesite="strict", httponly=True, max_age=365 * 86400,
+                    secure=config.SECURE_COOKIES)
     return resp
 
 
@@ -1329,11 +1394,67 @@ def channels_page(request: Request):
     for c in rows:
         c["counts"] = channels.counts(c["id"])
         c["connected"] = oauth.connected(c["id"])
+        steps = [s for s in channel_checklist(c) if not s.get("optional")]
+        c["setup_done"], c["setup_total"] = sum(s["done"] for s in steps), len(steps)
     return page(request, "channels.html", channels=rows, workflows=channels.WORKFLOWS, styles=channels.STYLES,
                 languages=channels.LANGUAGES)
 
 
-@app.get("/channels/{cid}", response_class=HTMLResponse)
+def _channel_art(cid: int) -> dict[str, str]:
+    folder = config.DATA_DIR / "channels" / f"{cid:04d}" / "branding"
+    return {k: media_url(str(folder / f)) + f"?v={int((folder / f).stat().st_mtime)}"
+            for k, f in (("banner", "banner_2560x1440.jpg"), ("avatar", "profile_800x800.png")) if (folder / f).exists()}
+
+
+def channel_checklist(ch: dict[str, Any]) -> list[dict[str, Any]]:
+    """The setup steps of one channel, each with whether it's done and where to do it."""
+    from ..creative import characters
+    cid = ch["id"]
+    connected = oauth.connected(cid)
+    sched_on = bool(ch.get("schedule_enabled")) if ch["workflow"] != "nifty_daily" else bool(db.q1(
+        "SELECT 1 FROM schedules WHERE task_type='nifty_daily_episode' AND enabled=1 AND channel_id=?", (cid,)))
+    made = db.q1("SELECT COUNT(*) AS n FROM productions WHERE channel_id=?", (cid,))["n"]
+    published = db.q1("SELECT COUNT(*) AS n FROM productions WHERE channel_id=? AND youtube_video_id IS NOT NULL",
+                      (cid,))["n"]
+    ys = ch.get("youtube_status") or {}
+    steps = [
+        {"name": "Link your YouTube channel", "done": bool(ch.get("youtube_expected_id") or ch.get("youtube_channel_id")),
+         "detail": "Paste the channel's @handle or link so uploads can only ever go to that channel.",
+         "href": f"/channels/{cid}?tab=youtube", "action": "Link channel"},
+        {"name": "Connect YouTube (one Google sign-in)", "done": connected,
+         "detail": "Google requires the owner to approve uploads once: click Connect and choose this channel. "
+                   "After that, uploads are automatic.", "href": f"/channels/{cid}?tab=youtube", "action": "Connect"},
+        {"name": "Niche, style and language", "done": bool(ch.get("niche") and ch.get("styles") and ch.get("language")),
+         "detail": f"{ch.get('niche') or '—'} · {', '.join(ch.get('styles') or []) or 'no styles'} · {ch.get('language')}",
+         "href": f"/channels/{cid}?tab=settings", "action": "Edit"},
+        {"name": "Audience" + (" (made for kids)" if ch.get("made_for_kids") else ""), "done": bool(ch.get("audience")),
+         "detail": ch.get("audience") or "Who watches it — used to pitch every script.",
+         "href": f"/channels/{cid}?tab=settings", "action": "Edit"},
+        {"name": "Daily video schedule", "done": sched_on,
+         "detail": (f"New video at {ch.get('schedule_time')} on the chosen days" if sched_on and ch["workflow"] != "nifty_daily"
+                    else "NIFTY episode at 3:40 PM on trading days" if sched_on else "Off — videos are only made when you ask."),
+         "href": "/schedule" if ch["workflow"] == "nifty_daily" else f"/channels/{cid}?tab=settings", "action": "Set schedule"},
+        {"name": "Publishing", "done": bool(ch.get("auto_publish")) or not ch.get("uploads_enabled"),
+         "detail": ("Uploads switched off" if not ch.get("uploads_enabled") else
+                    f"Automatic, {ch.get('publish_privacy')}" + (f", goes public at {ch['publish_time']}" if ch.get("publish_time") else "")
+                    if ch.get("auto_publish") else "You approve each video before it's uploaded."),
+         "href": f"/channels/{cid}?tab=youtube", "action": "Choose"},
+    ]
+    if ch["workflow"] == "animated_story":
+        n = len(characters.for_channel(cid, include_draft=False))
+        steps.append({"name": "Characters", "done": n > 0, "detail": f"{n} recurring character(s)",
+                      "href": f"/channels/{cid}?tab=characters", "action": "Characters"})
+    steps += [
+        {"name": "First video", "done": made > 0, "detail": f"{made} made, {published} on YouTube",
+         "href": f"/channels/{cid}", "action": "Create video"},
+        {"name": "Phone-verify the YouTube channel (optional)", "done": ys.get("long_uploads") == "allowed",
+         "detail": "Needed for videos over 15 minutes and custom thumbnails.", "href": "https://www.youtube.com/verify",
+         "action": "Verify", "optional": True},
+    ]
+    return steps
+
+
+@app.get("/channels/{cid:int}", response_class=HTMLResponse)
 def channel_page(request: Request, cid: int, tab: str = "overview"):
     from .. import channels
     from ..creative import characters
@@ -1349,7 +1470,7 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
                 workflows=channels.WORKFLOWS, styles=channels.STYLES, languages=channels.LANGUAGES,
                 options=characters.OPTIONS, voices=sorted({v for vs in characters.VOICES.values() for v in vs}),
                 ideas_n=db.q1("SELECT COUNT(*) AS n FROM topics WHERE channel_id=? AND status IN ('idea','approved')",
-                              (cid,))["n"])
+                              (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid))
     return _with_cookie(resp, cid)
 
 
@@ -1357,13 +1478,17 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
 async def api_channel_create(request: Request):
     from .. import channels, scheduler
     try:
+        data = await body(request)
         plans.check(ws_id(request), "channel")
-        cid = channels.create(await body(request), ws_id(request))
+        info = channels.lookup_youtube(data["youtube"]) if str(data.get("youtube") or "").strip() else None
+        cid = channels.create(data, ws_id(request))
+        if info:
+            channels.link_youtube(cid, info["id"])
     except (ValueError, TypeError, plans.LimitExceeded) as e:
         return bad(str(e))
     scheduler.sync_channels()
     logs.event("info", "channels", f"Channel #{cid} created")
-    return ok(next=f"/channels/{cid}")
+    return ok(next=f"/channels/{cid}?tab=setup")
 
 
 @app.post("/api/channels/{cid}")
@@ -1379,17 +1504,46 @@ async def api_channel_update(request: Request, cid: int):
     return ok()
 
 
+@app.post("/api/channels/lookup")
+async def api_channel_lookup(request: Request):
+    from .. import channels
+    try:
+        info = channels.lookup_youtube(str((await body(request)).get("youtube") or ""))
+    except Exception as e:
+        return bad(str(e))
+    return ok(channel=info, detail=f"Found “{info['title']}” ({info['handle']}) · {info['subscribers']} subscribers · "
+                                   f"{info['videos']} videos")
+
+
+@app.post("/api/channels/{cid}/delete")
+def api_channel_delete(request: Request, cid: int):
+    from .. import channels, scheduler
+    try:
+        res = channels.remove(cid)
+    except ValueError as e:
+        return bad(str(e))
+    scheduler.sync_channels()
+    return ok(detail=f"Channel removed — {res['videos_kept']} video(s) kept in your library", next="/channels")
+
+
 @app.post("/api/channels/{cid}/youtube/{action}")
-def api_channel_youtube(cid: int, action: str):
+async def api_channel_youtube(request: Request, cid: int, action: str):
     from .. import channels
     if not channels.get(cid):
         return bad("not found", 404)
+    if action == "link":
+        try:
+            info = channels.link_youtube(cid, str((await body(request)).get("youtube") or ""))
+        except Exception as e:
+            return bad(str(e))
+        return ok(detail=f"Locked to “{info['title']}” ({info['handle']}). Now click Connect and pick that channel.")
     try:
         if action == "connect":
             return ok(url=oauth.auth_url(cid))
         if action == "disconnect":
             oauth.disconnect(cid)
-            db.ex("UPDATE channels SET youtube_channel_id=NULL, youtube_title=NULL WHERE id=?", (cid,))
+            db.ex("UPDATE channels SET youtube_channel_id=NULL, youtube_status='{}', youtube_title=CASE WHEN "
+                  "youtube_expected_id IS NULL THEN NULL ELSE youtube_title END WHERE id=?", (cid,))
             return ok()
         if action == "verify":
             info = oauth.verify_destination(cid)
@@ -1425,6 +1579,13 @@ def api_channel_growth(cid: int):
         return bad(f"Couldn't read this channel's numbers: {e}")
     return ok(detail=f"{m['subscribers']} subscribers · {m['watch_hours_12m']} watch hours · "
                      f"{m['shorts_views_90d']:,} Shorts views (90 days)")
+
+
+@app.post("/api/channels/{cid}/branding")
+def api_channel_branding(cid: int):
+    from ..creative import branding
+    branding.make_all(cid)
+    return ok(detail="Channel art created")
 
 
 @app.post("/api/channels/{cid}/plan")
@@ -1766,6 +1927,18 @@ async def api_admin_workspace(request: Request, wid: int):
     return ok()
 
 
+@app.post("/api/admin/users/{uid}/reset-password")
+def api_admin_reset_password(request: Request, uid: int):
+    """No email system yet: the admin gives the creator a one-time password, shown here once."""
+    if not db.q1("SELECT id FROM users WHERE id=?", (uid,)):
+        return bad("not found", 404)
+    temp = secrets.token_urlsafe(9)
+    db.ex("UPDATE users SET password_hash=? WHERE id=?", (auth._hash_pw(temp), uid))
+    db.ex("DELETE FROM sessions WHERE user_id=?", (uid,))
+    logs.event("info", "admin", f"Password reset for user #{uid}")
+    return ok(detail="Temporary password created", show=temp)
+
+
 @app.post("/api/admin/users/{uid}")
 async def api_admin_user(request: Request, uid: int):
     data = await body(request)
@@ -1811,9 +1984,9 @@ def tools_page(request: Request):
         ("Quality checks", True, "ffprobe validation of every output"),
         ("Publishing to YouTube", yt, "official YouTube Data API (OAuth per channel)" if yt else "add a Google OAuth client in Settings"),
         ("AI image generation", settings.has_secret("gemini_api_key"), "Gemini images (optional)"),
-        ("AI video generation (text-to-video)", vg["enabled"], f"Google Gemini Omni Flash with your Gemini key — "
-         + ("on" if vg["enabled"] else "off until enabled below") + f"; ${videogen.month_spent():.2f} of "
-         f"${vg['monthly_cap_usd']:.2f} monthly cap used"),
+        ("AI video generation (text-to-video)", vg["enabled"], "Google Gemini Omni Flash — "
+         + ("on" if vg["enabled"] else "off until the platform admin enables it")
+         + (f"; ${videogen.month_spent():.2f} of ${vg['monthly_cap_usd']:.2f} monthly cap used" if is_admin(request) else "")),
         ("Voice replacement / dubbing of uploads", False, "not available yet"),
     ]
     return page(request, "tools.html", rows=rows, providers=prov, vg=vg, vg_est=videogen.estimate(),
@@ -1907,3 +2080,33 @@ async def api_videogen_admin(request: Request, action: str):
         settings.set("videogen.max_clips_per_video", max(1, min(10, int(data.get("max_clips_per_video") or 3))))
         return ok(detail="AI video " + ("enabled" if enable else "switched off"))
     return bad("unknown action", 404)
+
+
+# ------------------------------------------------------------------ new-user setup
+
+@app.get("/welcome", response_class=HTMLResponse)
+@app.get("/channels/new", response_class=HTMLResponse)
+def channel_setup_page(request: Request):
+    from .. import channels as chmod
+    return page(request, "channel_setup.html", languages=chmod.LANGUAGES, styles=chmod.STYLES,
+                welcome=request.url.path == "/welcome")
+
+
+@app.post("/api/welcome")
+async def api_welcome(request: Request):
+    from .. import channels as chmod, scheduler
+    data = await body(request)
+    ws = ws_id(request)
+    if data.get("workflow") not in ("auto", "animated_story", "factual"):
+        return bad("pick what kind of videos")
+    try:
+        plans.check(ws, "channel")
+        info = chmod.lookup_youtube(data["youtube"]) if str(data.get("youtube") or "").strip() else None
+        cid = chmod.create({k: data.get(k) for k in ("name", "niche", "audience", "language", "workflow", "formats",
+                                                       "made_for_kids")} | {"auto_publish": False}, ws)
+        if info:
+            chmod.link_youtube(cid, info["id"])
+    except (ValueError, TypeError, plans.LimitExceeded) as e:
+        return bad(str(e))
+    scheduler.sync_channels()
+    return ok(next=f"/channels/{cid}?tab=youtube")

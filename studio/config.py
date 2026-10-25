@@ -34,9 +34,13 @@ elif sys.platform == "win32":
 else:
     SHORT_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "ytstudio"
 
-HOST = "127.0.0.1"
+HOST = os.environ.get("STUDIO_HOST", "127.0.0.1")       # 0.0.0.0 only behind a reverse proxy / tunnel
 PORT = int(os.environ.get("STUDIO_PORT", "8765"))
-BASE_URL = f"http://{HOST}:{PORT}"
+# The address people use in their browser when the studio is online (e.g. https://studio.example.com).
+# Empty = this computer only. YouTube sign-in redirects there, and cookies become HTTPS-only.
+PUBLIC_URL = os.environ.get("STUDIO_PUBLIC_URL", "").rstrip("/")
+BASE_URL = PUBLIC_URL or f"http://127.0.0.1:{PORT}"
+SECURE_COOKIES = BASE_URL.startswith("https://")
 
 KEYRING_SERVICE = "yt-automation-studio"
 USER_AGENT = f"YTAutomationStudio/{APP_VERSION} (personal local research tool; honours robots.txt)"

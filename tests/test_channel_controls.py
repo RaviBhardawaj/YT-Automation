@@ -121,13 +121,14 @@ class StorageTests(unittest.TestCase):
         ws_a = auth.session(tok_a)["workspace"]["id"]
         pid = prod(workspace_id=ws_a)
         c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False)
-        c.headers["X-CSRF-Token"] = webapp.CSRF
         c.cookies.set("sid", tok_b)
+        c.headers["X-CSRF-Token"] = webapp.csrf_for_seed(tok_b)
         r = c.post("/api/storage/delete", json={"ids": [pid]})
         self.assertFalse(r.json()["ok"])
         self.assertEqual(c.post(f"/api/productions/{pid}/delete").status_code, 404)
         self.assertIsNotNone(db.q1("SELECT 1 FROM productions WHERE id=?", (pid,)))
         c.cookies.set("sid", tok_a)
+        c.headers["X-CSRF-Token"] = webapp.csrf_for_seed(tok_a)
         self.assertTrue(c.post(f"/api/productions/{pid}/delete").json()["ok"])
         self.assertIsNone(db.q1("SELECT 1 FROM productions WHERE id=?", (pid,)))
         self.assertEqual(c.get("/storage").status_code, 200)
@@ -135,3 +136,120 @@ class StorageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChannelManagementTests(unittest.TestCase):
+    def test_locked_channel_refuses_other_account_and_keeps_old_login(self):
+        from unittest import mock
+        from studio import settings
+        from studio.youtube import oauth
+        cid = channels.create({"name": "Kids lock"}, 1)
+        db.update("channels", cid, {"youtube_expected_id": "UCkids", "youtube_handle": "@kids",
+                                    "youtube_title": "Kids and Comedy"})
+        other = mock.Mock(status_code=200)
+        other.json.return_value = {"items": [{"id": "UCwrong", "snippet": {"title": "Wrong One"}, "statistics": {},
+                                              "status": {}}]}
+        with mock.patch.object(oauth, "request", return_value=other):
+            with self.assertRaises(oauth.AuthError) as e:
+                oauth.fetch_channel(cid)
+        self.assertIn("locked", str(e.exception))
+        with mock.patch.object(oauth, "connected", return_value=True), \
+                mock.patch.object(oauth, "request", return_value=other):
+            with self.assertRaises(oauth.AuthError):
+                oauth.verify_destination(cid)
+        right = mock.Mock(status_code=200)
+        right.json.return_value = {"items": [{"id": "UCkids", "snippet": {"title": "Kids and Comedy"}, "statistics": {},
+                                              "status": {"longUploadsStatus": "eligible"}}]}
+        with mock.patch.object(oauth, "request", return_value=right):
+            oauth.fetch_channel(cid)
+        ch = channels.get(cid)
+        self.assertEqual((ch["youtube_channel_id"], ch["youtube_status"]["long_uploads"]), ("UCkids", "eligible"))
+        self.assertIsNone(settings.secret(channels.refresh_token_secret(cid)))
+
+    def test_made_for_kids_is_per_channel(self):
+        from studio.youtube import upload
+        kids = channels.create({"name": "Kids flag", "made_for_kids": True}, 1)
+        grown = channels.create({"name": "Grown-ups"}, 1)
+        self.assertTrue(upload._made_for_kids({"channel_id": kids}))
+        self.assertFalse(upload._made_for_kids({"channel_id": grown}))
+
+    def test_one_youtube_channel_per_studio_channel(self):
+        from unittest import mock
+        a = channels.create({"name": "Link A"}, 1)
+        b = channels.create({"name": "Link B"}, 1)
+        info = {"id": "UCsame", "title": "Same", "handle": "@same", "created": "", "subscribers": "0", "videos": "0",
+                "thumbnail": None, "privacy": "public"}
+        with mock.patch.object(channels, "lookup_youtube", return_value=info):
+            channels.link_youtube(a, "@same")
+            with self.assertRaises(ValueError):
+                channels.link_youtube(b, "@same")
+
+    def test_handle_parsing(self):
+        for text in ("@KidsandComedy-l1s", "https://www.youtube.com/@KidsandComedy-l1s",
+                     "youtube.com/channel/UCbQc3MzunNeYBLYLppl6wkA", "UCbQc3MzunNeYBLYLppl6wkA"):
+            self.assertTrue(channels.HANDLE_URL.search(text), text)
+        with self.assertRaises(ValueError):
+            channels.lookup_youtube("not a channel")
+
+    def test_remove_keeps_videos(self):
+        cid = channels.create({"name": "To remove"}, 1)
+        pid = prod(channel_id=cid)
+        res = channels.remove(cid)
+        self.assertEqual(res["videos_kept"], 1)
+        self.assertIsNone(channels.get(cid))
+        self.assertIsNone(db.q1("SELECT channel_id FROM productions WHERE id=?", (pid,))["channel_id"])
+
+
+class SetupAndPublishTimeTests(unittest.TestCase):
+    def test_auto_publish_is_scheduled_at_channel_time(self):
+        cid = channels.create({"name": "Evening", "publish_time": "18:00"}, 1)
+        pid = prod(channel_id=cid)
+        pipeline.approve(pid, privacy="public", publish_at=None, by="auto (channel auto-publish)")
+        row = db.q1("SELECT status, privacy, publish_at FROM productions WHERE id=?", (pid,))
+        self.assertEqual((row["status"], row["privacy"]), ("approved", "scheduled"))
+        from datetime import datetime
+        local = db.parse_iso(row["publish_at"]).astimezone()
+        self.assertEqual((local.hour, local.minute), (18, 0))
+        self.assertGreater(local, datetime.now().astimezone())
+
+    def test_publish_time_validated(self):
+        with self.assertRaises(ValueError):
+            channels.create({"name": "Bad time", "publish_time": "25:99"}, 1)
+
+    def test_wizard_checkbox_payloads(self):
+        cid = channels.create({"name": "Wizard", "styles": {"kids": True, "comedy": True, "horror": False},
+                               "schedule_days": {"0": True, "3": True, "6": False}}, 1)
+        ch = channels.get(cid)
+        self.assertEqual((sorted(ch["styles"]), ch["schedule_days"]), (["comedy", "kids"], [0, 3]))
+
+    def test_checklist_and_pages(self):
+        from fastapi.testclient import TestClient
+        from studio.web import app as webapp
+        cid = channels.create({"name": "Checklist", "niche": "kids", "styles": ["kids"], "language": "Hindi"}, 1)
+        steps = {s["name"]: s["done"] for s in webapp.channel_checklist(channels.get(cid))}
+        self.assertTrue(steps["Niche, style and language"])
+        self.assertFalse(steps["Connect YouTube (one Google sign-in)"])
+        if not db.q1("SELECT id FROM users WHERE email='setup@test.local'"):
+            auth.register("setup@test.local", "a long enough password")
+        tok, _ = auth.login("setup@test.local", "a long enough password")
+        c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False)
+        c.cookies.set("sid", tok)
+        c.headers["X-CSRF-Token"] = webapp.csrf_for_seed(tok)
+        for path in ("/channels/new", "/welcome"):
+            self.assertEqual(c.get(path).status_code, 200, path)
+        r = c.post("/api/channels", json={"name": "From wizard", "niche": "cooking", "workflow": "factual",
+                                           "styles": {"education": True}, "publish_time": "19:30"})
+        self.assertTrue(r.json()["ok"], r.text)
+        new = int(r.json()["next"].split("/")[2].split("?")[0])
+        self.assertEqual(c.get(f"/channels/{new}?tab=setup").status_code, 200)
+
+    def test_channel_art(self):
+        from studio.creative import branding, characters
+        from PIL import Image
+        cid = channels.create({"name": "Art Kids", "made_for_kids": True, "styles": ["kids"]}, 1)
+        characters.create(cid, "Hero", {"gender": "male", "age": "adult", "accessory": "cape_mask"}, role="hero")
+        characters.create(cid, "Kid", {"gender": "female", "age": "child"}, role="friend")
+        paths = branding.make_all(cid)
+        self.assertEqual(Image.open(paths["banner"]).size, (2560, 1440))
+        self.assertEqual(Image.open(paths["avatar"]).size, (800, 800))
+        self.assertEqual(branding._cast(cid, 1)[0]["name"], "Kid")            # children first

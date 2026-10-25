@@ -601,6 +601,8 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
             logs.event("info", "pipeline", msg, production_id=pid)
             return
         raise NeedsAttention(msg + " Switch uploads on for that channel first.")
+    if by.startswith("auto") and ch and privacy == "public" and channels.next_publish_slot(ch):
+        privacy, publish_at = "scheduled", channels.next_publish_slot(ch)   # goes public at the channel's time
     if by.startswith("auto") and (db.loads(p.get("request"), {}) or {}).get("no_upload"):
         save(pid, status="awaiting_approval", error="Ready to download — made without a channel, so it isn't "
                                                     "uploaded automatically.")

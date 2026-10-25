@@ -67,14 +67,14 @@
     {% for t in ideas %}<div class="spread small" style="margin-bottom:4px"><a href="/ideas/{{ t.id }}">{{ t.title }}</a> <span><span class="chip">{{ t.format }}</span> <b>{{ '%.0f' % t.score }}</b></span></div>
     {% else %}<div class="muted small">No ideas yet.</div>{% endfor %}
   </div>
-  <div class="card">
+  {% if is_admin %}<div class="card">
     <h2>AI providers</h2>
     {% for pr in providers %}
     <div class="spread small" style="margin-bottom:6px"><span>{{ pr.label }}<br><span class="muted mono">{{ pr.model }}</span></span>
       {% if pr.ok %}<span class="chip ok">ready</span>{% else %}<span class="chip" title="{{ pr.detail }}">{{ pr.detail[:28] }}</span>{% endif %}</div>
     {% endfor %}
     <a class="btn sm" href="/settings?tab=ai">Configure</a>
-  </div>
+  </div>{% endif %}
   <div class="card">
     <h2>Automation</h2>
     {% for s in schedules %}
