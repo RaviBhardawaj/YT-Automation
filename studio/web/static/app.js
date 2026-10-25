@@ -1,12 +1,26 @@
 "use strict";
-const CSRF = document.querySelector('meta[name="csrf"]').content;
+let CSRF = document.querySelector('meta[name="csrf"]').content;
 
-async function api(path, data, method = "POST") {
+async function refreshCsrf() {
+  const r = await fetch("/api/csrf", { credentials: "same-origin" });
+  const j = await r.json();
+  CSRF = j.token;
+  document.querySelector('meta[name="csrf"]').content = CSRF;
+}
+
+async function api(path, data, method = "POST", retried = false) {
   const r = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF },
     body: method === "GET" ? undefined : JSON.stringify(data || {}),
   });
+  if (r.status === 403 && !retried && method !== "GET") {
+    const peek = await r.clone().text();
+    if (peek.includes("CSRF")) {                  // token went stale (e.g. page open across a restart): renew once
+      await refreshCsrf();
+      return api(path, data, method, true);
+    }
+  }
   let j;
   const text = await r.text();
   try { j = JSON.parse(text); } catch { j = { ok: r.ok, error: text.slice(0, 300) }; }

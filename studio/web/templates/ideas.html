@@ -39,7 +39,7 @@
     <select name="status" data-autosubmit style="width:auto">
       {% for k, l in [('open','Open'),('saved','Saved'),('approved','Approved'),('used','In production / used'),('rejected','Rejected'),('all','All')] %}<option value="{{ k }}" {{ 'selected' if filters.status == k }}>{{ l }}</option>{% endfor %}</select>
     <select name="sort" data-autosubmit style="width:auto">
-      {% for k, l in [('score','Best score'),('new','Newest'),('old','Oldest'),('title','Title A–Z')] %}<option value="{{ k }}" {{ 'selected' if filters.sort == k }}>{{ l }}</option>{% endfor %}</select>
+      {% for k, l in [('new','Newest first'),('score','Best score'),('old','Oldest'),('title','Title A–Z')] %}<option value="{{ k }}" {{ 'selected' if filters.sort == k }}>{{ l }}</option>{% endfor %}</select>
     <input name="q" value="{{ filters.q }}" placeholder="Search titles" style="width:180px">
     <button type="submit" class="sm">Search</button>
     <a class="btn sm" href="/ideas?channel={{ filters.channel or 'all' }}">Reset</a>

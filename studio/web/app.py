@@ -27,7 +27,24 @@ from ..youtube import analytics, oauth
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
 MODEL_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,60}(:[A-Za-z0-9._-]{1,40})?")
-CSRF_SECRET = secrets.token_bytes(32)
+def _csrf_secret() -> bytes:
+    """Signing key for per-browser tokens. Kept in a private file so a restart doesn't break open pages."""
+    path = config.DATA_DIR / ".csrf_secret"
+    try:
+        key = path.read_bytes()
+        if len(key) == 32:
+            return key
+    except OSError:
+        pass
+    key = secrets.token_bytes(32)
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(key)
+    return key
+
+
+CSRF_SECRET = _csrf_secret()
 ALLOWED_HOSTS = {f"127.0.0.1:{config.PORT}", f"localhost:{config.PORT}"}
 ALLOWED_ORIGINS = {f"http://{h}" for h in ALLOWED_HOSTS}
 if config.PUBLIC_URL:                                   # online: the public address is also accepted
@@ -69,7 +86,7 @@ templates.env.undefined = jinja2.ChainableUndefined
 
 
 PENDING_OK = ("/pending", "/api/auth/logout", "/pricing", "/privacy", "/terms")
-PUBLIC = ("/home", "/pricing", "/privacy", "/terms", "/login", "/signup", "/api/auth/login", "/api/auth/signup", "/static/", "/oauth/google/callback", "/favicon.ico")
+PUBLIC = ("/home", "/pricing", "/privacy", "/terms", "/login", "/signup", "/api/csrf", "/api/auth/login", "/api/auth/signup", "/static/", "/oauth/google/callback", "/favicon.ico")
 ADMIN_ONLY = ("/analytics", "/settings", "/compliance", "/niches", "/setup", "/admin", "/api/settings", "/api/secrets/",
               "/api/providers/", "/api/ollama/", "/api/voice/", "/api/youtube/", "/api/compliance/", "/api/datasources/",
               "/api/datasets/", "/api/niches/", "/api/interview/", "/api/feeds", "/api/upload/", "/api/lessons/",
@@ -439,7 +456,7 @@ PAGE_SIZE = 20
 
 @app.get("/ideas", response_class=HTMLResponse)
 def ideas_page(request: Request, channel: str = "", niche: str = "", format: str = "", language: str = "",
-               style: str = "", kind: str = "", fresh: str = "", status: str = "open", sort: str = "score",
+               style: str = "", kind: str = "", fresh: str = "", status: str = "open", sort: str = "new",
                q: str = "", page_no: int = 1):
     from .. import channels as chmod
     cid = _channel_arg(request, channel)
@@ -465,7 +482,7 @@ def ideas_page(request: Request, channel: str = "", niche: str = "", format: str
     pages = max(1, -(-total // PAGE_SIZE))
     page_no = max(1, min(page_no, pages))
     rows = db.q(f"SELECT t.*, c.name AS channel_name, c.niche AS channel_niche, c.language AS channel_language {sql} "
-                f"ORDER BY {IDEA_SORT.get(sort, IDEA_SORT['score'])} LIMIT ? OFFSET ?",
+                f"ORDER BY {IDEA_SORT.get(sort, IDEA_SORT['new'])} LIMIT ? OFFSET ?",
                 tuple(args) + (PAGE_SIZE, (page_no - 1) * PAGE_SIZE))
     for r in rows:
         r["breakdown"] = db.loads(r["score_breakdown"], {}) or {}
@@ -2308,3 +2325,9 @@ async def api_upgrade_request(request: Request):
         db.insert("upgrade_requests", {"workspace_id": sess["workspace"]["id"], "user_id": sess["user"]["id"],
                                        "plan": plan, "note": str(data.get("note") or "")[:300], "created_at": db.iso()})
     return ok(detail="Thanks — we'll let you know when it's available")
+
+
+@app.get("/api/csrf")
+def api_csrf(request: Request):
+    """A fresh token for this browser (pages left open across a sign-in or a long pause recover with it)."""
+    return ok(token=csrf_token(request))

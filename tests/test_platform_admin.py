@@ -155,3 +155,21 @@ class PublicSiteTests(unittest.TestCase):
             r = c.get("/")
         self.assertIn("Getting started", r.text)
         self.assertIn('data-help="create"', c.get("/create").text)
+
+
+class CsrfTests(unittest.TestCase):
+    def test_secret_survives_restart_and_is_private(self):
+        from studio.web import app as webapp
+        first = webapp._csrf_secret()
+        self.assertEqual(webapp._csrf_secret(), first)                  # same key after a "restart"
+        self.assertEqual(oct((config.DATA_DIR / ".csrf_secret").stat().st_mode & 0o777), "0o600")
+
+    def test_fresh_token_endpoint_matches_session(self):
+        from studio.web import app as webapp
+        _, _, tok = user("csrf@test.local")
+        c = client(tok)
+        self.assertEqual(c.get("/api/csrf").json()["token"], webapp.csrf_for_seed(tok))
+        c.headers["X-CSRF-Token"] = "stale"
+        self.assertEqual(c.post("/api/storage/clean", json={}).status_code, 403)
+        c.headers["X-CSRF-Token"] = c.get("/api/csrf").json()["token"]
+        self.assertTrue(c.post("/api/storage/clean", json={}).json()["ok"])

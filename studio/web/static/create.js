@@ -11,7 +11,7 @@
 
   function human(n) { return n > 1e9 ? (n / 1e9).toFixed(1) + " GB" : (n / 1e6).toFixed(1) + " MB"; }
 
-  function upload(file, row) {
+  function upload(file, row, retried = false) {
     const bar = row.querySelector(".bar > i");
     const status = row.querySelector(".st");
     const btn = row.querySelector("button");
@@ -25,8 +25,11 @@
     const ch = document.getElementById("channel").value;
     if (ch && ch !== "none") xhr.setRequestHeader("X-Channel", ch);
     xhr.upload.onprogress = e => { if (e.lengthComputable) bar.style.width = (e.loaded / e.total * 100).toFixed(0) + "%"; };
-    xhr.onload = () => {
+    xhr.onload = async () => {
       busy--;
+      if (xhr.status === 403 && !retried && xhr.responseText.includes("CSRF")) {   // stale token: renew once
+        try { await refreshCsrf(); return upload(file, row, true); } catch { /* fall through to the error */ }
+      }
       let j = {};
       try { j = JSON.parse(xhr.responseText); } catch { j = { ok: false, error: xhr.responseText.slice(0, 200) }; }
       if (xhr.status === 200 && j.ok) {

@@ -214,3 +214,20 @@ class IdeasPageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdeasOrderTests(unittest.TestCase):
+    def test_newest_first_by_default(self):
+        IdeasPageTests.setUpClass()
+        c, cid, ws = IdeasPageTests.client, IdeasPageTests.cid, IdeasPageTests.ws
+        old = db.insert("topics", {"channel_id": cid, "workspace_id": ws, "title": "Older high score idea",
+                                   "format": "long", "score": 99, "status": "idea", "created_at": db.iso(),
+                                   "updated_at": db.iso()})
+        new = db.insert("topics", {"channel_id": cid, "workspace_id": ws, "title": "Newest low score idea",
+                                   "format": "long", "score": 1, "status": "idea", "created_at": db.iso(),
+                                   "updated_at": db.iso()})
+        html = c.get("/ideas", params={"channel": cid}).text
+        self.assertLess(html.index("Newest low score idea"), html.index("Older high score idea"))
+        html = c.get("/ideas", params={"channel": cid, "sort": "score"}).text
+        self.assertLess(html.index("Older high score idea"), html.index("Newest low score idea"))
+        self.assertGreater(new, old)
