@@ -30,6 +30,10 @@
       {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if ch and ch.id == c.id }}>{{ c.name }}{{ '' if c.uploads_enabled else ' (uploads off)' }}{{ ' · auto-publishes' if c.auto_publish and c.uploads_enabled else '' }}</option>{% endfor %}
       </select><a class="small" href="/channels">+ Add a new channel</a></label>
     <label class="f"><span>Format</span><select id="format"><option value="">Decide from my request</option><option value="long">Long video (16:9)</option><option value="short">Shorts only (9:16)</option><option value="both">Long video + Shorts</option></select></label>
+    <label class="f"><span>{{ 'Voice in the video' if mode == 'edit' else 'Narrator voice' }}</span><select id="voice">
+      <option value="">{{ 'Keep the original voice' if mode == 'edit' else 'Default voice' }}</option>
+      {% for v in my_voices %}<option value="{{ v.id }}" {{ 'selected' if voice_pick == v.id|string }}>{{ 'Replace with ' if mode == 'edit' }}{{ v.name }} (my voice)</option>{% endfor %}</select>
+      <a class="small" href="/voices">{{ 'Manage my voices' if my_voices else '+ Clone my voice' }}</a></label>
   </div>
   {% if mode == 'create' %}
   <label class="small" style="display:block;margin:4px 0 10px"><input type="checkbox" id="aivideo" {{ 'disabled' if not videogen.enabled }}>

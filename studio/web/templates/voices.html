@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>My voice</h1><div class="muted">Clone your own voice once, then pick it as the narrator for any video — or to re-voice a video you upload. It runs on this computer; your recording is never sent anywhere.</div></div>
+</div>
+
+{% if not allowed %}
+<div class="card empty">“Clone my voice” isn't included in your plan yet. Ask the administrator, or see <a href="/pricing">Pricing</a>.</div>
+{% else %}
+{% if not engine.installed %}
+<div class="note">Voice cloning isn't installed on this server yet{% if is_admin %} — run <code>.venv-voiceclone</code> setup (see INSTALL.md › Voice cloning){% else %}. The administrator has been told{% endif %}. You can still save your recording now.</div>
+{% elif not engine.model %}
+<div class="note">The voice model downloads the first time it's used (about 3 GB, a few minutes). Your first preview will take longer.</div>
+{% endif %}
+
+<div class="card" id="newvoice" style="margin-bottom:14px">
+  <h2>Add a voice</h2>
+  <ol class="small muted" style="margin:0 0 10px 18px;padding:0">
+    <li>Sit somewhere quiet, close to the microphone (a phone headset is fine).</li>
+    <li>Record 15–30 seconds reading the text below in your normal speaking style — or upload a clean clip of only you talking.</li>
+    <li>Tick the consent box and save. Then press <b>Preview</b> to hear your cloned voice.</li>
+  </ol>
+  <div class="grid g3">
+    <label class="f"><span>Name</span><input name="name" value="My voice" maxlength="60"></label>
+    <label class="f"><span>Main language you'll use it for</span><select name="language">
+      {% for l in ['Hindi','English','Hinglish'] %}<option>{{ l }}</option>{% endfor %}</select></label>
+  </div>
+  <div class="card tight" style="margin:8px 0;background:var(--bg2, transparent)">
+    <div class="small"><b>Read this aloud (Hindi):</b> नमस्ते दोस्तों! आज मैं आपको एक नई और काम की बात बताने वाला हूँ। इसे ध्यान से सुनिए, क्योंकि छोटी-छोटी आदतें ही बड़ा बदलाव लाती हैं। अगर वीडियो पसंद आए, तो चैनल को ज़रूर सब्सक्राइब कीजिए।</div>
+    <div class="small" style="margin-top:6px"><b>Or English:</b> Hello friends! Today I'm going to share something new and genuinely useful. Listen carefully, because small habits create the biggest changes. If you enjoy this video, don't forget to subscribe.</div>
+  </div>
+  <div class="row" style="margin:10px 0">
+    <button type="button" id="rec">🎙️ Start recording</button>
+    <span class="muted small" id="recstate"></span>
+    <span class="muted small">or</span>
+    <input type="file" id="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.aac,.ogg,.webm,.mp4,.mov">
+  </div>
+  <audio id="playback" controls style="display:none;width:100%;margin-bottom:8px"></audio>
+  <label class="small" style="display:block;margin:6px 0 10px"><input type="checkbox" id="consent"> {{ consent }}</label>
+  <button class="primary" type="button" id="save">Save voice</button>
+  <div class="muted small" style="margin-top:8px">Cloned narration is slow on this computer: about 10 minutes of work per minute of speech, so Shorts are quick and long videos take a while.</div>
+  <div class="muted small" style="margin-top:4px">Videos narrated with a cloned voice carry an inaudible AI watermark. On YouTube, tick “Altered or synthetic content” when a realistic AI voice says things you didn't actually record.</div>
+</div>
+
+{% for v in voices %}
+<div class="card" style="margin-bottom:12px">
+  <div class="spread">
+    <div><b style="font-size:15px">{{ v.name }}</b> <span class="chip">{{ v.language }}</span> <span class="chip ok">ready</span>
+      <div class="muted small">{{ '%.0f' % v.sample_seconds }} s sample · consent recorded {{ v.consent_at|dt }}</div></div>
+    <div class="row">
+      <button class="sm" data-post="/api/voices/{{ v.id }}/preview" data-reload="no" data-done="Making a preview — this page refreshes when it's ready">Preview</button>
+      <a class="btn sm" href="/create?voice={{ v.id }}">Use in a new video</a>
+      <a class="btn sm" href="/edit?voice={{ v.id }}">Re-voice an upload</a>
+      <button class="sm danger" data-post="/api/voices/{{ v.id }}/delete" data-confirm="Delete '{{ v.name }}' and its recording? Videos already made keep their audio.">Delete</button>
+    </div>
+  </div>
+  <div class="grid g2" style="margin-top:8px">
+    <div><div class="small muted">Your recording</div><audio controls preload="none" src="{{ v.sample_url }}" style="width:100%"></audio></div>
+    <div><div class="small muted">Cloned voice preview</div>
+      {% if v.preview_url %}<audio controls preload="none" src="{{ v.preview_url }}" style="width:100%"></audio>
+      {% elif v.previewing %}<div class="small" data-autorefresh="15">Making the preview… (the first one loads the model and can take a few minutes)</div>
+      {% else %}<div class="small muted">Press Preview to hear it.</div>{% endif %}</div>
+  </div>
+</div>
+{% else %}
+<div class="card empty">No voices yet — record or upload one above.</div>
+{% endfor %}
+{% endif %}
+<script src="/static/voices.js?v={{ static_v }}"></script>
+{% endblock %}

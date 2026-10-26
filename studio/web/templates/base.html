@@ -24,6 +24,7 @@
       {{ item('/create', '✍️', 'Create video', page == 'create' and mode == 'create') }}
       {{ item('/edit', '✂️', 'Upload & edit', page == 'create' and mode == 'edit') }}
       {{ item('/ideas', '💡', 'Ideas', page in ('ideas', 'idea')) }}
+      {{ item('/voices', '🎙️', 'My voice', page == 'voices') }}
       <div class="nav-group">My videos</div>
       {{ item('/projects', '⏳', 'In progress', page == 'projects') }}
       {{ item('/productions', '🎬', 'Video library', page in ('productions', 'production', 'uploads'), awaiting) }}
@@ -40,6 +41,7 @@
       {% if is_admin %}
       <div class="nav-group">Admin</div>
       {{ item('/admin', '🛡️', 'Users & website', page == 'admin') }}
+      {{ item('/system', '🖥️', 'Computer & setup', page == 'system') }}
       {{ item('/settings', '⚙️', 'Settings', page == 'settings') }}
       {{ item('/compliance', '⚖️', 'Compliance', page == 'compliance') }}
       {{ item('/niches', '🔎', 'Niche research', page == 'niches') }}

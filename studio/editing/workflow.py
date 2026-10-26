@@ -48,7 +48,7 @@ def output_language(request: str, ch: dict[str, Any] | None) -> str:
 
 
 def create(ws_id: int, request: str, media_ids: list[int], *, channel_id: int | None = None, fmt: str | None = None,
-           user_id: int | None = None) -> int:
+           user_id: int | None = None, voice_id: int | str | None = None) -> int:
     from .. import worker
     media = [uploads.get(int(m), ws_id) for m in media_ids]
     if not media or any(m is None for m in media):
@@ -59,12 +59,20 @@ def create(ws_id: int, request: str, media_ids: list[int], *, channel_id: int | 
     if channel_id and (not ch or ch["workspace_id"] != ws_id):
         raise ValueError("channel not found")
     plans.check(ws_id, "video")
+    voice = None
+    if voice_id:                                     # re-voice the speech with this account's cloned voice
+        from ..media import voiceclone
+        v = voiceclone.get(voice_id, ws_id)
+        if not v:
+            raise ValueError("that voice isn't one of yours")
+        voice = {"engine": "clone", "voice_id": str(v["id"]), "name": v["name"]}
     language = output_language(request, ch)
     title = (request.strip() or f"Edit of {media[0]['original_name']}")[:90]
     pid = db.insert("productions", {
         "format": "short" if fmt == "short" else "long", "title": title, "status": "queued", "stage": "inspect",
         "kind": "edit", "channel_id": channel_id, "workspace_id": ws_id, "language": language,
-        "request": json.dumps({"request": request, "format": fmt, "user_id": user_id}, ensure_ascii=False),
+        "request": json.dumps({"request": request, "format": fmt, "user_id": user_id, "voice": voice},
+                              ensure_ascii=False),
         "source_media": json.dumps([m["id"] for m in media]), "package": "{}", "timeline": "{}", "episode": "{}",
         "test_mode": 0, "created_at": db.iso(), "updated_at": db.iso()})
     worker.enqueue("production", {"production_id": pid}, production_id=pid, max_attempts=3)
@@ -157,6 +165,17 @@ def _render_one(p: dict[str, Any], idx: int, o: dict[str, Any], media: dict[int,
     joined = work / f"o{idx}_joined.mp4"
     engine.concat(clips, joined)
     total = engine.probe(joined)["duration"] or t
+    voice = (db.loads(p.get("request"), {}) or {}).get("voice") or {}
+    revoiced = 0
+    if voice.get("engine") == "clone":           # "replace the voice with my voice": same words, cloned voice
+        lines = []
+        for m_id in {pc["media_id"] for pc in pieces}:
+            lines += engine.speech_lines(media[m_id].get("transcript") or [],
+                                         [pc for pc in pieces if pc["media_id"] == m_id])
+        lines.sort(key=lambda x: x["start"])
+        if lines:
+            joined = engine.revoice(joined, lines, voice["voice_id"], total, work / f"o{idx}_voice")
+            revoiced = len(lines)
     out_dir = workdir(p["id"]) / "outputs"
     out_dir.mkdir(exist_ok=True)
     stem = f"{idx + 1:02d}"
@@ -164,6 +183,9 @@ def _render_one(p: dict[str, Any], idx: int, o: dict[str, Any], media: dict[int,
     engine.finish(joined, clean, music_mood=o.get("music_mood", "none"), subs=None, total=total, work=work)
     result: dict[str, Any] = {"name": o["name"], "aspect": o["aspect"], "video": str(clean), "clean_video": None,
                               "srt": None, "pieces": pieces}
+    if voice.get("engine") == "clone":
+        result["note"] = (f"re-voiced {revoiced} line(s) in your cloned voice" if revoiced
+                          else "no speech found to re-voice — the original audio was kept")
     cue_list: list[dict[str, Any]] = []
     for m_id in {pc["media_id"] for pc in pieces}:
         tr = media[m_id].get("transcript") or []

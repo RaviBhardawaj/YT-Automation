@@ -10,6 +10,8 @@ import time
 import traceback
 from typing import Any, Callable
 
+import httpx
+
 from . import ai, db, logs
 
 log = logging.getLogger(__name__)
@@ -125,10 +127,15 @@ def _run(task: dict[str, Any]) -> None:
         detail = f"{type(e).__name__}: {e}"
         log.error("task %s %s failed: %s\n%s", task["id"], task["type"], detail, traceback.format_exc())
         retry_after = getattr(e, "retry_after", None) if isinstance(e, UploadError) else None
-        if task["attempts"] < task["max_attempts"]:
-            delay = retry_after or BACKOFF[min(task["attempts"] - 1, len(BACKOFF) - 1)]
+        # YouTube's daily limit/quota, a dropped connection or a YouTube outage is temporary: the upload just goes
+        # out at the next chance and never uses up its attempts
+        temporary = task["type"] in ("upload", "social_upload") and (
+            retry_after is not None or isinstance(e, (httpx.TransportError, OSError)))
+        if temporary or task["attempts"] < task["max_attempts"]:
+            delay = retry_after or (900 if temporary else BACKOFF[min(task["attempts"] - 1, len(BACKOFF) - 1)])
             db.update("tasks", task["id"], {"status": "pending", "run_after": db.iso_in(delay), "locked_at": None,
-                                            "last_error": detail[:2000], "updated_at": db.iso()})
+                                            "last_error": detail[:2000], "updated_at": db.iso(),
+                                            **({"attempts": max(0, task["attempts"] - 1)} if temporary else {})})
             logs.event("warning", "worker", f"{task['type']} failed (attempt {task['attempts']}/{task['max_attempts']}), "
                        f"retrying in {delay // 60} min: {detail[:300]}", production_id=pid, task_id=task["id"])
         else:

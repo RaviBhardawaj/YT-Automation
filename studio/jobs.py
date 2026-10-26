@@ -20,8 +20,11 @@ def _norm(title: str) -> str:
     return re.sub(r"[^\w]+", " ", title.lower()).strip()
 
 
-def plan_for(channel_id: int, request: str, idea: dict[str, Any] | None = None, hint: str | None = None) -> dict[str, Any]:
+def plan_for(channel_id: int, request: str, idea: dict[str, Any] | None = None, hint: str | None = None,
+             standalone: bool = False) -> dict[str, Any]:
     ch = channels.get(channel_id)
+    if standalone:                     # "no channel": the request/idea alone decides, not the borrowed channel's style
+        return reqmod.plan(request, {"language": (idea or {}).get("language")}, idea, hint=hint)
     plan = reqmod.plan(request, ch, idea, hint=hint)
     # nothing explicit in the request (or a linked video): the channel's own workflow decides
     if plan["decided_by"] not in ("request", "reference") and ch.get("workflow") in ("animated_story", "factual"):
@@ -32,7 +35,7 @@ def plan_for(channel_id: int, request: str, idea: dict[str, Any] | None = None, 
 
 def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fmt: str | None = None,
            actor: str = "user", scheduled_for: str | None = None, no_upload: bool = False,
-           ai_video: bool = False, use_cast: bool | None = None) -> dict[str, Any]:
+           ai_video: bool = False, use_cast: bool | None = None, voice_id: int | str | None = None) -> dict[str, Any]:
     """Queue a job. Returns {"production_ids": [...]} or {"task_id": n} for the NIFTY daily episode."""
     ch = channels.get(channel_id)
     if not ch:
@@ -56,19 +59,25 @@ def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fm
         from .creative import reference
         ref = reference.resolve(request)            # a YouTube link: its subject drives the video, not the channel
     if ref:
-        plan = plan_for(channel_id, ref["user_text"], idea, hint=ref["content_type"])
+        plan = plan_for(channel_id, ref["user_text"], idea, hint=ref["content_type"], standalone=no_upload)
         r = ref["reference"]
         if not fmt and plan["decided_by"] != "request" and ("/shorts/" in request or 0 < r["duration_s"] <= 61):
             plan["format"] = "short"
         plan.update({"request": ref["brief"], "reference": {k: r[k] for k in ("id", "url", "title", "channel", "via")}})
     else:
-        plan = plan_for(channel_id, request, idea)
+        plan = plan_for(channel_id, request, idea, standalone=no_upload)
     if fmt:
         plan["format"] = fmt
     plan["scheduled_for"] = scheduled_for
     plan["actor"] = actor
     plan["no_upload"] = bool(no_upload)                # "No channel — just make it": never auto-uploaded
     plan["ai_video"] = bool(ai_video)                  # opted in to paid AI-generated clips (researched videos)
+    if voice_id:                                       # narrate with a cloned voice of this account
+        from .media import voiceclone
+        v = voiceclone.get(voice_id, ch["workspace_id"])
+        if not v:
+            raise ValueError("that voice isn't one of yours")
+        plan["voice"] = {"engine": "clone", "voice_id": str(v["id"]), "name": v["name"]}
     if use_cast is not None:                           # False = stand-alone video with its own fresh characters
         from .creative import characters as charmod
         named = any(c["name"] and c["name"].lower() in (request or "").lower()
@@ -88,13 +97,13 @@ def _factual(ch: dict[str, Any], plan: dict[str, Any], idea: dict[str, Any] | No
     req = plan["request"]
     if idea:
         tid = idea["id"]
-        if not idea.get("channel_id"):
+        if not idea.get("channel_id") and not plan.get("no_upload"):   # a channel-less video leaves the idea unassigned
             db.update("topics", tid, {"channel_id": ch["id"], "updated_at": db.iso()})
     else:
         subject = (plan.get("reference") or {}).get("title") or req
         title = subject if len(subject) <= 110 else subject[:107].rsplit(" ", 1)[0] + "…"
         tid = db.insert("topics", {
-            "channel_id": ch["id"], "title": title, "angle": f"Do exactly what the request asks: {req}",
+            "channel_id": None if plan.get("no_upload") else ch["id"], "title": title, "angle": f"Do exactly what the request asks: {req}",
             "format": "short" if plan["format"] == "short" else "long", "hook_idea": "", "why_now": "requested",
             "status": "approved", "score": 0, "idea_kind": "request", "style": plan["content_type"],
             "language": plan["language"], "summary": req, "search_query": subject[:200], "norm_title": _norm(title),
@@ -119,10 +128,12 @@ def pause(pid: int) -> int:
 
 
 def resume(pid: int) -> int:
+    kinds = {r["type"] for r in db.q("SELECT type FROM tasks WHERE production_id=? AND status='paused'", (pid,))}
     n = db.ex("UPDATE tasks SET status='pending', run_after=?, last_error=NULL, updated_at=? "
               "WHERE production_id=? AND status='paused'", (db.iso(), db.iso(), pid))
-    if n:
-        db.update("productions", pid, {"status": "queued", "updated_at": db.iso()})
+    if n:                                       # a paused upload goes back to 'approved' or it would never upload
+        db.update("productions", pid, {"status": "approved" if kinds == {"upload"} else "queued",
+                                       "error": None, "updated_at": db.iso()})
         worker._wake.set()
     return n
 

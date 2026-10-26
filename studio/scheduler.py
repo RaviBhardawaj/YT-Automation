@@ -20,6 +20,8 @@ DEFAULT_SCHEDULES = [
     {"name": "Housekeeping", "task_type": "housekeeping", "kind": "daily", "time_of_day": "03:30"},
     {"name": "Channel growth & monetization progress", "task_type": "channel_stats", "kind": "daily",
      "time_of_day": "06:00"},
+    {"name": "Learn from results (better content every day)", "task_type": "learning_review", "kind": "daily",
+     "time_of_day": "06:30"},
     # 7-part 'फिबोनाची पिवट सीखें' series: one lesson generated per day; switches itself off after part 7.
     {"name": "Fibonacci lesson series (daily 4 PM, 7 parts)", "task_type": "fib_lesson_daily", "kind": "daily",
      "time_of_day": "16:00"},

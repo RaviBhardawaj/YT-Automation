@@ -34,6 +34,7 @@ AI_TASKS = {
     "ideation": "Topic ideation & ranking",
     "script": "Scriptwriting, storyboard & metadata",
     "review": "Fact-check & originality review",
+    "learning": "Daily learning from results",
 }
 
 PROVIDERS = {
@@ -53,9 +54,10 @@ DEFAULTS: dict[str, Any] = {
         "ollama_local": "qwen3.5:9b",
         "ollama_cloud": "gemma4:31b",
         "anthropic": "claude-opus-5-5",
-        "gemini": "gemini-2.5-flash",
+        "gemini": "gemini-flash-latest",          # alias: Google retired 2.5 Flash for new keys
     },
     "ai.anthropic_effort": "medium",
+    "ai.free_first": True,                        # free providers first; paid ones only when free ones fail
     "ai.monthly_budget_usd": 5.0,
     "ai.on_budget_exceeded": "fallback_local",   # fallback_local | pause
     "ai.prices": {
@@ -86,6 +88,10 @@ DEFAULTS: dict[str, Any] = {
     "visuals.local_sd_url": "http://127.0.0.1:7860",
     "visuals.gemini_image_model": "gemini-2.5-flash-image",
     "visuals.gemini_image_price": 0.039,
+    "visuals.vision_check": True,                 # a vision model checks each stock picture fits its scene
+    "visuals.vision_gemini_model": "gemini-flash-lite-latest",
+    "visuals.vision_per_minute": 14,              # Gemini Flash-Lite free-tier pacing for those checks
+    "visuals.min_relevance": 6,                   # 0-10: pictures scoring lower are not used
     "brand": {
         "channel_name": "",
         "primary": "#FFD23F",

@@ -87,7 +87,7 @@ templates.env.undefined = jinja2.ChainableUndefined
 
 PENDING_OK = ("/pending", "/api/auth/logout", "/pricing", "/privacy", "/terms")
 PUBLIC = ("/home", "/pricing", "/privacy", "/terms", "/login", "/signup", "/api/csrf", "/oauth/meta/callback", "/api/auth/login", "/api/auth/signup", "/static/", "/oauth/google/callback", "/favicon.ico")
-ADMIN_ONLY = ("/settings", "/compliance", "/niches", "/setup", "/admin", "/api/settings", "/api/secrets/",
+ADMIN_ONLY = ("/system", "/api/system/", "/settings", "/compliance", "/niches", "/setup", "/admin", "/api/settings", "/api/secrets/",
               "/api/providers/", "/api/ollama/", "/api/voice/", "/api/youtube/", "/api/compliance/", "/api/datasources/",
               "/api/datasets/", "/api/niches/", "/api/interview/", "/api/feeds", "/api/upload/", "/api/lessons/",
               "/api/episodes", "/api/productions/selftest", "/api/analytics/", "/api/ideas/generate", "/api/admin/")
@@ -100,7 +100,8 @@ OWNED_PATHS = [(re.compile(r"^/(?:api/)?productions/(\d+)"), "productions"),
                (re.compile(r"^/api/tasks/(\d+)"), "tasks"),
                (re.compile(r"^/(?:api/)?media-files/(\d+)"), "media"),
                (re.compile(r"^/media/productions/(\d+)/"), "productions"),
-               (re.compile(r"^/media/channels/(\d+)/"), "channels")]
+               (re.compile(r"^/media/channels/(\d+)/"), "channels"),
+               (re.compile(r"^/api/voices/(\d+)"), "voices")]
 
 
 _attempts: dict[str, list[float]] = {}
@@ -196,7 +197,7 @@ async def guard(request: Request, call_next):
     ad_hosts = " https://pagead2.googlesyndication.com https://*.googlesyndication.com https://*.doubleclick.net " \
                "https://www.googletagservices.com https://*.google.com" if ads else ""
     response.headers["Content-Security-Policy"] = (
-        f"default-src 'self'; img-src 'self' data:{' https:' if ads else ''}; media-src 'self'; "
+        f"default-src 'self'; img-src 'self' data:{' https:' if ads else ''}; media-src 'self' blob:; "
         f"style-src 'self' 'unsafe-inline'; script-src 'self'{ad_hosts}; connect-src 'self'{ad_hosts}; "
         f"frame-src 'self'{ad_hosts}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
     return response
@@ -413,6 +414,38 @@ async def api_auth(request: Request, action: str):
 
 # ------------------------------------------------------------------ pages
 
+def _publishing_problems(ws: int) -> list[dict[str, Any]]:
+    """Why a planned video isn't going out — each with the one click that fixes it."""
+    out: list[dict[str, Any]] = []
+    for p in db.q("SELECT id, title FROM productions WHERE workspace_id=? AND status='paused' ORDER BY id", (ws,)):
+        out.append({"text": f"#{p['id']} “{p['title'][:60]}” is paused — it won't be made or uploaded until you "
+                            "resume it.", "post": f"/api/productions/{p['id']}/job/resume", "label": "Resume",
+                    "href": f"/productions/{p['id']}"})
+    for p in db.q("SELECT id, title, error FROM productions WHERE workspace_id=? AND status='awaiting_approval' "
+                  "AND error LIKE 'Held:%' ORDER BY id", (ws,)):
+        out.append({"text": f"#{p['id']} “{p['title'][:60]}”: {p['error']}", "href": f"/productions/{p['id']}",
+                    "label": "Open"})
+    for t in db.q("SELECT t.run_after, c.name, c.id AS cid, COUNT(*) AS n FROM tasks t JOIN productions p ON "
+                  "p.id=t.production_id JOIN channels c ON c.id=p.channel_id WHERE p.workspace_id=? AND "
+                  "t.type='upload' AND t.status='pending' AND t.last_error LIKE '%upload limit%' GROUP BY c.id",
+                  (ws,)):
+        out.append({"text": f"YouTube's daily upload limit for “{t['name']}” was reached — {t['n']} video(s) retry "
+                            f"automatically after {str(t['run_after'])[:16].replace('T', ' ')} UTC. New channels get "
+                            "a higher limit after phone verification.",
+                    "href": "https://www.youtube.com/verify", "label": "Verify channel", "external": True})
+    for s in db.q("SELECT s.id, c.name, c.id AS cid FROM schedules s JOIN channels c ON c.id=s.channel_id WHERE "
+                  "c.workspace_id=? AND s.enabled=1 AND s.task_type='channel_daily'", (ws,)):
+        last = db.q1("SELECT result FROM tasks WHERE type='channel_daily' AND payload LIKE ? AND status='done' AND "
+                     "created_at>=? ORDER BY id DESC LIMIT 1", (f'%"channel_id": {s["cid"]}%', db.iso_in(-20 * 3600)))
+        pids = (db.loads(last["result"], {}) or {}).get("production_ids") if last else None
+        if pids and not db.q1(f"SELECT 1 FROM productions WHERE id IN ({','.join('?' for _ in pids)}) AND status "
+                              "NOT IN ('rejected','failed')", tuple(pids)):
+            out.append({"text": f"Today's scheduled video for “{s['name']}” was deleted, cancelled or failed — "
+                                "nothing will be published today unless you make it again.",
+                        "post": f"/api/schedules/{s['id']}", "body": '{"run_now": true}', "label": "Make it again"})
+    return out
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     if not db.q1("SELECT 1 FROM channels WHERE workspace_id=?", (ws_id(request),)) and not is_admin(request):
@@ -436,7 +469,7 @@ def home(request: Request):
         c["next_run"] = sched["next_run_at"] if sched else None
     ch = chmod.get(cid)
     resp = page(request, "dashboard.html", productions=prods, ideas=ideas, channels=chans, ch=ch,
-                getting_started=_getting_started(ws),
+                getting_started=_getting_started(ws), problems=_publishing_problems(ws),
                 totals=chmod.counts(cid, ws), providers=providers.status_all() if is_admin(request) else [],
                 schedules=db.q("SELECT s.* FROM schedules s JOIN channels c ON c.id=s.channel_id WHERE s.enabled=1 "
                                "AND c.workspace_id=? ORDER BY s.next_run_at", (ws,)),
@@ -476,12 +509,15 @@ PAGE_SIZE = 20
 @app.get("/ideas", response_class=HTMLResponse)
 def ideas_page(request: Request, channel: str = "", niche: str = "", format: str = "", language: str = "",
                style: str = "", kind: str = "", fresh: str = "", status: str = "open", sort: str = "new",
-               q: str = "", page_no: int = 1):
+               q: str = "", page_no: int = 1, nid: str = ""):
     from .. import channels as chmod
-    cid = _channel_arg(request, channel)
+    nid_i = int(nid) if nid.isdigit() else None
+    cid = None if nid_i else _channel_arg(request, channel)   # a researched niche's ideas belong to no channel yet
     where, args = [IDEA_STATUS.get(status, IDEA_STATUS["open"]), "t.workspace_id=?"], [ws_id(request)]
     if cid:
         where.append("t.channel_id=?"); args.append(cid)
+    if nid_i:
+        where.append("t.niche_id=?"); args.append(nid_i)
     if niche:
         where.append("c.niche=?"); args.append(niche)
     if format in ("long", "short"):
@@ -510,20 +546,25 @@ def ideas_page(request: Request, channel: str = "", niche: str = "", format: str
         ids = db.loads(r["evidence_ids"], []) or []
         r["evidence"] = engine.load_evidence(f"id IN ({','.join('?' for _ in ids)})", tuple(ids)) if ids else []
     all_ch = chmod.all_channels(ws_id(request))
-    running = [t for t in db.q("SELECT id, payload FROM tasks WHERE type='channel_ideas' AND status IN ('pending','running')")
-               if (db.loads(t["payload"], {}) or {}).get("channel_id") in {c["id"] for c in all_ch}]
-    filters = {"channel": str(cid or ""), "niche": niche, "format": format, "language": language, "style": style,
+    running = [t for t in db.q("SELECT id, type, payload FROM tasks WHERE type IN ('channel_ideas','ideation') "
+                               "AND status IN ('pending','running')")
+               if (db.loads(t["payload"], {}) or {}).get("channel_id") in {c["id"] for c in all_ch}
+               or (t["type"] == "ideation" and int((db.loads(t["payload"], {}) or {}).get("workspace_id") or 1) == ws_id(request))]
+    researched = db.q("SELECT n.id, n.name, COUNT(t.id) AS ideas FROM niches n JOIN topics t ON t.niche_id=n.id "
+                      "AND t.workspace_id=? GROUP BY n.id ORDER BY MAX(t.id) DESC", (ws_id(request),))
+    filters = {"channel": str(cid or ""), "nid": str(nid_i or ""), "niche": niche, "format": format, "language": language, "style": style,
                "kind": kind, "fresh": fresh, "status": status, "sort": sort, "q": q}
     from urllib.parse import urlencode
     qs = urlencode({k: v for k, v in filters.items() if v})
     resp = page(request, "ideas.html", topics=rows, running=bool(running), channels=all_ch, ch=chmod.get(cid),
-                filters=filters, total=total, pages=pages, page_no=page_no, qs=qs,
+                filters=filters, total=total, pages=pages, page_no=page_no, qs=qs, researched=researched,
+                niche_row=next((r for r in researched if r["id"] == nid_i), None), my_voices=_my_voices(ws_id(request)),
                 niches=sorted({c["niche"] for c in all_ch if c["niche"]}),
                 languages=sorted({r["l"] for r in db.q("SELECT DISTINCT COALESCE(t.language, c.language) AS l FROM topics t "
                                                        "LEFT JOIN channels c ON c.id=t.channel_id WHERE t.workspace_id=?",
                                                        (ws_id(request),)) if r["l"]}),
                 styles=chmod.STYLES)
-    return _with_cookie(resp, cid) if channel != "" else resp
+    return _with_cookie(resp, cid) if channel != "" and not nid_i else resp
 
 
 @app.get("/ideas/{tid}", response_class=HTMLResponse)
@@ -686,6 +727,11 @@ def analytics_page(request: Request, channel: str = "", sort: str = "new", kind:
     daily = rep.get("daily") or []
     ctx: dict[str, Any] = {"channels": chans, "ch": ch, "rep": rep, "vids": vids, "sort": sort, "kind": kind,
                            "daily": daily, "peak": max([d["views"] for d in daily] + [1]), "tiers": growth.TIERS}
+    if ch:
+        ctx["lessons"] = db.q("SELECT * FROM lessons WHERE channel_id=? AND status IN ('active','off') ORDER BY "
+                              "status, kind, id DESC LIMIT 20", (ch["id"],))
+        ctx["learning_busy"] = bool(db.q1("SELECT 1 FROM tasks WHERE type='learning_review' AND status IN "
+                                          "('pending','running')"))
     if is_admin(request):                          # platform costs: superadmin only
         ctx.update(usage=router.spend_by_provider(),
                    costs=db.q("SELECT substr(created_at,1,10) AS day, ROUND(SUM(cost_usd),4) AS cost, COUNT(*) AS calls "
@@ -693,6 +739,22 @@ def analytics_page(request: Request, channel: str = "", sort: str = "new", kind:
                    yt_units=db.q("SELECT day, SUM(units) AS units FROM api_quota GROUP BY day ORDER BY day DESC LIMIT 14"))
     resp = page(request, "analytics.html", **ctx)
     return _with_cookie(resp, cid) if channel else resp
+
+
+@app.post("/api/channels/{cid}/learn")
+def api_channel_learn(cid: int):
+    worker.enqueue("learning_review", {"channel_id": cid}, dedupe=True, max_attempts=1)
+    return ok(detail="Reviewing this channel's results — lessons appear here in a minute")
+
+
+@app.post("/api/lessons/{lid}/{action}")
+def api_lesson(request: Request, lid: int, action: str):
+    row = db.q1("SELECT l.id FROM lessons l JOIN channels c ON c.id=l.channel_id WHERE l.id=? AND c.workspace_id=?",
+                (lid, ws_id(request)))
+    if not row or action not in ("on", "off"):
+        return bad("not found", 404)
+    db.update("lessons", lid, {"status": "active" if action == "on" else "off", "updated_at": db.iso()})
+    return ok()
 
 
 @app.post("/api/channels/{cid}/analytics")
@@ -1015,14 +1077,19 @@ async def api_niche_research(request: Request):
 
 
 @app.post("/api/niches/{nid}/{action}")
-def api_niche_action(nid: int, action: str):
-    if action == "approve":
-        db.ex("UPDATE niches SET status='candidate' WHERE status='approved'")
-        db.update("niches", nid, {"status": "approved", "approved_at": db.iso()})
-        n = db.q1("SELECT name FROM niches WHERE id=?", (nid,))
-        logs.event("info", "research", f"Niche approved: {n['name'] if n else nid}")
-        worker.enqueue("ideation", {"niche_id": nid, "count": 10}, dedupe=True)
-        return ok(next="/ideas")
+def api_niche_action(request: Request, nid: int, action: str):
+    n = db.q1("SELECT name FROM niches WHERE id=?", (nid,))
+    if not n:
+        return bad("not found", 404)
+    if action in ("approve", "ideas"):
+        if action == "approve":
+            db.ex("UPDATE niches SET status='candidate' WHERE status='approved'")
+            db.update("niches", nid, {"status": "approved", "approved_at": db.iso()})
+            logs.event("info", "research", f"Niche approved: {n['name']}")
+        # ideas for THIS niche, owned by this account and tied to no channel (pick a channel — or none — per video)
+        worker.enqueue("ideation", {"niche_id": nid, "count": 10, "workspace_id": ws_id(request)},
+                       dedupe=True, max_attempts=2)
+        return ok(next=f"/ideas?channel=all&nid={nid}", detail=f"Researching ideas for “{n['name']}”…")
     if action == "reject":
         db.update("niches", nid, {"status": "rejected"})
         return ok()
@@ -1038,7 +1105,7 @@ async def api_ideas(request: Request):
     fmts = [f for f in ("short", "long") if data.get(f"fmt_{f}")] or \
         [f for f in data.get("formats", profile.formats()) if f in ("short", "long")] or profile.formats()
     tid = worker.enqueue("ideation", {"niche_id": niche["id"], "count": max(3, min(20, int(data.get("count", 10)))),
-                                      "formats": fmts}, dedupe=True, max_attempts=2)
+                                      "formats": fmts, "workspace_id": ws_id(request)}, dedupe=True, max_attempts=2)
     return ok(task_id=tid)
 
 
@@ -1065,11 +1132,25 @@ async def api_topic(request: Request, tid: int, action: str):
         from .. import jobs
         if not plans.can(ws_id(request), "create"):
             return bad(f"“{plans.FEATURES['create']}” isn't enabled for your account.")
-        if not t.get("channel_id"):
-            return bad("This idea is not assigned to a channel.")
+        data = await body(request)
+        cid, no_upload = t.get("channel_id"), False
+        if not cid:                                  # researched-niche idea: the chosen channel, or none (just make it)
+            pick = str(data.get("channel_id") or "none")
+            if pick.isdigit():
+                cid = int(pick)
+                if not auth.owns(ws_id(request), "channels", cid):
+                    return bad("channel not found", 404)
+            else:
+                cid, no_upload = _general_channel(ws_id(request)), True
+                if not cid:
+                    return bad("Create a channel first.")
         try:
-            res = jobs.create(t["channel_id"], "", idea_id=tid, fmt=None if action == "video" else action)
-        except ValueError as e:
+            if data.get("voice_id"):
+                plans.require(ws_id(request), "voice_clone")
+            res = jobs.create(cid, "", idea_id=tid, fmt=None if action == "video" else action, no_upload=no_upload,
+                              use_cast=bool(data.get("use_cast")) if not t.get("channel_id") else None,
+                              voice_id=data.get("voice_id") or None)
+        except (ValueError, plans.LimitExceeded) as e:
             return bad(str(e))
         pids = res.get("production_ids") or []
         return ok(next=f"/productions/{pids[0]}" if pids else "/queue")
@@ -1857,7 +1938,7 @@ def api_job_control(pid: int, action: str):
 
 @app.get("/create", response_class=HTMLResponse)
 @app.get("/edit", response_class=HTMLResponse)
-def create_page(request: Request, media: str = "", channel: str = ""):
+def create_page(request: Request, media: str = "", channel: str = "", voice: str = ""):
     from .. import channels as chmod
     ws = ws_id(request)
     chosen = [int(x) for x in media.split(",") if x.isdigit()]
@@ -1868,7 +1949,8 @@ def create_page(request: Request, media: str = "", channel: str = ""):
     return page(request, "create.html", mode="edit" if request.url.path == "/edit" else "create",
                 videogen=videogen.estimate(),
                 channels=chmod.all_channels(ws), ch=chmod.get(_channel_arg(request, channel)), picked=picked,
-                recent=recent, limits=lim, accept=",".join(sorted(e for ex in uploads_mod().KINDS.values() for e in ex)))
+                recent=recent, limits=lim, accept=",".join(sorted(e for ex in uploads_mod().KINDS.values() for e in ex)),
+                my_voices=_my_voices(ws), voice_pick=voice)
 
 
 def uploads_mod():
@@ -1896,6 +1978,76 @@ async def api_media_upload(request: Request):
                                           "has_audio")}, duplicate=bool(m.get("duplicate")))
 
 
+def _general_channel(ws: int, language: str = "English") -> int | None:
+    """Where a channel-less video is made: a general-purpose channel, never the NIFTY daily slot."""
+    from .. import channels as chmod
+    mine = chmod.all_channels(ws)
+    general = [c for c in mine if c["workflow"] in ("auto", "factual", "animated_story")]
+    auto = [c for c in general if c["workflow"] == "auto"]
+    if auto or general:
+        return (auto or general)[0]["id"]
+    try:
+        plans.check(ws, "channel")
+        return chmod.create({"name": "General videos", "workflow": "auto", "formats": "both", "language": language}, ws)
+    except plans.LimitExceeded:
+        return mine[0]["id"] if mine else None
+
+
+# ------------------------------------------------------------------ my voice (cloned voices)
+
+def _my_voices(ws: int) -> list[dict[str, Any]]:
+    from ..media import voiceclone
+    return voiceclone.list_for(ws) if plans.can(ws, "voice_clone") else []
+
+
+@app.get("/voices", response_class=HTMLResponse)
+def voices_page(request: Request):
+    from ..media import voiceclone
+    ws = ws_id(request)
+    rows = voiceclone.list_for(ws)
+    busy = {(db.loads(t["payload"], {}) or {}).get("voice_id") for t in
+            db.q("SELECT payload FROM tasks WHERE type='voice_preview' AND status IN ('pending','running')")}
+    for v in rows:
+        prev = voiceclone.folder(ws, v["id"]) / "preview.wav"
+        v["sample_url"] = media_url(v["sample_path"])
+        v["preview_url"] = media_url(str(prev)) + f"?v={int(prev.stat().st_mtime)}" if prev.exists() else None
+        v["previewing"] = v["id"] in busy
+    return page(request, "voices.html", voices=rows, engine=voiceclone.status(), consent=voiceclone.CONSENT,
+                allowed=plans.can(ws, "voice_clone"))
+
+
+@app.post("/api/voices")
+async def api_voice_add(request: Request):
+    from ..media import voiceclone
+    ws = ws_id(request)
+    if not plans.can(ws, "voice_clone"):
+        return bad(f"“{plans.FEATURES['voice_clone']}” isn't enabled for your account.")
+    data = await body(request)
+    try:
+        raw = base64.b64decode(str(data.get("data") or "").split(",")[-1] or b"", validate=False)
+        vid = voiceclone.add(ws, request.state.sess["user"]["id"], str(data.get("name") or ""),
+                             str(data.get("language") or ""), raw, str(data.get("filename") or ""),
+                             data.get("consent") is True)
+    except (voiceclone.VoiceError, ValueError) as e:
+        return bad(str(e))
+    worker.enqueue("voice_preview", {"voice_id": vid}, dedupe=True, max_attempts=2)
+    return ok(voice_id=vid)
+
+
+@app.post("/api/voices/{vid}/{action}")
+def api_voice_action(request: Request, vid: int, action: str):
+    from ..media import voiceclone
+    if not voiceclone.get(vid, ws_id(request)):
+        return bad("not found", 404)
+    if action == "preview":
+        worker.enqueue("voice_preview", {"voice_id": vid}, dedupe=True, max_attempts=2)
+        return ok()
+    if action == "delete":
+        voiceclone.delete(ws_id(request), vid)
+        return ok()
+    return bad("unknown action")
+
+
 @app.post("/api/create")
 async def api_create(request: Request):
     """One entry point for the Create and Upload & Edit pages."""
@@ -1915,26 +2067,18 @@ async def api_create(request: Request):
         plans.require(ws, "upload_edit" if media_ids else "create")
         if data.get("ai_video"):
             plans.require(ws, "ai_video")
+        if data.get("voice_id"):
+            plans.require(ws, "voice_clone")
         if media_ids:
-            pid = editing.create(ws, req, media_ids, channel_id=cid, fmt=fmt, user_id=request.state.sess["user"]["id"])
+            pid = editing.create(ws, req, media_ids, channel_id=cid, fmt=fmt, user_id=request.state.sess["user"]["id"],
+                                 voice_id=data.get("voice_id") or None)
             return ok(production_ids=[pid], next=f"/productions/{pid}", detail="Edit job started")
         if not req:
             return bad("Describe the video you want, or add files to edit.")
         if not cid:                                  # no channel picked: a general-purpose one, never the NIFTY slot
-            mine = chmod.all_channels(ws)
-            general = [c for c in mine if c["workflow"] in ("auto", "factual", "animated_story")]
-            auto = [c for c in general if c["workflow"] == "auto"]
-            if auto or general:
-                cid = (auto or general)[0]["id"]
-            else:
-                try:
-                    plans.check(ws, "channel")
-                    cid = chmod.create({"name": "General videos", "workflow": "auto", "formats": "both",
-                                        "language": editing.output_language(req, None)}, ws)
-                except plans.LimitExceeded:
-                    cid = mine[0]["id"] if mine else None
-                if not cid:
-                    return bad("Create a channel first.")
+            cid = _general_channel(ws, editing.output_language(req, None))
+            if not cid:
+                return bad("Create a channel first.")
         if data.get("ai_video"):
             from ..ai import videogen
             est = videogen.estimate()
@@ -1944,7 +2088,8 @@ async def api_create(request: Request):
                 return bad(f"This job's AI clips (~${est['usd']:.2f}) would pass the monthly cap "
                            f"(${est['spent_this_month']:.2f} of ${est['cap']:.2f} used).")
         res = jobs.create(cid, req, fmt=fmt, no_upload=bool(data.get("no_upload")), ai_video=bool(data.get("ai_video")),
-                          use_cast=bool(data["use_cast"]) if "use_cast" in data else None)
+                          use_cast=bool(data["use_cast"]) if "use_cast" in data else None,
+                          voice_id=data.get("voice_id") or None)
     except (ValueError, plans.LimitExceeded) as e:
         return bad(str(e))
     pids = res.get("production_ids") or []
@@ -2227,6 +2372,21 @@ async def api_admin_site(request: Request):
 async def api_admin_signup(request: Request):
     settings.set("auth.allow_signup", bool((await body(request)).get("allow")))
     return ok()
+
+
+@app.get("/system", response_class=HTMLResponse)
+def system_page(request: Request):
+    from .. import system_setup
+    return page(request, "system.html", s=system_setup.summary(), installing=system_setup.running())
+
+
+@app.post("/api/system/install/{what}")
+def api_system_install(what: str):
+    from .. import system_setup
+    if what not in ("kokoro_download", *system_setup.INSTALLERS):
+        return bad("unknown component")
+    tid = worker.enqueue(what, {"variant": "int8"} if what == "kokoro_download" else {}, dedupe=True, max_attempts=1)
+    return ok(task_id=tid, detail="Installing in the background — this page updates when it's done")
 
 
 @app.get("/tools", response_class=HTMLResponse)

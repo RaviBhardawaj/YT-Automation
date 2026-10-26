@@ -161,6 +161,62 @@ def cues(transcript: list[dict[str, Any]], pieces: list[dict[str, Any]], max_wor
     return [c for c in out if c["end"] - c["start"] >= 0.25]
 
 
+def speech_lines(transcript: list[dict[str, Any]], pieces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Whole spoken lines (transcript segments) on the output timeline — what a new voice re-speaks."""
+    out = []
+    for pc in pieces:
+        for seg in transcript:
+            a, b = max(seg["start"], pc["src_start"]), min(seg["end"], pc["src_end"])
+            if b - a < 0.3 or not (seg.get("text") or "").strip():
+                continue
+            out.append({"start": pc["out_start"] + (a - pc["src_start"]) / pc["speed"],
+                        "end": pc["out_start"] + (b - pc["src_start"]) / pc["speed"], "text": seg["text"].strip()})
+    return sorted(out, key=lambda x: x["start"])
+
+
+def revoice(joined: Path, lines: list[dict[str, Any]], voice_id: str, total: float, folder: Path) -> Path:
+    """Replace the speech in `joined` with the same lines spoken in a cloned voice, each at its original time
+    (sped up a little, at most 1.5x, when the new line is longer than its slot)."""
+    import wave
+
+    import numpy as np
+
+    from ..media import voiceclone
+    folder.mkdir(parents=True, exist_ok=True)
+    rate = 24000
+    track = np.zeros(int((total + 2) * rate), dtype=np.int32)
+    for i, ln in enumerate(lines):
+        audio, sr = voiceclone.say(ln["text"], voice_id, "")
+        if sr != rate:
+            audio = np.interp(np.linspace(0, len(audio) - 1, int(len(audio) * rate / sr)), np.arange(len(audio)),
+                              audio.astype(np.float32)).astype(np.int16)
+        slot = (lines[i + 1]["start"] if i + 1 < len(lines) else total) - ln["start"]
+        if slot > 0.3 and len(audio) / rate > slot * 1.02:
+            raw, fast = folder / f"l{i:04d}.wav", folder / f"l{i:04d}_fit.wav"
+            with wave.open(str(raw), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(rate)
+                w.writeframes(audio.tobytes())
+            ff(["-i", str(raw), "-filter:a", f"atempo={min(len(audio) / rate / slot, 1.5):.3f}", "-ar", str(rate),
+                "-ac", "1", str(fast)])
+            with wave.open(str(fast), "rb") as w:
+                audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+        at = int(ln["start"] * rate)
+        end = min(len(track), at + len(audio))
+        track[at:end] += audio[:end - at]
+    voice = folder / "voice.wav"
+    with wave.open(str(voice), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(np.clip(track, -32768, 32767).astype(np.int16).tobytes())
+    out = folder / "revoiced.mp4"
+    ff(["-i", str(joined), "-i", str(voice), "-map", "0:v", "-map", "1:a", "-c:v", "copy", *AAC,
+        "-t", f"{total:.3f}", str(out)])
+    return out
+
+
 def _srt_time(t: float) -> str:
     ms = int(round(t * 1000))
     return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"

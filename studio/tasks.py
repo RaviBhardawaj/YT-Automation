@@ -24,6 +24,35 @@ def _ideation(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     return engine.run_ideation(payload)
 
 
+@worker.handler("whisper_download")
+def _whisper_download(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from . import system_setup
+    return system_setup.install_whisper()
+
+
+@worker.handler("voiceclone_setup")
+def _voiceclone_setup(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from . import system_setup
+    return system_setup.install_voiceclone()
+
+
+@worker.handler("learning_review")
+def _learning_review(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from . import learning
+    if payload.get("channel_id"):
+        return learning.review(int(payload["channel_id"]))
+    return learning.review_all()
+
+
+@worker.handler("voice_preview")
+def _voice_preview(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from .media import voiceclone
+    v = voiceclone.get(payload["voice_id"])
+    if not v:
+        return {"skipped": "voice deleted"}
+    return {"preview": str(voiceclone.preview(v))}
+
+
 @worker.handler("production")
 def _production(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     res = pipeline.run_production(payload, task)
@@ -82,9 +111,9 @@ def _available_ideas(fmt: str) -> list[dict[str, Any]]:
     if not niche:
         return []
     min_score = float(settings.get("production.min_topic_score", 35))
-    approved = db.q("SELECT * FROM topics WHERE niche_id=? AND format=? AND status='approved' ORDER BY score DESC",
+    approved = db.q("SELECT * FROM topics WHERE niche_id=? AND channel_id IS NOT NULL AND format=? AND status='approved' ORDER BY score DESC",
                     (niche["id"], fmt))
-    auto = db.q("SELECT * FROM topics WHERE niche_id=? AND format=? AND status='idea' AND score>=? ORDER BY score DESC",
+    auto = db.q("SELECT * FROM topics WHERE niche_id=? AND channel_id IS NOT NULL AND format=? AND status='idea' AND score>=? ORDER BY score DESC",
                 (niche["id"], fmt, min_score)) if settings.get("production.auto_pick_topics", True) else []
     return approved + auto
 

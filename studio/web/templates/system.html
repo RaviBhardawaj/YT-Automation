@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+{% set m = s.machine %}
+<div class="head">
+  <div><h1>Computer &amp; setup</h1><div class="muted">What this server is, what the studio needs on it, and one-click installs. Free options come first; paid ones are only used when free ones fail.</div></div>
+</div>
+{% if installing %}<div class="note" data-autorefresh="20">Installing: {{ installing|join(', ')|replace('_', ' ') }} — this page refreshes until it's done.</div>{% endif %}
+
+<div class="card" style="margin-bottom:14px">
+  <h2>This computer</h2>
+  <div class="grid g3 small">
+    <div><div class="muted">System</div><b>{{ m.os }} {{ m.os_version }}</b> · {{ m.arch }}</div>
+    <div><div class="muted">Processor</div><b>{{ m.cpu }}</b> <span class="chip">{{ {'apple':'Apple Silicon','intel':'Intel','amd':'AMD'}.get(m.cpu_kind, 'other') }}</span></div>
+    <div><div class="muted">Graphics</div><b>{{ m.gpu }}</b> {% if m.accelerated %}<span class="chip ok">AI acceleration</span>{% else %}<span class="chip warn">CPU only</span>{% endif %}</div>
+    <div><div class="muted">Memory</div><b>{{ m.ram_gb or '—' }} GB</b></div>
+    <div><div class="muted">Free disk</div><b>{{ m.disk_free_gb }} GB</b>{% if m.disk_free_gb < 15 %} <span class="chip warn">low</span>{% endif %}</div>
+    <div><div class="muted">Python</div><b>{{ m.python }}</b></div>
+  </div>
+  {% if not m.accelerated %}<div class="note small" style="margin-top:10px">This processor has no AI acceleration the studio can use, so voice cloning and local AI models run slowly. Everything else works normally; cloud AI (free Ollama Cloud and Gemini keys) does the heavy writing.</div>{% endif %}
+  {% if m.disk_free_gb < 15 %}<div class="note small" style="margin-top:10px">Disk space is low. Clear old videos under <a href="/storage">Storage</a> — rendered videos and voice models need room.</div>{% endif %}
+</div>
+
+{% for group in s.components|groupby('group') %}
+<div class="card" style="margin-bottom:14px">
+  <h2>{{ group.grouper }}</h2>
+  {% for c in group.list %}
+  <div class="spread small" style="padding:8px 0;border-top:1px solid var(--line, rgba(127,127,127,.15));gap:12px">
+    <div style="min-width:0">
+      {% if c.ok %}<span class="chip ok">✓ ready</span>{% else %}<span class="chip {{ 'err' if group.grouper == 'Required' else 'warn' }}">missing</span>{% endif %}
+      <b>{{ c.name }}</b>{% if c.size and not c.ok %} <span class="muted">({{ c.size }})</span>{% endif %}
+      <div class="muted">{{ c.why }}</div>
+      {% if c.blocked and not c.ok %}<div class="small" style="color:var(--err, #d55)">Can't install: {{ c.blocked }}</div>{% endif %}
+      {% if c.how and not c.ok %}<div class="small" style="margin-top:4px">Run this in Terminal on this computer: <code>{{ c.how }}</code></div>{% endif %}
+    </div>
+    <div class="row" style="flex-shrink:0">
+      {% if not c.ok and c.install and not c.blocked %}
+        <button class="sm primary" data-post="/api/system/install/{{ c.install }}" {{ 'disabled' if c.install in installing }}
+          data-confirm="Install {{ c.name }}{{ ' (' ~ c.size ~ ')' if c.size }} on this computer?">{{ 'Installing…' if c.install in installing else 'Install' }}</button>
+      {% endif %}
+      {% if c.key and not c.ok %}<a class="btn sm" href="{{ c.link }}" target="_blank" rel="noopener">Get key</a><a class="btn sm" href="/settings?tab=keys">Add key</a>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endblock %}

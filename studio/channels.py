@@ -223,7 +223,10 @@ def remove(channel_id: int) -> dict[str, int]:
     return {"videos_kept": kept}
 
 
-def next_publish_slot(ch: dict[str, Any]) -> str | None:
+SHORT_KINDS = ("story_short", "nifty_short", "edit_clip")
+
+
+def next_publish_slot(ch: dict[str, Any], main: bool = True) -> str | None:
     """Next occurrence of the channel's publish time (local), at least 20 minutes ahead; None = publish now."""
     from datetime import datetime, timedelta
     if not ch or not ch.get("publish_time"):
@@ -232,6 +235,16 @@ def next_publish_slot(ch: dict[str, Any]) -> str | None:
     now = datetime.now().astimezone()
     slot = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
     if slot <= now + timedelta(minutes=20):
+        slot += timedelta(days=1)
+    # one main video per slot: a backlog (after a pause or YouTube's upload limit) goes out on the following days
+    # instead of all at once. Shorts may share their day.
+    taken = {r["publish_at"] for r in db.q(
+        f"SELECT publish_at FROM productions WHERE channel_id=? AND publish_at>=? AND kind NOT IN "
+        f"{SHORT_KINDS!r} AND status IN ('approved','uploading','uploaded','paused')",
+        (ch["id"], db.iso(slot)))}
+    for _ in range(60 if main else 0):
+        if db.iso(slot) not in taken:
+            break
         slot += timedelta(days=1)
     return db.iso(slot)
 

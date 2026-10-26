@@ -114,7 +114,8 @@ def ensure_default_workspace() -> None:
 
 # ------------------------------------------------------------------ ownership checks
 
-OWNED = {"productions": "workspace_id", "topics": "workspace_id", "channels": "workspace_id", "media": "workspace_id"}
+OWNED = {"productions": "workspace_id", "topics": "workspace_id", "channels": "workspace_id", "media": "workspace_id",
+         "voices": "workspace_id"}
 
 
 def owns(ws_id: int, table: str, row_id: int) -> bool:

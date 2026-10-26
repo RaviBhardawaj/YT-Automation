@@ -23,7 +23,8 @@
       <span class="chip">{{ 'your niche' if n.source == 'user' else 'AI-proposed' }}</span></h2>
       <div class="muted">{{ n.description }}</div></div>
     <div class="row">
-      {% if n.status != 'approved' %}<button class="primary" data-post="/api/niches/{{ n.id }}/approve" data-confirm="Approve '{{ n.name }}' as the channel niche? Topic research starts immediately.">Approve niche</button>{% endif %}
+      {% if n.status != 'approved' %}<button class="primary" data-post="/api/niches/{{ n.id }}/approve" data-confirm="Approve '{{ n.name }}'? Video ideas for this niche are researched now — they aren't tied to your channels; you choose a channel (or none) per video.">Approve &amp; get ideas</button>{% else %}<button class="primary" data-post="/api/niches/{{ n.id }}/ideas">Get more ideas</button>{% endif %}
+      <a class="btn" href="/ideas?channel=all&nid={{ n.id }}">See its ideas</a>
       {% if n.status == 'candidate' %}<button data-post="/api/niches/{{ n.id }}/reject">Reject</button>{% endif %}
     </div>
   </div>

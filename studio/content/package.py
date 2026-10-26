@@ -151,8 +151,8 @@ def validate_scenes(scenes: list[Scene], fmt: str, *, check_totals: bool = True)
         if not VISUAL_QUERY_OK.match(s.visual_query.strip()):
             problems.append(f"scene {i}: visual_query must be plain ENGLISH keywords (letters, digits, spaces)")
         elif s.visual_type != "text_card" and VISUALS_NO_PEOPLE.search(s.visual_query):
-            problems.append(f"scene {i}: visual_query must not search for people/jobs ('{s.visual_query}') — show "
-                            "objects or places, or use visual_type 'text_card' for a person")
+            problems.append(f"scene {i}: visual_query must not search for a specific/real person ('{s.visual_query}') — "
+                            "show the subject or a generic person doing it, or use visual_type 'text_card'")
         if lang in ("Hindi", "Hinglish") and _ratio(DEVANAGARI, s.narration) < 0.6:
             problems.append(f"scene {i}: narration must be written in Devanagari script")
         if lang == "Hinglish" and (not s.caption_text.strip() or _ratio(LATIN, s.caption_text) < 0.6):
@@ -250,7 +250,14 @@ def _context(topic: dict[str, Any], evidence: list[dict[str, Any]]) -> str:
             + f"TOPIC: {topic['title']}\nORIGINAL ANGLE: {topic.get('angle') or '-'}\n"
             f"HOOK IDEA: {topic.get('hook_idea') or '-'}\n\n"
             f"{prompts.evidence_block(evidence, max_chars=16000, content_chars=1400)}\n\n"
-            f"{profile.language_rules()}\n")
+            f"{profile.language_rules()}\n"
+            + _learned(topic))
+
+
+def _learned(topic: dict[str, Any]) -> str:
+    """This channel's lessons — only for videos made for the channel (not stand-alone 'no channel' videos)."""
+    from .. import learning
+    return learning.prompt_block(topic.get("channel_id"))
 
 
 STYLE_NOTES = {
@@ -266,16 +273,19 @@ def _style() -> str:
     return "; ".join(STYLE_NOTES.get(s, s) for s in profile.styles())
 
 
-VISUALS_NO_PEOPLE = re.compile(
-    r"\b(person|people|man|men|woman|women|boy|girl|child|children|kid|kids|face|faces|portrait|selfie|engineer|"
-    r"engineers|scientist|scientists|director|doctor|teacher|student|students|leader|minister|president|politician|"
-    r"ceo|founder|actor|actress|celebrity|worker|workers|team|officer|chairman)\b", re.I)
+VISUALS_NO_PEOPLE = re.compile(          # roles that point at one real, identifiable person
+    r"\b(face|faces|portrait|selfie|leader|minister|president|politician|ceo|founder|actor|actress|celebrity|"
+    r"chairman|prime minister|governor|mayor|king|queen)\b", re.I)
 
 VISUAL_RULES = (
-    "VISUALS: every scene needs a concrete, filmable visual. visual_query = 2-5 plain ENGLISH keywords for stock "
-    "footage search: objects, places, equipment, nature or phenomena — NEVER people, faces, jobs or names (a stock "
-    "photo of a random person must never stand in for a real person). When a scene is about a specific person, use "
-    "visual_type 'text_card' with their name/role as on_screen_text. No brand names or text. This is the ONLY "
+    "VISUALS: every scene needs a concrete, filmable visual that a viewer instantly connects to what is being said. "
+    "visual_query = 2-5 plain ENGLISH keywords for stock footage search naming THIS scene's specific subject and "
+    "action (e.g. 'glucose meter finger test', 'doctor examining diabetic foot', 'stock market candlestick chart') — "
+    "never vague words alone like 'technology', 'business', 'success', 'abstract', 'concept'. Generic people doing "
+    "the thing are fine (a doctor, a patient, a student, a family); NEVER a named or real, identifiable person, face "
+    "portrait or public figure (a stock photo of a random person must never stand in for a real person). When a "
+    "scene is about a specific person, use visual_type 'text_card' with their name/role as on_screen_text. "
+    "visual_description = one sentence describing exactly what should be on screen. No brand names or text. This is the ONLY "
     "field that is always English. on_screen_text is shown to viewers, so it uses the channel's display language "
     "and script (see LANGUAGE). visual_type: 'video' for motion, 'photo' for a still, 'illustration' for abstract "
     "concepts, 'text_card' for a key number or statement shown as a designed card. Vary visuals from scene to scene.")

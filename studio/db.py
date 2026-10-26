@@ -529,6 +529,44 @@ MIGRATIONS: list[str] = [
         UNIQUE (production_id, platform)
     );
     """,
+    # v14: cloned voices — a person's own voice (with recorded consent) used to narrate chosen videos
+    """
+    CREATE TABLE voices (
+        id INTEGER PRIMARY KEY,
+        workspace_id INTEGER NOT NULL,
+        user_id INTEGER,
+        name TEXT NOT NULL,
+        language TEXT NOT NULL DEFAULT 'Hindi',
+        sample_path TEXT NOT NULL,                    -- cleaned reference clip (mono WAV, 10-30 s)
+        sample_seconds REAL NOT NULL DEFAULT 0,
+        consent TEXT NOT NULL,                        -- the statement the person agreed to
+        consent_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ready',         -- ready | deleted
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_voices_ws ON voices(workspace_id, status);
+    """,
+    # v15: why each picture was used for its scene (vision score / tag match / card)
+    """
+    ALTER TABLE assets ADD COLUMN relevance TEXT NOT NULL DEFAULT '{}';
+    """,
+    # v16: what each channel learned from its own results (fed into its next scripts and ideas)
+    """
+    CREATE TABLE lessons (
+        id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL,
+        workspace_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,                           -- audience | quality
+        lesson TEXT NOT NULL,
+        evidence TEXT NOT NULL DEFAULT '',
+        confidence TEXT NOT NULL DEFAULT 'low',
+        status TEXT NOT NULL DEFAULT 'active',        -- active | old | off (switched off by the owner)
+        videos_used INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_lessons_ch ON lessons(channel_id, status);
+    """,
 ]
 
 

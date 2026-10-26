@@ -25,9 +25,10 @@ PLANS: dict[str, dict[str, Any]] = {
 }
 # Features the superadmin can switch on or off per workspace (plan defaults first, then overrides).
 FEATURES = {"create": "Create videos from a prompt", "upload_edit": "Upload & edit videos",
-            "publish": "Publish to YouTube", "schedules": "Automatic daily videos", "ai_video": "AI video clips (paid)"}
+            "publish": "Publish to YouTube", "schedules": "Automatic daily videos", "ai_video": "AI video clips (paid)",
+            "voice_clone": "Clone my voice"}
 PLAN_FEATURES = {"free": {"create", "upload_edit", "publish", "schedules"},
-                 "creator": {"create", "upload_edit", "publish", "schedules"},
+                 "creator": {"create", "upload_edit", "publish", "schedules", "voice_clone"},
                  "pro": set(FEATURES), "studio": set(FEATURES)}
 
 LIMIT_LABELS = {"videos_per_month": "Videos per month", "render_minutes_per_month": "Rendered minutes per month",

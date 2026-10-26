@@ -92,6 +92,7 @@
         request: document.getElementById("req").value, media_ids: ids,
         channel_id: chSel.value === "none" ? null : chSel.value, no_upload: chSel.value === "none", ai_video: wantAi,
         format: document.getElementById("format").value || null,
+        voice_id: (document.getElementById("voice") || {}).value || null,
       });
       toast(j.detail || "Started");
       location.href = j.next;

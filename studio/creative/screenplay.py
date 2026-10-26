@@ -85,6 +85,11 @@ class Dialogue(BaseModel):
     scenes: list[SceneDialogue] = Field(..., min_length=1, max_length=6)
 
 
+
+def _learned(channel: dict[str, Any], plan: dict[str, Any] | None = None) -> str:
+    from .. import learning
+    return "" if (plan or {}).get("no_upload") else learning.prompt_block(channel.get("id"))
+
 def _lang_rules(language: str) -> str:
     if language in ("Hindi", "Hinglish"):
         return ("LANGUAGE: everyday spoken Hindi/Hinglish the way Indian families and friends talk — write ALL dialogue "
@@ -125,6 +130,7 @@ def write(plan: dict[str, Any], channel: dict[str, Any], idea: dict[str, Any] | 
         f"Tone: {plan['tone'] or 'set by the requested genre below (not the channel’s usual tone)'}.\n"
         + (f"CHANNEL INSTRUCTIONS: {channel['instructions']}\n" if channel.get("instructions") else "")
         + (f"CHANNEL RESTRICTIONS: {channel['restrictions']}\n" if channel.get("restrictions") else "")
+        + _learned(channel, plan)
         + f"GENRE FOR THIS EPISODE: {plan['content_type']} — {genre}.\n"
         + (f"The channel usually makes {', '.join(channel.get('styles') or [])}; THIS episode is "
            f"{plan['content_type']} because the user asked for it. Keep the recurring characters if they fit, "

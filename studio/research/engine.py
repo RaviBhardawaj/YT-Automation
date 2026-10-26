@@ -286,8 +286,8 @@ def _performance_context() -> str:
     scored = []
     for r in rows:
         m = db.loads(r["metrics"], {})
-        scored.append((m.get("views", 0), m.get("averageViewPercentage"), r["title"], r["format"]))
-    scored.sort(reverse=True)
+        scored.append((m.get("views") or 0, m.get("averageViewPercentage") or 0, r["title"] or "", r["format"] or ""))
+    scored.sort(key=lambda s: (s[0], s[1]), reverse=True)     # metrics can be missing (None) on fresh uploads
     best = "; ".join(f"{t} ({f}, {v} views, avg viewed {p}%)" for v, p, t, f in scored[:5])
     worst = "; ".join(f"{t} ({f}, {v} views)" for v, p, t, f in scored[-3:])
     return (f"CHANNEL PERFORMANCE (our own analytics; small samples are noisy, treat as weak signals): "
@@ -372,6 +372,16 @@ def _channel_fields(ch: dict[str, Any] | None, idea: Any, ev_by_id: dict[int, An
             "source_url": src.get("url"), "source_date": (src.get("published_at") or "")[:10] or None}
 
 
+def _niche_fields(payload: dict[str, Any], idea: Any, ev_by_id: dict[int, Any], language: str) -> dict[str, Any]:
+    """Ideas from a researched niche: owned by the workspace that approved it, not tied to any channel."""
+    cited = [ev_by_id[i] for i in idea.evidence_ids if i in ev_by_id]
+    src = next(iter(sorted((e for e in cited if e.get("published_at")), key=lambda e: e["published_at"],
+                           reverse=True)), cited[0] if cited else {})
+    return {"workspace_id": int(payload.get("workspace_id") or 1), "idea_kind": "inspired" if cited else "evergreen",
+            "language": language, "summary": idea.angle, "source_url": src.get("url"),
+            "source_date": (src.get("published_at") or "")[:10] or None}
+
+
 def run_ideation(payload: dict[str, Any]) -> dict[str, Any]:
     ch = None
     if payload.get("channel_id"):                     # studio channel: its own niche, language and audience
@@ -389,14 +399,25 @@ def run_ideation(payload: dict[str, Any]) -> dict[str, Any]:
     count = int(payload.get("count", 10))
     fmts = payload.get("formats") or profile.formats()
     language, region = profile.language(), settings.get("research.region")
+    if not ch:                       # a researched niche stands on its own: not the channels' niche, audience or results
+        language = payload.get("language") or language
+        fmts = payload.get("formats") or ["long", "short"]
     run_id = start_run("ideation", niche["name"])
     queries = db.loads(niche["search_queries"], []) or [niche["name"]]
     ev, used = collect(queries, purpose="ideation", run_id=run_id, niche_id=niche["id"],
                        fmt=fmts[0] if len(fmts) == 1 else None)
     ev_by_id = {e["id"]: e for e in ev}
-    existing = _existing_titles()
-    prompt = (f"CHANNEL PROFILE: {profile.summary_text()}\nNICHE: {niche['name']} — {niche['description']}\n"
-              f"{_performance_context()}\n\n"
+    if ch:
+        existing = _existing_titles()
+        from .. import learning
+        context = f"CHANNEL PROFILE: {profile.summary_text()}\nNICHE: {niche['name']} — {niche['description']}\n" \
+                  f"{_performance_context()}\n{learning.prompt_block(ch['id'])}"
+    else:
+        existing = [(r["id"], r["title"]) for r in db.q("SELECT id, title FROM topics WHERE niche_id=? AND "
+                                                         "status != 'rejected' ORDER BY id DESC LIMIT 300", (niche["id"],))]
+        context = (f"NICHE (researched on its own — it is NOT the niche of any existing channel; every idea must be "
+                   f"about this niche only): {niche['name']} — {niche['description']}\nLanguage: {language}.")
+    prompt = (f"{context}\n\n"
               f"ALREADY COVERED OR PLANNED (do not repeat or closely paraphrase): "
               f"{'; '.join(t for _, t in existing[:80]) or 'nothing yet'}\n\n"
               f"{prompts.evidence_block(ev)}\n\n"
@@ -404,7 +425,7 @@ def run_ideation(payload: dict[str, Any]) -> dict[str, Any]:
               f"Ground each idea in the evidence (cite ids) — prefer fresh developments, real questions people are "
               f"asking, and gaps where existing videos are old or shallow. Each title must be a working title in the "
               f"channel language, specific and honest (no clickbait lies). Give each a distinct original angle. "
-              f"{profile.language_rules()}")
+              f"{profile.language_rules() if ch else f'LANGUAGE: write titles and angles in {language}.'}")
 
     def check(ideas: TopicIdeas) -> None:
         bad = [i.format for i in ideas.ideas if i.format not in fmts]
@@ -435,7 +456,8 @@ def run_ideation(payload: dict[str, Any]) -> dict[str, Any]:
             "score": score, "score_breakdown": db.dumps(breakdown), "claims": db.dumps(claims),
             "evidence_ids": db.dumps([i for i in dict.fromkeys(idea.evidence_ids) if i in ev_by_id]),
             "gap": db.dumps(gap or {}), "search_query": idea.search_query, "norm_title": dedup.normalize(idea.title),
-            "created_at": db.iso(), "updated_at": db.iso(), **_channel_fields(ch, idea, ev_by_id, language)})
+            "created_at": db.iso(), "updated_at": db.iso(),
+            **(_channel_fields(ch, idea, ev_by_id, language) or _niche_fields(payload, idea, ev_by_id, language))})
         batch.append((tid, idea.title))
         created.append(tid)
     finish_run(run_id, f"{len(created)} ideas, {dupes} duplicates skipped (by {meta['provider']}/{meta['model']})", used)

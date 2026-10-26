@@ -102,10 +102,13 @@ def stage_characters(p: dict[str, Any]) -> None:
     pipeline.save(p["id"], episode=json.dumps(ep, ensure_ascii=False))
 
 
-def _voice_for(speaker: str, cast: dict[str, Any], ch: dict[str, Any]) -> tuple[str, str, float]:
+def _voice_for(speaker: str, cast: dict[str, Any], ch: dict[str, Any],
+               narrator: dict[str, Any] | None = None) -> tuple[str, str, float]:
     if speaker in cast:
         v = cast[speaker]["voice"]
         gender = cast[speaker]["design"]["gender"]
+    elif narrator:                                           # a cloned voice chosen for this video narrates
+        return "clone", narrator["voice_id"], 1.0
     else:                                                    # narrator = the channel's voice
         v = ch.get("voice") or {}
         gender = "female"
@@ -133,6 +136,7 @@ def stage_voice(p: dict[str, Any]) -> None:
     work.mkdir(exist_ok=True)
     lang = "en" if p.get("language") == "English" else "hi"
     paid_before = tts._sarvam_chars["n"]
+    narrator = pipeline.video_voice(p)
     for attempt in range(2):
         lines_out, reused = [], 0
         try:
@@ -143,7 +147,7 @@ def stage_voice(p: dict[str, Any]) -> None:
                         if wav.exists():
                             reused += 1
                         else:
-                            engine, voice_id, pace = _voice_for(ln["speaker"], cast, ch)
+                            engine, voice_id, pace = _voice_for(ln["speaker"], cast, ch, narrator)
                             audio, sr = tts._synth_sentence(screenplay.clean_text(ln["text"]), engine, voice_id,
                                                             lang, pace)
                             audio = _resample(audio, sr)

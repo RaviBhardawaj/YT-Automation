@@ -196,8 +196,10 @@ def stage_assets(p: dict[str, Any]) -> str | None:
                 continue
         # test mode: original procedural art only (no network, no API keys needed)
         rec = visuals.choose(scene, idx, p["format"], used, work, seed,
-                             providers=[] if p["test_mode"] else None, failures=failures)
+                             providers=[] if p["test_mode"] else None, failures=failures,
+                             topic=pkg.get("title") or p.get("title") or "")
         notes = rec.pop("notes", [])
+        rec["relevance"] = db.dumps(rec.pop("relevance", {}))
         rec.pop("synthetic", None)
         is_card = rec.pop("is_card", False)
         db.insert("assets", {**rec, "production_id": p["id"], "created_at": db.iso(),
@@ -240,16 +242,33 @@ def _ai_clip(p: dict[str, Any], scene: dict[str, Any], idx: int, work: Path) -> 
             "height": info["height"], "duration": info["duration"]}
 
 
+def video_voice(p: dict[str, Any]) -> dict[str, Any] | None:
+    """A cloned voice chosen for this video (or as its channel's narrator); None = the configured voice."""
+    from .media import voiceclone
+    req = p.get("request") if isinstance(p.get("request"), dict) else db.loads(p.get("request"), {}) or {}
+    want = req.get("voice") or {}
+    if not want and p.get("channel_id"):
+        from . import channels
+        want = (channels.get(p["channel_id"]) or {}).get("voice") or {}
+    if want.get("engine") != "clone":
+        return None
+    v = voiceclone.get(want.get("voice_id"), p.get("workspace_id") or 1)
+    if not v:
+        raise NeedsAttention("The cloned voice chosen for this video was deleted — pick another voice and retry.")
+    return voiceclone.as_voice(v)
+
+
 def stage_voice(p: dict[str, Any]) -> str | None:
     sarvam_before = tts._sarvam_chars["n"]
-    voice = tts.current_voice()
+    own = video_voice(p)
+    voice = own or tts.current_voice()
     if not voice.get("installed"):
         raise NeedsAttention("No TTS voice is installed/selected. Open Settings › Voice, download a voice and test it.")
     pkg, tl = p["package"], p["timeline"] or {}
     work = workdir(p["id"]) / "audio"
     work.mkdir(exist_ok=True)
     scenes = tl.get("scenes") or []
-    key = f"{voice['engine']}:{voice['voice_id']}:{settings.get('voice').get('speed')}"
+    key = f"{voice['engine']}:{voice['voice_id']}:{1.0 if own else settings.get('voice').get('speed')}"
     if voice["engine"] == "sarvam" and not tts.sarvam_status().get("ok", True):
         key += ":fallback"                          # audio made with the free voice is redone once Sarvam is back
     if tl.get("voice_key") != key:
@@ -261,7 +280,7 @@ def stage_voice(p: dict[str, Any]) -> str | None:
                     wav = work / f"scene_{idx:03d}.wav"
                     if idx < len(scenes) and wav.exists() and scenes[idx].get("text") == scene["narration"]:
                         continue
-                    info = tts.synthesize_scene(scene["narration"], wav)
+                    info = tts.synthesize_scene(scene["narration"], wav, voice=own)
                     entry = {"index": idx, "wav": str(wav), "duration": info["duration"],
                              "sentences": info["sentences"], "text": scene["narration"]}
                     if idx < len(scenes):
@@ -455,22 +474,34 @@ def stage_thumbnail(p: dict[str, Any]) -> str | None:
     return None
 
 
+def _is_finance_video(p: dict[str, Any]) -> bool:
+    """Market/finance content: a finance channel, or a video planned as finance."""
+    from . import channels
+    ch = channels.get(p.get("channel_id")) or {}
+    plan = db.loads(p.get("request"), {}) or {}
+    niche = f"{ch.get('niche') or ''} {ch.get('sub_niche') or ''}".lower()
+    return (ch.get("workflow") == "nifty_daily" or plan.get("content_type") == "finance"
+            or any(w in niche for w in ("stock", "market", "trading", "invest", "nifty", "finance", "crypto")))
+
+
 def stage_qa(p: dict[str, Any]) -> str | None:
     pkg, tl = p["package"], p["timeline"]
     result = qa.run(p, pkg, tl, assets_for(p["id"]), tl.get("thumbnail"), tl.get("voice", {}),
                     pkg.get("review"), pkg.get("originality"))
-    if settings.get("compliance.finance_lint_all"):
-        # This channel publishes market education: general videos get the same language guard rails.
+    if settings.get("compliance.finance_lint_all") and _is_finance_video(p):
+        # Market-education videos get the same language guard rails as the NIFTY episodes. On a regular video
+        # it is a warning: the video is ready for you to review/download/upload, but never published
+        # automatically while such wording is in it.
         from .finance import lint as fin_lint
         # Check what the channel says — not the headlines and links of the articles it cites as sources
         desc = (pkg.get("final_description") or "").split("\n\nSources:\n")[0]
         text = "\n".join([pkg.get("title", ""), desc] +
                          [s["narration"] + "\n" + s.get("on_screen_text", "") for s in pkg.get("scenes", [])])
         found = fin_lint.prohibited_language(text)
-        result["checks"].append({"name": "financial-recommendation language", "ok": not found, "severity": "fail",
+        result["checks"].append({"name": "financial-recommendation language", "ok": not found, "severity": "warn",
                                  "detail": "none found" if not found else
-                                 "; ".join(f"{f['why']}: '{f['match']}'" for f in found[:5])})
-        result["passed"] = result["passed"] and not found
+                                 "; ".join(f"{f['why']}: '{f['match']}'" for f in found[:5])
+                                 + " — review the wording before publishing; it won't be auto-published"})
         result["auto_publish_ok"] = result["auto_publish_ok"] and not found
     save(p["id"], qa=result)
     from .youtube import oauth
@@ -608,8 +639,8 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
             save(pid, status="awaiting_approval", error=msg)
             return
         raise NeedsAttention(msg)
-    if by.startswith("auto") and ch and privacy == "public" and channels.next_publish_slot(ch):
-        privacy, publish_at = "scheduled", channels.next_publish_slot(ch)   # goes public at the channel's time
+    if by.startswith("auto") and ch and privacy == "public" and slot_for(p, ch):
+        privacy, publish_at = "scheduled", slot_for(p, ch)                # goes public at the channel's time
     if by.startswith("auto") and (db.loads(p.get("request"), {}) or {}).get("no_upload"):
         save(pid, status="awaiting_approval", error="Ready to download — made without a channel, so it isn't "
                                                     "uploaded automatically.")
@@ -627,6 +658,17 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
     worker.enqueue("upload", {"production_id": pid}, production_id=pid, max_attempts=8)
     logs.event("info", "pipeline", f"Approved by {by} for upload ({privacy}"
                + (f", publish at {publish_at}" if publish_at and privacy == 'scheduled' else "") + ")", production_id=pid)
+
+
+def slot_for(p: dict[str, Any], ch: dict[str, Any]) -> str | None:
+    """When this video goes public: the channel's next free daily slot; a Short never before its full episode."""
+    from . import channels
+    slot = channels.next_publish_slot(ch, p.get("kind") not in channels.SHORT_KINDS)
+    if slot and p.get("parent_id"):
+        parent = db.q1("SELECT publish_at, privacy FROM productions WHERE id=?", (p["parent_id"],))
+        if parent and parent["privacy"] == "scheduled" and parent["publish_at"] and parent["publish_at"] > slot:
+            slot = parent["publish_at"]
+    return slot
 
 
 def run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
@@ -668,7 +710,7 @@ def _run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]
         parent = load(p["parent_id"])
         if not parent.get("youtube_video_id"):
             stale = p.get("approved_at") and p["approved_at"] < db.iso_in(-24 * 3600)
-            if parent["status"] in ("rejected", "needs_review", "failed") or stale:
+            if parent["status"] in ("rejected", "needs_review", "failed", "paused") or stale:
                 save(pid, status="awaiting_approval",
                      error=f"Held: the full episode #{parent['id']} was not published, so this Short is not published either.")
                 return {"held": f"full episode #{parent['id']} is {parent['status']}"}
@@ -695,6 +737,17 @@ def _run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]
         if not allowed:
             save(pid, status="needs_review", error=f"NEEDS REVIEW — upload blocked: {why}")
             raise NeedsAttention(f"Upload blocked by the compliance gate: {why}")
+    if p.get("privacy") == "scheduled" and p.get("publish_at") and p["publish_at"] <= db.iso_in(15 * 60):
+        # the slot passed while it waited (upload limit, pause, retry): YouTube refuses past times, so take the
+        # channel's next slot (or publish now when the channel has no fixed time)
+        nxt = slot_for(p, chan) if chan else None
+        if nxt:
+            p["publish_at"] = nxt
+            save(pid, publish_at=nxt)
+            logs.event("info", "pipeline", f"Scheduled time passed while waiting — moved to {nxt} (UTC)", production_id=pid)
+        else:
+            p["privacy"] = "public"
+            save(pid, privacy="public", publish_at=None)
     save(pid, status="uploading")
     with profile.using_language(p.get("language")):          # sets YouTube language metadata correctly
         res = upload.upload(p, p["package"], assets_for(pid))
@@ -709,6 +762,13 @@ def _run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]
                                   "notes": res.get("notes")}, production_id=pid)
     if p.get("topic_id"):
         db.update("topics", p["topic_id"], {"status": "produced", "updated_at": db.iso()})
+    for kid in db.q("SELECT id, privacy FROM productions WHERE parent_id=? AND status='awaiting_approval' "
+                    "AND error LIKE 'Held: the full episode%'", (pid,)):
+        try:                                        # Shorts held back for this episode can follow it now
+            approve(kid["id"], privacy="private" if kid["privacy"] == "private" else "public", publish_at=None,
+                    by="auto (episode published)")
+        except NeedsAttention as e:
+            logs.event("warning", "pipeline", f"Short #{kid['id']} still held: {e}", production_id=kid["id"])
     return res
 
 

@@ -17,6 +17,16 @@
     <span>{% if s.done %}<span class="chip ok">✓</span>{% else %}<span class="chip">{{ loop.index }}</span>{% endif %} {{ s.name }}</span>
     {% if not s.done %}<a class="btn sm {{ 'primary' if loop.index0 == gs_done }}" href="{{ s.href }}">Do it</a>{% endif %}</div>{% endfor %}
 </div>{% endif %}
+{% if problems %}
+<div class="card" style="margin-bottom:16px;border-left:3px solid var(--warn, #e0a030)">
+  <h2>Publishing needs you · {{ problems|length }}</h2>
+  {% for x in problems %}<div class="spread small" style="padding:6px 0;gap:10px">
+    <span>{{ x.text }}</span>
+    <span class="row" style="flex-shrink:0">
+      {% if x.post %}<button class="sm primary" data-post="{{ x.post }}"{% if x.body %} data-body='{{ x.body }}'{% endif %}>{{ x.label }}</button>{% endif %}
+      {% if x.href %}<a class="btn sm" href="{{ x.href }}"{% if x.external %} target="_blank" rel="noopener"{% endif %}>{{ x.label if not x.post else 'Open' }}</a>{% endif %}
+    </span></div>{% endfor %}
+</div>{% endif %}
 {% if awaiting %}
 <div class="note ok"><b>{{ awaiting }}</b> video(s) are rendered, checked and waiting for your approval. <a href="/productions?status=review">Review them</a>.</div>
 {% endif %}

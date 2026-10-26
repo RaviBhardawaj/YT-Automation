@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="head">
-  <div><h1>Ideas</h1><div class="muted">Ideas belong to a channel and follow its niche, language and style. Creative channels get original story concepts; factual channels get evidence-backed topics.</div></div>
+  <div><h1>Ideas</h1><div class="muted">Channel ideas follow that channel's niche, language and style. Ideas from a <a href="/niches">researched niche</a> belong to no channel — pick a channel (or none) when you make the video.</div></div>
 </div>
 
 <form class="card" data-form="/api/create" data-done="Video started" style="margin-bottom:14px">
@@ -16,11 +16,18 @@
     <label class="f"><span>Characters</span><label class="small" style="font-weight:400"><input type="checkbox" name="use_cast"> Use this channel's recurring characters</label>
       <span class="muted small" style="font-weight:400">Unticked = fresh characters made just for this video (naming a character in your prompt brings them in).</span></label>
   </div>
+  {% if my_voices %}<label class="f" style="max-width:340px"><span>Narrator voice</span><select name="voice_id"><option value="">Default voice</option>
+    {% for v in my_voices %}<option value="{{ v.id }}">{{ v.name }} (my voice)</option>{% endfor %}</select></label>{% endif %}
   <button class="primary" type="submit">Generate video</button>
   <span class="muted small">When it's ready you can preview it, download it, or publish it — your choice.</span>
 </form>
 
-{% if ch %}
+{% if niche_row %}
+<div class="card tight" style="margin-bottom:14px"><div class="spread">
+  <div><b>Ideas for the niche “{{ niche_row.name }}”</b> <span class="muted small">· {{ niche_row.ideas }} so far · not tied to any channel</span></div>
+  <button class="primary sm" data-post="/api/niches/{{ niche_row.id }}/ideas" data-reload="no" data-done="Researching more ideas…">Get 10 more ideas</button>
+</div></div>
+{% elif ch %}
 <form class="card tight" id="gen" style="margin-bottom:14px">
   <div class="row">
     <b>Generate for {{ ch.name }}</b>
@@ -32,7 +39,7 @@
   </div>
 </form>
 {% else %}
-<div class="note">To get idea suggestions for a channel's niche, pick the channel in the filter below.</div>
+<div class="note">To get idea suggestions for a channel's niche, pick the channel in the filter below. For something new that isn't about your channels, research it on <a href="/niches">Niches</a>{% if researched %} or pick a researched niche below{% endif %}.</div>
 {% endif %}
 {% if running %}<div class="note" data-autorefresh="15">Idea generation is running. This page refreshes automatically.</div>{% endif %}
 
@@ -40,6 +47,8 @@
   <div class="row">
     <select name="channel" data-autosubmit style="width:auto"><option value="all">All channels</option>
       {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if filters.channel == c.id|string }}>{{ c.name }}</option>{% endfor %}</select>
+    {% if researched %}<select name="nid" data-autosubmit style="width:auto"><option value="">Researched niche: any</option>
+      {% for r in researched %}<option value="{{ r.id }}" {{ 'selected' if filters.nid == r.id|string }}>{{ r.name[:40] }} ({{ r.ideas }})</option>{% endfor %}</select>{% endif %}
     <select name="niche" data-autosubmit style="width:auto"><option value="">Any niche</option>
       {% for n in niches %}<option {{ 'selected' if filters.niche == n }}>{{ n }}</option>{% endfor %}</select>
     <select name="format" data-autosubmit style="width:auto"><option value="">Any format</option>
@@ -81,9 +90,23 @@
   </div>
   <div class="row" style="margin-top:10px">
     {% if t.status in ('idea','approved') and t.channel_id %}
-    <button class="primary sm" data-post="/api/topics/{{ t.id }}/video" data-confirm="Make a video from this idea for {{ t.channel_name }}?">Generate video</button>
-    <button class="sm" data-post="/api/topics/{{ t.id }}/long">Create long</button>
-    <button class="sm" data-post="/api/topics/{{ t.id }}/short">Create Short</button>
+    {% if my_voices %}<span id="mk{{ t.id }}"><select name="voice_id" style="width:auto"><option value="">Default voice</option>
+      {% for v in my_voices %}<option value="{{ v.id }}">{{ v.name }} (my voice)</option>{% endfor %}</select></span>{% endif %}
+    <button class="primary sm" data-post="/api/topics/{{ t.id }}/video" {% if my_voices %}data-collect="#mk{{ t.id }}"{% endif %} data-confirm="Make a video from this idea for {{ t.channel_name }}?">Generate video</button>
+    <button class="sm" data-post="/api/topics/{{ t.id }}/long" {% if my_voices %}data-collect="#mk{{ t.id }}"{% endif %}>Create long</button>
+    <button class="sm" data-post="/api/topics/{{ t.id }}/short" {% if my_voices %}data-collect="#mk{{ t.id }}"{% endif %}>Create Short</button>
+    {% elif t.status in ('idea','approved') %}
+    <span id="mk{{ t.id }}" class="row" style="gap:6px">
+      <select name="channel_id" style="width:auto">
+        <option value="none">No channel — just make it (download)</option>
+        {% for c in channels %}<option value="{{ c.id }}">For {{ c.name }}</option>{% endfor %}</select>
+      <label class="small"><input type="checkbox" name="use_cast"> channel characters</label>
+      {% if my_voices %}<select name="voice_id" style="width:auto"><option value="">Default voice</option>
+        {% for v in my_voices %}<option value="{{ v.id }}">{{ v.name }} (my voice)</option>{% endfor %}</select>{% endif %}
+      <button class="primary sm" data-post="/api/topics/{{ t.id }}/video" data-collect="#mk{{ t.id }}">Generate video</button>
+      <button class="sm" data-post="/api/topics/{{ t.id }}/long" data-collect="#mk{{ t.id }}">Long</button>
+      <button class="sm" data-post="/api/topics/{{ t.id }}/short" data-collect="#mk{{ t.id }}">Short</button>
+    </span>
     {% endif %}
     {% if t.status != 'rejected' %}
     <button class="sm" data-post="/api/topics/{{ t.id }}/{{ 'unsave' if t.saved else 'save' }}">{{ 'Unsave' if t.saved else 'Save' }}</button>

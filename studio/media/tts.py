@@ -464,6 +464,9 @@ def _synth_sentence(text: str, engine: str, voice_id: str, lang: str, speed: flo
             used.add("fallback")
         k_voice, k_lang = fallback_voice(voice_id, text)
         return _synth_sentence(text, "kokoro", k_voice, k_lang, speed)
+    if engine == "clone":                      # own helper process with its own lock
+        from . import voiceclone
+        return voiceclone.say(text, voice_id, lang)
     with _lock:
         if engine == "parler":
             return _parler_say(text, voice_id)
@@ -482,11 +485,13 @@ def _synth_sentence(text: str, engine: str, voice_id: str, lang: str, speed: flo
     raise ValueError(f"unknown TTS engine {engine!r}")
 
 
-def synthesize_scene(narration: str, out_wav: Path, *, sentence_gap: float = 0.16, tail: float = 0.30) -> dict[str, Any]:
-    """Write one WAV for a scene. Returns its duration and per-sentence timings (seconds)."""
-    v = voice_settings()
+def synthesize_scene(narration: str, out_wav: Path, *, sentence_gap: float = 0.16, tail: float = 0.30,
+                     voice: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Write one WAV for a scene. Returns its duration and per-sentence timings (seconds).
+    `voice` overrides the configured voice for this video (e.g. a cloned voice)."""
+    v = voice or voice_settings()
     engine, voice_id, speed = v["engine"], v["voice_id"], float(v.get("speed", 1.0))
-    lang = current_voice().get("lang", "en-us")
+    lang = v.get("lang") if voice else current_voice().get("lang", "en-us")
     pieces: list[np.ndarray] = []
     timings: list[dict[str, Any]] = []
     sr = 24000

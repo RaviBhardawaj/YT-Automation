@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .. import ai, channels, db, logs
+from .. import ai, channels, db, learning, logs
 from ..research import dedup
 from . import characters
 
@@ -48,6 +48,7 @@ def generate(channel_id: int, count: int = 10, formats: list[str] | None = None,
               f"AUDIENCE: {ch['audience'] or 'general YouTube audience'}\nLANGUAGE: {ch['language']}\n"
               f"TONE: {ch['tone'] or '-'}\nSTYLES: {', '.join(styles)}\n"
               f"CHANNEL INSTRUCTIONS: {ch['instructions'] or '-'}\nRESTRICTIONS: {ch['restrictions'] or '-'}\n"
+              f"{learning.prompt_block(ch['id'])}"
               f"RECURRING CHARACTERS:\n{characters.bible_text(cast)}\n"
               f"{('FOCUS FOR THIS BATCH: ' + focus) if focus else ''}\n\n"
               f"ALREADY MADE OR PLANNED (never repeat or closely paraphrase): "

@@ -60,6 +60,20 @@
   {% else %}<div class="muted small">No daily data yet{% for n in rep.notes %} — {{ n }}{% endfor %}.</div>{% endif %}
 </div>
 
+<div class="card" style="margin-bottom:16px">
+  <div class="spread"><h2>What we've learned — {{ ch.name }}</h2>
+    <button class="sm" data-post="/api/channels/{{ ch.id }}/learn" data-reload="no" {{ 'disabled' if learning_busy }}>{{ 'Learning…' if learning_busy else 'Learn now' }}</button></div>
+  <div class="muted small" style="margin-bottom:8px">Every morning the studio compares this channel's videos (views per day, % watched, likes) and its own quality checks, and writes a few lessons. Active lessons are used in the next scripts, stories and ideas. Switch off any you disagree with — it won't be suggested again.</div>
+  {% for l in lessons %}
+  <div class="spread small" style="padding:6px 0;border-top:1px solid var(--line, rgba(127,127,127,.15));gap:10px{{ ';opacity:.55' if l.status == 'off' }}">
+    <div><span class="chip {{ 'info' if l.kind == 'audience' else '' }}">{{ 'viewers' if l.kind == 'audience' else 'quality' }}</span>
+      <span class="chip">{{ l.confidence }} confidence</span> <b>{{ l.lesson }}</b>
+      <div class="muted">Based on: {{ l.evidence }} · {{ l.created_at|dt }}</div></div>
+    <button class="sm" data-post="/api/lessons/{{ l.id }}/{{ 'off' if l.status == 'active' else 'on' }}">{{ 'Switch off' if l.status == 'active' else 'Switch on' }}</button>
+  </div>
+  {% else %}<div class="muted small">Nothing learned yet. Lessons about viewers need at least 3 public videos that have been out for 2 days; quality lessons start after the first videos are made.</div>{% endfor %}
+</div>
+
 {% set m = ch.monetization or {} %}{% if m.tiers %}
 <div class="card" style="margin-bottom:16px">
   <h2>Monetization progress</h2>

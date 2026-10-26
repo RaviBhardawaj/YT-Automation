@@ -56,6 +56,23 @@ never in the project folder or on GitHub.
 
 Then open **Channels**, create a channel, and connect its YouTube account (Channels → channel → YouTube & publishing).
 
+## Voice cloning (optional, "My voice")
+
+Lets each user clone their own voice (with recorded consent) and pick it as the narrator of a video, or to
+re-voice a video they upload. Engine: Resemble AI Chatterbox Multilingual (MIT licence, Hindi + English + 21
+more), run locally. It needs its own environment because its torch/numpy versions differ from the app's:
+
+```bash
+/opt/homebrew/bin/python3.12 -m venv .venv-voiceclone
+.venv-voiceclone/bin/pip install chatterbox-tts "setuptools<81"
+```
+
+The model (~6 GB) downloads from Hugging Face the first time a voice is previewed (needs ~8 GB free disk and
+works best with 16 GB RAM). It is slow: on an M2 (Apple GPU) each second of speech takes about 8–10 seconds,
+so a 1-minute Short needs ~10 minutes of voice work and an 8-minute video over an hour. `setuptools<81` must be
+installed in that environment too (the watermark library still imports `pkg_resources`). The feature is "Clone my voice" in plans
+(on for Creator/Pro/Studio; the admin can switch it per account under Users & website).
+
 ## Moving to another computer (keeping everything)
 
 On the **old** computer:

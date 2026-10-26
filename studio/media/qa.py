@@ -85,6 +85,15 @@ def run(production: dict[str, Any], pkg: dict[str, Any], timeline: dict[str, Any
     checks.append(_check("visual variety", len(distinct) >= min(3, n), f"{len(distinct)} distinct visuals for {n} scenes"))
     checks.append(_check("real footage share", len(procedural) <= n * 0.5,
                          f"{len(procedural)}/{n} scenes use abstract fallback art (add a Pexels/Pixabay key for footage)", "warn"))
+    rel = [json.loads(a["relevance"]) if isinstance(a.get("relevance"), str) and a["relevance"].startswith("{")
+           else (a.get("relevance") or {}) for a in assets]
+    looked = [r for r in rel if r.get("how", "").startswith("vision check")]
+    if looked:                                   # each stock picture was checked against its scene by a vision model
+        weak = [r for r in looked if r.get("score", 0) < 6]
+        avg = sum(r.get("score", 0) for r in looked) / len(looked)
+        checks.append(_check("visuals match the topic", not weak or len(weak) <= len(looked) * 0.25,
+                             f"{len(looked)} stock visual(s) checked by AI, average {avg:.1f}/10"
+                             + (f", {len(weak)} only loosely on topic" if weak else ""), "warn"))
     if production.get("test_mode"):
         checks.append(_check("test mode", False, "rendered in minimal test mode — not for upload"))
 

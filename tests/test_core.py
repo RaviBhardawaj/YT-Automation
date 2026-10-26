@@ -84,9 +84,11 @@ class BudgetTests(unittest.TestCase):
         settings.set("ai.default_provider", "anthropic")
         settings.set("ai.fallback_provider", "ollama_local")
         settings.set("ai.monthly_budget_usd", 5.0)
+        settings.set("ai.free_first", False)        # these tests exercise the paid-provider budget rules
 
     def tearDown(self):
         self.providers.get = self._orig_get
+        settings.set("ai.free_first", True)
 
     def test_pause_policy_blocks_paid_call(self):
         settings.set("ai.on_budget_exceeded", "pause")
@@ -165,10 +167,14 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("on_screen_text", str(ctx.exception))
         package.validate_scenes([self._scene(on_screen_text="सुरक्षित वापसी")], "short", check_totals=False)
 
-    def test_rejects_people_in_visual_queries(self):
+    def test_rejects_identifiable_people_in_visual_queries(self):
         from studio.content import package
         with self.assertRaises(ValueError):
-            package.validate_scenes([self._scene(visual_query="aerospace engineer satellite lab")], "short", check_totals=False)
+            package.validate_scenes([self._scene(visual_query="prime minister speech podium")], "short", check_totals=False)
+        with self.assertRaises(ValueError):
+            package.validate_scenes([self._scene(visual_query="celebrity face closeup")], "short", check_totals=False)
+        # a generic person doing the thing is what makes many topics recognisable
+        package.validate_scenes([self._scene(visual_query="doctor checking diabetic foot")], "short", check_totals=False)
         package.validate_scenes([self._scene(visual_query="satellite clean room", visual_type="photo")], "short", check_totals=False)
         package.validate_scenes([self._scene(visual_query="project director", visual_type="text_card")], "short", check_totals=False)
 
