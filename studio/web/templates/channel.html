@@ -18,7 +18,7 @@
 </div>
 
 <div class="tabs">
-  {% for k, l in [('setup','Setup ' ~ (checklist|selectattr('done')|list|length) ~ '/' ~ checklist|length),('overview','Create & recent'),('settings','Channel settings'),('characters','Characters (' ~ characters|length ~ ')'),('youtube','YouTube & publishing')] %}
+  {% for k, l in [('setup','Setup ' ~ (checklist|selectattr('done')|list|length) ~ '/' ~ checklist|length),('overview','Create & recent'),('settings','Channel settings'),('characters','Characters (' ~ characters|length ~ ')'),('youtube','YouTube & publishing'),('social','Facebook & Instagram')] %}
   <a href="/channels/{{ ch.id }}?tab={{ k }}" class="{{ 'on' if tab == k }}">{{ l }}</a>{% endfor %}
 </div>
 
@@ -133,6 +133,57 @@
   <label class="f"><span>Rules (always / never)</span><input name="rules"></label>
   <button class="primary" type="submit">Add character</button>
 </form>
+
+{% elif tab == 'social' %}
+{% set m = ch.meta or {} %}
+<div class="grid g2">
+  <div class="card">
+    <h2>Facebook Page &amp; Instagram</h2>
+    {% if meta_pages %}
+      <div class="note ok small">Signed in to Facebook. Choose the Page for <b>{{ ch.name }}</b> — its linked Instagram account comes with it.</div>
+      {% for pg in meta_pages %}<div class="spread" style="padding:6px 0;border-bottom:1px dashed var(--line)">
+        <span><b>{{ pg.name }}</b> <span class="small muted">{{ ('· Instagram @' ~ pg.ig_username) if pg.ig_username else '· no Instagram linked' }}</span></span>
+        <button class="sm primary" data-post="/api/channels/{{ ch.id }}/meta/choose" data-body='{"page_id": "{{ pg.id }}"}'>Use this Page</button></div>{% endfor %}
+    {% elif meta_on %}
+      <div class="note ok">Connected to Facebook Page <b>{{ m.page_name }}</b>{% if m.ig_username %} and Instagram <b>@{{ m.ig_username }}</b>{% else %} — <span class="small">no Instagram account is linked to this Page (see step 2 of the guide)</span>{% endif %}.</div>
+      <div class="row"><button data-post="/api/channels/{{ ch.id }}/meta/verify" data-reload="no">Check connection</button>
+        <button data-post="/api/channels/{{ ch.id }}/meta/connect" data-navigate>Change Page</button>
+        <button class="danger" data-post="/api/channels/{{ ch.id }}/meta/disconnect" data-confirm="Disconnect Facebook & Instagram for {{ ch.name }}?">Disconnect</button></div>
+    {% elif not meta_ready %}
+      <div class="note warn">The platform admin needs to add the Meta app first (Settings → Facebook &amp; Instagram). After that, each channel connects with one click.</div>
+    {% else %}
+      <button class="primary" data-post="/api/channels/{{ ch.id }}/meta/connect" data-navigate>Connect Facebook &amp; Instagram</button>
+    {% endif %}
+    {% if meta_on %}
+    <form data-form="/api/channels/{{ ch.id }}/meta/settings" data-done="Saved" style="margin-top:14px">
+      <h3>Publish automatically</h3>
+      <label class="small"><input type="checkbox" name="auto_facebook" {{ 'checked' if m.auto_facebook }}> Facebook — Shorts as Reels, longer videos as Page videos</label><br>
+      <label class="small"><input type="checkbox" name="auto_instagram" {{ 'checked' if m.auto_instagram and m.ig_user_id }} {{ 'disabled' if not m.ig_user_id }}> Instagram — every video as a Reel (up to 15 min)</label>
+      <div class="muted small">When a video for this channel is finished and passes its checks. Uploads switch and account permissions still apply. You can also publish any video by hand from its page.</div>
+      <button type="submit" style="margin-top:6px">Save</button>
+    </form>{% endif %}
+    {% if ch.made_for_kids %}<div class="note warn small" style="margin-top:10px">Facebook and Instagram have no “made for kids” setting and don't allow under-13 users. Kids content can be posted, but follow Meta's policies for content aimed at children.</div>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Setup, step by step</h2>
+    <ol class="small" style="line-height:1.7">
+      <li><b>Facebook Page.</b> You need a Facebook Page for this channel (facebook.com/pages/create) and to be its admin.</li>
+      <li><b>Instagram professional account linked to the Page.</b> In Instagram: Settings → Account type and tools → Switch to professional account (Creator or Business). Then link it: Facebook Page → Settings → Linked accounts → Instagram → Connect.</li>
+      <li><b>Connect here.</b> Click <i>Connect Facebook &amp; Instagram</i>, sign in with Facebook, allow every permission asked (Pages and Instagram publishing), then pick the Page in the list that appears.</li>
+      <li><b>Turn on automatic publishing</b> (left) — or publish videos one by one from each video's page.</li>
+    </ol>
+    <div class="muted small">Limits from Meta: Instagram up to 100 posts a day, Facebook Reels 30 a day; Facebook Reels must be vertical 3–90 seconds (longer videos go up as Page videos). While the platform's Meta app is in development mode, only people added to the app (Meta app → App roles) can connect.</div>
+  </div>
+</div>
+<div class="card" style="margin-top:16px">
+  <h2>Recent Facebook &amp; Instagram posts</h2>
+  <table><tr><th>Video</th><th>Where</th><th>Status</th><th>Link</th><th>When</th></tr>
+  {% for s in social_posts %}<tr><td><a href="/productions/{{ s.production_id }}">{{ s.title[:60] }}</a></td><td>{{ s.platform|capitalize }} {{ s.kind }}</td>
+    <td>{% if s.status == 'published' %}<span class="chip ok">published</span>{% elif s.status == 'failed' %}<span class="chip err" title="{{ s.error }}">failed</span>{% elif s.status == 'skipped' %}<span class="chip" title="{{ s.error }}">skipped</span>{% else %}<span class="chip info">{{ s.status }}</span>{% endif %}
+      {% if s.error and s.status != 'published' %}<div class="small muted">{{ s.error[:120] }}</div>{% endif %}</td>
+    <td class="small">{% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener">open</a>{% endif %}</td><td class="small muted">{{ s.updated_at|dt }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted small">Nothing posted yet.</td></tr>{% endfor %}</table>
+</div>
 
 {% elif tab == 'youtube' %}
 <div class="grid g2">

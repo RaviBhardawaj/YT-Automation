@@ -26,7 +26,20 @@ def _ideation(payload: dict[str, Any], task: dict[str, Any]) -> Any:
 
 @worker.handler("production")
 def _production(payload: dict[str, Any], task: dict[str, Any]) -> Any:
-    return pipeline.run_production(payload, task)
+    res = pipeline.run_production(payload, task)
+    from .social import publisher                  # finished video: Facebook/Instagram if the channel is automatic
+    try:
+        publisher.maybe_auto(int(payload["production_id"]))
+    except Exception:
+        logs.event("warning", "social", "Couldn't queue automatic Facebook/Instagram publishing",
+                   production_id=int(payload["production_id"]))
+    return res
+
+
+@worker.handler("social_upload")
+def _social_upload(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from .social import publisher
+    return publisher.run(int(payload["production_id"]), payload["platform"])
 
 
 @worker.handler("upload")

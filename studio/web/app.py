@@ -86,7 +86,7 @@ templates.env.undefined = jinja2.ChainableUndefined
 
 
 PENDING_OK = ("/pending", "/api/auth/logout", "/pricing", "/privacy", "/terms")
-PUBLIC = ("/home", "/pricing", "/privacy", "/terms", "/login", "/signup", "/api/csrf", "/api/auth/login", "/api/auth/signup", "/static/", "/oauth/google/callback", "/favicon.ico")
+PUBLIC = ("/home", "/pricing", "/privacy", "/terms", "/login", "/signup", "/api/csrf", "/oauth/meta/callback", "/api/auth/login", "/api/auth/signup", "/static/", "/oauth/google/callback", "/favicon.ico")
 ADMIN_ONLY = ("/settings", "/compliance", "/niches", "/setup", "/admin", "/api/settings", "/api/secrets/",
               "/api/providers/", "/api/ollama/", "/api/voice/", "/api/youtube/", "/api/compliance/", "/api/datasources/",
               "/api/datasets/", "/api/niches/", "/api/interview/", "/api/feeds", "/api/upload/", "/api/lessons/",
@@ -618,11 +618,14 @@ def production_page(request: Request, pid: int):
         p["status"] = "needs_attention"               # shown only: never call a missing file ready
         p["error"] = "The rendered video file is missing. Retry the job to render it again."
     sources = [m for m in (uploads_mod().get(i, ws) for i in db.loads(p.get("source_media"), []) or []) if m]
+    from ..social import publisher
+    social = {pl: {"post": publisher.status(pid).get(pl), "route": publisher.route(p, pl)} for pl in publisher.PLATFORMS} \
+        if p.get("channel_id") and p.get("video_path") else {}
     job_outputs = db.q("SELECT id, title, status, format, video_path, youtube_video_id FROM productions WHERE parent_id=? "
                        "AND kind='edit_clip' ORDER BY id", (pid,)) if p.get("kind") == "edit" else []
     return page(request, "production.html", p=p, pkg=p["package"], tl=p["timeline"], topic=topic, evidence=ev,
                 ev_by_id=ev_by_id, assets=pipeline.assets_for(pid), events=events, tasks=tasks,
-                files=files, info=info, sources=sources, job_outputs=job_outputs, my_channels=chans,
+                files=files, info=info, sources=sources, job_outputs=job_outputs, my_channels=chans, social=social,
                 stages=stages, connected=oauth.connected(p["channel_id"]) if p.get("channel_id") else False,
                 audit=settings.get("youtube.audit_passed"),
                 active=p["status"] not in pipeline.TERMINAL, gate=p.get("compliance") or {},
@@ -717,7 +720,9 @@ def settings_page(request: Request, tab: str = "ai"):
     yt_channels = chmod.all_channels(ws_id(request)) if tab == "youtube" else []
     for c in yt_channels:
         c["connected"] = oauth.connected(c["id"])
-    return page(request, "settings.html", tab=tab, yt_channels=yt_channels, s=settings.all_settings(), secrets=settings.secret_status(),
+    from ..social import meta as _meta
+    return page(request, "settings.html", tab=tab, yt_channels=yt_channels, meta_ready=_meta.configured(),
+                meta_redirect=_meta.REDIRECT_URI, meta_secret_set=settings.has_secret("meta_app_secret"), s=settings.all_settings(), secrets=settings.secret_status(),
                 providers=providers.status_all() if tab == "ai" else [], provider_names=settings.PROVIDERS,
                 ai_tasks=settings.AI_TASKS, voices=main_voices, other_voices=other_voices, channel_lang=profile.language(),
                 voice=voice, kokoro_installed=tts.kokoro_installed(), voice_hi=tts.current_voice("Hindi"),
@@ -1568,6 +1573,19 @@ def _channel_art(cid: int) -> dict[str, str]:
             for k, f in (("banner", "banner_2560x1440.jpg"), ("avatar", "profile_800x800.png")) if (folder / f).exists()}
 
 
+def _meta_connected(cid: int) -> bool:
+    from ..social import meta
+    return meta.connected(cid)
+
+
+def _social_ctx(cid: int) -> dict[str, Any]:
+    from ..social import meta
+    return {"meta_ready": meta.configured(), "meta_on": meta.connected(cid), "meta_pages": meta.pending_pages(cid),
+            "meta_redirect": meta.REDIRECT_URI,
+            "social_posts": db.q("SELECT s.*, p.title FROM social_posts s JOIN productions p ON p.id=s.production_id "
+                                 "WHERE s.channel_id=? ORDER BY s.id DESC LIMIT 20", (cid,))}
+
+
 def channel_checklist(ch: dict[str, Any]) -> list[dict[str, Any]]:
     """The setup steps of one channel, each with whether it's done and where to do it."""
     from ..creative import characters
@@ -1609,6 +1627,9 @@ def channel_checklist(ch: dict[str, Any]) -> list[dict[str, Any]]:
     steps += [
         {"name": "First video", "done": made > 0, "detail": f"{made} made, {published} on YouTube",
          "href": f"/channels/{cid}", "action": "Create video"},
+        {"name": "Also publish on Facebook & Instagram (optional)", "done": _meta_connected(cid),
+         "detail": "Connect a Facebook Page and its Instagram professional account; Shorts become Reels.",
+         "href": f"/channels/{cid}?tab=social", "action": "Connect", "optional": True},
         {"name": "Phone-verify the YouTube channel (optional)", "done": ys.get("long_uploads") == "allowed",
          "detail": "Needed for videos over 15 minutes and custom thumbnails.", "href": "https://www.youtube.com/verify",
          "action": "Verify", "optional": True},
@@ -1632,7 +1653,8 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
                 workflows=channels.WORKFLOWS, styles=channels.STYLES, languages=channels.LANGUAGES,
                 options=characters.OPTIONS, voices=sorted({v for vs in characters.VOICES.values() for v in vs}),
                 ideas_n=db.q1("SELECT COUNT(*) AS n FROM topics WHERE channel_id=? AND status IN ('idea','approved')",
-                              (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid))
+                              (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid),
+                **_social_ctx(cid))
     return _with_cookie(resp, cid)
 
 
@@ -2066,7 +2088,12 @@ def publishing_page(request: Request):
     chans = chmod.all_channels(ws)
     for c in chans:
         c["connected"] = oauth.connected(c["id"])
-    return page(request, "publishing.html", rows=rows, channels=chans)
+        c["meta_on"] = _meta_connected(c["id"])
+    social: dict[int, dict[str, Any]] = {}
+    for s in db.q("SELECT s.* FROM social_posts s JOIN productions p ON p.id=s.production_id WHERE p.workspace_id=?",
+                  (ws,)):
+        social.setdefault(s["production_id"], {})[s["platform"]] = s
+    return page(request, "publishing.html", rows=rows, channels=chans, social=social)
 
 
 @app.get("/billing", response_class=HTMLResponse)
@@ -2414,3 +2441,75 @@ async def api_upgrade_request(request: Request):
 def api_csrf(request: Request):
     """A fresh token for this browser (pages left open across a sign-in or a long pause recover with it)."""
     return ok(token=csrf_token(request))
+
+
+# ------------------------------------------------------------------ Facebook & Instagram
+
+@app.get("/oauth/meta/callback", response_class=HTMLResponse)
+def meta_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
+    from ..social import meta
+    if error or not code:
+        return page(request, "message.html", title="Facebook not connected",
+                    message=error_description or error or "Facebook didn't return a sign-in code.", link="/channels")
+    try:
+        cid = meta.handle_callback(code, state)
+    except (meta.MetaError, httpx.HTTPError) as e:
+        return page(request, "message.html", title="Facebook not connected", message=str(e), link="/channels")
+    return RedirectResponse(f"/channels/{cid}?tab=social", status_code=303)
+
+
+@app.post("/api/channels/{cid}/meta/{action}")
+async def api_channel_meta(request: Request, cid: int, action: str):
+    from .. import channels as chmod
+    from ..social import meta
+    data = await body(request)
+    try:
+        if action == "connect":
+            plans.require(ws_id(request), "publish")
+            return ok(url=meta.auth_url(cid))
+        if action == "choose":
+            m = meta.choose_page(cid, str(data.get("page_id") or ""))
+            return ok(detail=f"Connected to {m['page_name']}" + (f" and Instagram @{m['ig_username']}" if m.get("ig_username")
+                                                                  else " (no Instagram account is linked to this Page)"))
+        if action == "verify":
+            v = meta.verify(cid)
+            return ok(detail=f"Facebook Page “{v['page']}” works" + (f", Instagram @{v['instagram']}" if v["instagram"] else ""))
+        if action == "disconnect":
+            meta.disconnect(cid)
+            return ok(detail="Facebook & Instagram disconnected for this channel")
+        if action == "settings":
+            ch = chmod.get(cid)
+            m = {**(ch.get("meta") or {}), "auto_facebook": bool(data.get("auto_facebook")),
+                 "auto_instagram": bool(data.get("auto_instagram"))}
+            db.update("channels", cid, {"meta": db.dumps(m), "updated_at": db.iso()})
+            return ok(detail="Saved")
+    except (meta.MetaError, plans.LimitExceeded, httpx.HTTPError) as e:
+        return bad(str(e))
+    return bad("unknown action", 404)
+
+
+@app.post("/api/productions/{pid}/social")
+async def api_production_social(request: Request, pid: int):
+    from ..social import publisher
+    data = await body(request)
+    platforms = [p for p in (data.get("platforms") or []) if p in publisher.PLATFORMS]
+    if not platforms:
+        return bad("Choose Facebook and/or Instagram.")
+    res = publisher.request(pid, platforms)
+    return ok(detail=" · ".join(f"{publisher.LABEL[k]}: {v}" for k, v in res.items()))
+
+
+@app.post("/api/admin/meta")
+async def api_admin_meta(request: Request):
+    data = await body(request)
+    app_id = str(data.get("app_id") or "").strip()
+    if app_id and not app_id.isdigit():
+        return bad("The App ID is a number (Meta app → App settings → Basic).")
+    settings.set("meta.app_id", app_id)
+    cfg = str(data.get("config_id") or "").strip()
+    if cfg and not cfg.isdigit():
+        return bad("The configuration ID is a number (Facebook Login for Business → Configurations).")
+    settings.set("meta.config_id", cfg)
+    if str(data.get("app_secret") or "").strip():
+        settings.set_secret("meta_app_secret", str(data["app_secret"]).strip())
+    return ok(detail="Meta app saved")

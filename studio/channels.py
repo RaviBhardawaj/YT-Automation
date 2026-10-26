@@ -23,7 +23,7 @@ WORKFLOWS = {
 STYLES = ["comedy", "drama", "horror", "storytelling", "documentary", "education", "satire", "news", "motivation",
           "kids", "thriller", "romance", "mystery", "tech", "finance"]
 LANGUAGES = ["Hindi", "Hinglish", "English", "Marathi", "Tamil", "Telugu", "Bengali", "Gujarati"]
-JSON_FIELDS = ("styles", "branding", "voice", "schedule_days", "monetization", "youtube_status", "analytics")
+JSON_FIELDS = ("styles", "branding", "voice", "schedule_days", "monetization", "youtube_status", "analytics", "meta")
 
 _current: contextvars.ContextVar[int | None] = contextvars.ContextVar("current_channel", default=None)
 

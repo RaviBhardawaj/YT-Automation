@@ -2,7 +2,7 @@
 {% block content %}
 <div class="head"><div><h1>Settings</h1><div class="muted">Credentials live in the macOS Keychain; everything else in the local database.</div></div></div>
 <div class="tabs">
-  {% for k, l in [('ai','AI providers'),('keys','Credentials'),('voice','Voice'),('visuals','Visuals'),('brand','Branding & render'),('youtube','YouTube'),('research','Research'),('production','Production')] %}
+  {% for k, l in [('ai','AI providers'),('keys','Credentials'),('voice','Voice'),('visuals','Visuals'),('brand','Branding & render'),('youtube','YouTube'),('facebook','Facebook & Instagram'),('research','Research'),('production','Production')] %}
   <a href="/settings?tab={{ k }}" class="{{ 'on' if tab == k }}">{{ l }}</a>{% endfor %}
 </div>
 
@@ -250,6 +250,32 @@
   <label><input type="checkbox" name="youtube.upload_captions" {{ 'checked' if s['youtube.upload_captions'] }}> Upload subtitle files (needs the broader “manage YouTube account” permission — reconnect after enabling)</label>
   <div style="margin-top:12px"><button type="submit" class="primary">Save publishing</button></div>
 </form>
+
+{% elif tab == 'facebook' %}
+<div class="grid g2">
+  <div class="card">
+    <h2>Meta app (one for the whole platform)</h2>
+    {% if meta_ready %}<div class="note ok small">Meta app saved — channels can now connect their Facebook Page and Instagram account.</div>{% endif %}
+    <ol class="small" style="line-height:1.75">
+      <li>Open <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">developers.facebook.com/apps</a> → <b>Create app</b>. Use case: <b>“Manage everything on your Page”</b> and add <b>“Manage messaging &amp; content on Instagram”</b> (or choose <i>Other</i> → app type <b>Business</b>). Connect it to your business portfolio if asked.</li>
+      <li>In the app: <b>Use cases → Customize</b> and add the permissions <span class="mono">pages_show_list, pages_read_engagement, pages_manage_posts, instagram_basic, instagram_content_publish, business_management</span>.</li>
+      <li><b>Facebook Login (for Business) → Settings → Valid OAuth Redirect URIs</b>: add <span class="mono">{{ meta_redirect }}</span>
+        {% if not meta_redirect.startswith('https') %}<br><span class="muted">(this computer's address — when the studio is online, add <span class="mono">https://your-domain/oauth/meta/callback</span> too)</span>{% endif %}</li>
+      <li><b>App settings → Basic</b>: copy the <b>App ID</b> and <b>App secret</b> into the form on the right and save.</li>
+      <li><b>Test it:</b> while the app is in <i>Development</i> mode only people with a role on it (App roles → add as Tester/Developer) can connect. Open a channel → <i>Facebook &amp; Instagram</i> → Connect.</li>
+      <li><b>For everyone (public launch):</b> request <i>Advanced access</i> for those permissions in <b>App Review</b> (screencast of connecting and publishing, privacy policy URL <span class="mono">/privacy</span>), complete <b>Business verification</b>, then switch the app to <b>Live</b>.</li>
+    </ol>
+  </div>
+  <form class="card" data-form="/api/admin/meta" data-done="Saved">
+    <h2>App credentials</h2>
+    <label class="f"><span>App ID</span><input name="app_id" value="{{ s['meta.app_id'] }}" placeholder="e.g. 1234567890123456"></label>
+    <label class="f"><span>App secret {% if meta_secret_set %}<span class="chip ok">saved in Keychain</span>{% endif %}</span>
+      <input name="app_secret" type="password" autocomplete="off" placeholder="{{ 'leave empty to keep the saved secret' if meta_secret_set else 'paste the App secret' }}"></label>
+    <label class="f"><span>Facebook Login for Business configuration ID (optional)</span><input name="config_id" value="{{ s['meta.config_id'] }}" placeholder="only if your app uses Login for Business configurations"></label>
+    <div class="muted small">The secret is stored in this computer's Keychain, never in the database or on GitHub. Graph API version: {{ s['meta.graph_version'] }}.</div>
+    <button class="primary" type="submit" style="margin-top:8px">Save</button>
+  </form>
+</div>
 
 {% elif tab == 'research' %}
 <form class="card" data-form="/api/settings">

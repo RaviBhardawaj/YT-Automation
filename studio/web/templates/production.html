@@ -129,6 +129,23 @@
 </div>
 {% endif %}
 
+{% if social and p.qa.passed %}
+<div class="card" style="margin-top:16px">
+  <div class="spread"><h2>Facebook &amp; Instagram</h2><a class="small" href="/channels/{{ p.channel_id }}?tab=social">Connection &amp; auto-publish</a></div>
+  {% for pl, s in social.items() %}{% set kind, why = s.route %}
+  <div class="spread" style="padding:6px 0;border-bottom:1px dashed var(--line)">
+    <span><b>{{ pl|capitalize }}</b>
+      {% if s.post and s.post.status == 'published' %}<span class="chip ok">published</span> {% if s.post.url %}<a href="{{ s.post.url }}" target="_blank" rel="noopener">open</a>{% endif %}
+      {% elif s.post and s.post.status in ('pending','uploading','processing') %}<span class="chip info">{{ s.post.status }}</span>
+      {% elif s.post and s.post.status == 'failed' %}<span class="chip err">failed</span> <span class="small muted">{{ s.post.error[:140] }}</span>
+      {% elif kind %}<span class="small muted">will be posted as a {{ 'Reel' if kind == 'reel' else 'Page video' }}</span>
+      {% else %}<span class="small muted">{{ why }}</span>{% endif %}</span>
+    {% if kind and not (s.post and s.post.status in ('published','pending','uploading','processing')) %}
+      <button class="sm primary" data-post="/api/productions/{{ p.id }}/social" data-body='{"platforms": ["{{ pl }}"]}'>{{ 'Retry' if s.post and s.post.status == 'failed' else 'Publish to ' ~ pl|capitalize }}</button>{% endif %}
+  </div>{% endfor %}
+</div>
+{% endif %}
+
 {% if p.qa.checks %}
 <div class="grid g2" style="margin-top:16px">
   <div class="card">

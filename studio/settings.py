@@ -108,6 +108,9 @@ DEFAULTS: dict[str, Any] = {
     "youtube.made_for_kids": False,
     "youtube.audit_passed": False,
     "youtube.client_id": "",
+    "meta.app_id": "",                       # Meta (Facebook) app ID; the app secret is in the Keychain
+    "meta.config_id": "",                    # optional: Facebook Login for Business configuration ID
+    "meta.graph_version": "v26.0",
     "youtube.channel": {},
     "publish.mode": "approve_first",              # approve_first | auto_after_validation
     "publish.slots": {"short": ["18:30"], "long": ["19:30"]},
@@ -189,6 +192,11 @@ SECRETS: dict[str, dict[str, str]] = {
         "label": "Pixabay API key",
         "purpose": "Free, properly licensed stock photos and video clips.",
         "url": "https://pixabay.com/api/docs/",
+    },
+    "meta_app_secret": {
+        "label": "Meta (Facebook) app secret",
+        "purpose": "Lets channels connect their Facebook Page and Instagram account to publish videos and Reels.",
+        "url": "https://developers.facebook.com/apps/",
     },
     "google_oauth_client_secret": {
         "label": "Google OAuth client secret",
@@ -289,8 +297,8 @@ def delete_secret(name: str) -> None:
 
 
 def known_secret(name: str) -> bool:
-    """Registered secrets, plus one YouTube authorization per studio channel (google_refresh_token__ch<N>)."""
-    return name in SECRETS or bool(re.fullmatch(r"google_refresh_token__ch\d+", name))
+    """Registered secrets, plus one YouTube authorization and one Facebook Page token per studio channel."""
+    return name in SECRETS or bool(re.fullmatch(r"(google_refresh_token|meta_page_token)__ch\d+", name))
 
 
 def has_secret(name: str) -> bool:

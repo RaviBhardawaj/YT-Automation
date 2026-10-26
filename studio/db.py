@@ -510,6 +510,25 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE channels ADD COLUMN analytics TEXT NOT NULL DEFAULT '{}';
     """,
+    # v13: Facebook & Instagram — the Page/Instagram account linked to each channel, and every post made there
+    """
+    ALTER TABLE channels ADD COLUMN meta TEXT NOT NULL DEFAULT '{}';
+    CREATE TABLE social_posts (
+        id INTEGER PRIMARY KEY,
+        production_id INTEGER NOT NULL,
+        channel_id INTEGER,
+        platform TEXT NOT NULL,                       -- facebook | instagram
+        kind TEXT NOT NULL DEFAULT '',                -- reel | video
+        status TEXT NOT NULL DEFAULT 'pending',       -- pending | uploading | processing | published | failed | skipped
+        remote_id TEXT,                               -- the published post/video/media id
+        container_id TEXT,                            -- Instagram media container / Facebook upload id (resume, no double post)
+        url TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (production_id, platform)
+    );
+    """,
 ]
 
 
