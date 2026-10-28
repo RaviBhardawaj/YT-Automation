@@ -91,10 +91,93 @@ def keep_intervals(start: float, end: float, quiet: list[tuple[float, float]], p
     return keep or [(start, end)]
 
 
+def split_at(parts: list[tuple[float, float]], cuts: list[float], min_len: float = 1.0) -> list[tuple[float, float]]:
+    """Split intervals at shot changes (so each shot gets its own crop); pieces shorter than min_len stay joined."""
+    out = []
+    for a, b in parts:
+        cur = a
+        for c in sorted(x for x in cuts if a + min_len <= x <= b - min_len):
+            if c - cur >= min_len:
+                out.append((cur, c))
+                cur = c
+        out.append((cur, b))
+    return out
+
+
+_cascade: Any = None
+
+
+def _faces_detector() -> Any:
+    """OpenCV's bundled frontal-face detector, or None when OpenCV isn't installed (then clips keep the full frame)."""
+    global _cascade
+    if _cascade is None:
+        try:
+            import cv2
+            _cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        except Exception:
+            _cascade = False
+    return _cascade or None
+
+
+def _gray_frames(path: str, start: float, end: float, samples: int) -> list[Any]:
+    """Up to `samples` small greyscale frames spread over [start, end] (decoded by FFmpeg, as PGM images)."""
+    import numpy as np
+    dur = max(0.2, end - start)
+    r = subprocess.run([config.FFMPEG, "-hide_banner", "-loglevel", "error", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
+                        "-i", path, "-vf", f"fps={samples / dur:.5f},scale=480:-2,format=gray", "-frames:v", str(samples),
+                        "-f", "image2pipe", "-vcodec", "pgm", "-"], capture_output=True, timeout=300)
+    frames, buf, i = [], r.stdout, 0
+    while i < len(buf):
+        m = re.match(rb"P5\s+(\d+)\s+(\d+)\s+(\d+)\s", buf[i:i + 64])
+        if not m:
+            break
+        w, h = int(m.group(1)), int(m.group(2))
+        at = i + m.end()
+        if at + w * h > len(buf):
+            break
+        frames.append(np.frombuffer(buf, np.uint8, w * h, at).reshape(h, w))
+        i = at + w * h
+    return frames
+
+
+def face_x(path: str, start: float, end: float) -> float | None:
+    """Where the main face sits in this stretch (centre x as a fraction of the width); None = no steady face."""
+    det = _faces_detector()
+    if det is None:
+        return None
+    samples = max(3, min(10, int(end - start)))
+    frames = _gray_frames(path, start, end, samples)
+    xs = []
+    for g in frames:
+        h, w = g.shape
+        faces = det.detectMultiScale(g, scaleFactor=1.1, minNeighbors=6, minSize=(max(24, h // 12),) * 2)
+        if len(faces):
+            x, _, fw, _ = max(faces, key=lambda f: f[2] * f[3])
+            xs.append((x + fw / 2) / w)
+    if not frames or len(xs) < max(2, len(frames) * 0.4):
+        return None
+    xs.sort()
+    return round(xs[len(xs) // 2], 4)
+
+
+def shot_crops(path: str, start: float, end: float, parts: list[tuple[float, float]],
+               cuts: list[float]) -> tuple[list[tuple[float, float]], list[float | None]]:
+    """One crop per shot, centred on the speaker; every piece of a shot shares it (no jitter at a removed pause).
+    A shot without a clear face uses the clip's usual spot; no face anywhere = None (the full frame is kept)."""
+    shots = split_at([(start, end)], cuts)
+    found = [face_x(path, a, b) for a, b in shots]
+    known = sorted(x for x in found if x is not None)
+    usual = known[len(known) // 2] if known else None
+    by_shot = [x if x is not None else usual for x in found]
+    parts = split_at(parts, cuts)
+    return parts, [next((x for (sa, sb), x in zip(shots, by_shot) if sa <= (a + b) / 2 <= sb), usual)
+                   for a, b in parts]
+
+
 # ------------------------------------------------------------------ clips
 
 def cut_clip(src: dict[str, Any], start: float, end: float, w: int, h: int, reframe: str, speed: float,
-             out: Path) -> None:
+             out: Path, crop_x: float | None = None) -> None:
     dur = max(0.1, end - start)
     vf_speed = f",setpts=PTS/{speed:.4f}" if speed != 1 else ""
     af = f"aresample={SR},aformat=channel_layouts=stereo" + (f",atempo={speed:.4f}" if speed != 1 else "")
@@ -104,7 +187,10 @@ def cut_clip(src: dict[str, Any], start: float, end: float, w: int, h: int, refr
         vmap, amap = "[0:v]", "[1:a]"
         graph = f"{vmap}format=yuv420p[v];{amap}{af}[a]"
     else:
-        if reframe == "crop":
+        if reframe == "face" and crop_x is not None:       # fill the frame, centred on the speaker's face
+            v = (f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,"
+                 f"crop={w}:{h}:'max(0,min(iw-{w},iw*{crop_x:.4f}-{w}/2))':'(ih-{h})/2',setsar=1")
+        elif reframe == "crop":
             v = f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1"
         else:
             v = (f"[0:v]split[a][b];[a]scale={w // 4}:{h // 4}:force_original_aspect_ratio=increase,"
@@ -269,14 +355,46 @@ def subtitle_track(cs: list[dict[str, Any]], w: int, h: int, total: float, highl
     return lst
 
 
+HEADLINE_SECONDS = 3.2
+
+
+def headline_layer(text: str, w: int, h: int) -> Image.Image:
+    """A bold white box with the clip's hook near the top (shown over the first seconds)."""
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    size = int(w * 0.064)
+    fnt = graphics.font_for(text, "heavy", size)
+    lines = graphics.wrap(text, fnt, int(w * 0.78), d)[:2]
+    line_h = int(size * 1.3)
+    box_w = int(max(d.textlength(ln, font=fnt) for ln in lines) + size * 1.2)
+    box_h = line_h * len(lines) + int(size * 0.7)
+    x0, y0 = (w - box_w) // 2, int(h * 0.13)
+    d.rounded_rectangle([x0, y0, x0 + box_w, y0 + box_h], radius=int(size * 0.45), fill=(255, 255, 255, 240))
+    y = y0 + int(size * 0.3)
+    for ln in lines:
+        d.text(((w - d.textlength(ln, font=fnt)) / 2, y), ln, font=fnt, fill=(17, 17, 17))
+        y += line_h
+    return img
+
+
 # ------------------------------------------------------------------ final pass
 
-def finish(joined: Path, out: Path, *, music_mood: str, subs: Path | None, total: float, work: Path) -> None:
+def finish(joined: Path, out: Path, *, music_mood: str, subs: Path | None, total: float, work: Path,
+           headline: Path | None = None) -> None:
     inputs = ["-i", str(joined)]
-    graph, vmap = [], "0:v"
+    graph, vmap, v = [], "0:v", "0:v"
     if subs is not None:
         inputs += ["-f", "concat", "-safe", "0", "-i", str(subs)]
-        graph.append("[0:v][1:v]overlay=0:0:format=auto,format=yuv420p[v]")
+        graph.append(f"[{v}][1:v]overlay=0:0:format=auto[vs]")
+        v = "vs"
+    if headline is not None:
+        idx = len([x for x in inputs if x == "-i"])
+        inputs += ["-loop", "1", "-t", f"{HEADLINE_SECONDS:.2f}", "-i", str(headline)]
+        graph.append(f"[{idx}:v]format=rgba,fade=t=out:st={HEADLINE_SECONDS - 0.4:.2f}:d=0.4:alpha=1[hl];"
+                     f"[{v}][hl]overlay=0:0:eof_action=pass:format=auto[vh]")
+        v = "vh"
+    if v != "0:v":
+        graph.append(f"[{v}]format=yuv420p[v]")
         vmap = "[v]"
     if music_mood and music_mood != "none":
         bed = music.bed(music_mood, total + 1, work / "music.wav")
@@ -286,25 +404,32 @@ def finish(joined: Path, out: Path, *, music_mood: str, subs: Path | None, total
                      f"[0:a][m]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
     else:
         graph.append("[0:a]loudnorm=I=-14:TP=-1.5:LRA=11[a]")
-    video = [*X264] if subs is not None else ["-c:v", "copy"]
+    video = [*X264] if vmap == "[v]" else ["-c:v", "copy"]
     ff([*inputs, "-filter_complex", ";".join(graph), "-map", vmap, "-map", "[a]", *video, *AAC,
         "-movflags", "+faststart", "-t", f"{total:.3f}", str(out)])
 
 
-def thumbnail(video: Path, title: str, out: Path, at: float) -> Path:
+def thumbnail(video: Path, title: str, out: Path, at: float, size: tuple[int, int] | None = None) -> Path:
+    """A cover from a frame of the video with the title on it (16:9 by default; `size` for vertical covers)."""
     frame = out.with_suffix(".frame.png")
     ff(["-ss", f"{max(0.0, at):.2f}", "-i", str(video), "-frames:v", "1", str(frame)])
-    img = graphics.cover(Image.open(frame).convert("RGB"), config.THUMB_W, config.THUMB_H)
+    tw, th = size or (config.THUMB_W, config.THUMB_H)
+    img = graphics.cover(Image.open(frame).convert("RGB"), tw, th)
+    vertical = th > tw
     shade = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(shade).rectangle([0, int(img.height * 0.58), img.width, img.height], fill=(0, 0, 0, 150))
+    ImageDraw.Draw(shade).rectangle([0, int(img.height * (0.62 if vertical else 0.58)), img.width, img.height],
+                                    fill=(0, 0, 0, 150))
     img = Image.alpha_composite(img.convert("RGBA"), shade.filter(ImageFilter.GaussianBlur(18)))
     d = ImageDraw.Draw(img)
-    fnt = graphics.font_for(title, "heavy", 78)
-    lines = graphics.wrap(title, fnt, int(img.width * 0.9), d)[:2]
-    y = img.height - 40 - 92 * len(lines)
+    fs = int(img.width * (0.075 if vertical else 0.061))
+    fnt = graphics.font_for(title, "heavy", fs)
+    lines = graphics.wrap(title, fnt, int(img.width * 0.9), d)[:3 if vertical else 2]
+    step = int(fs * 1.18)
+    y = img.height - int(img.height * (0.12 if vertical else 0.055)) - step * len(lines)
     for ln in lines:
-        d.text((60, y), ln, font=fnt, fill=(255, 255, 255), stroke_width=5, stroke_fill=(0, 0, 0))
-        y += 92
+        d.text((int(img.width * 0.047), y), ln, font=fnt, fill=(255, 255, 255), stroke_width=max(3, fs // 15),
+               stroke_fill=(0, 0, 0))
+        y += step
     graphics.save_jpeg_under(img.convert("RGB"), out, 2_000_000)
     frame.unlink(missing_ok=True)
     return out

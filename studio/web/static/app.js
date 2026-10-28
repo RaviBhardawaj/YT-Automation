@@ -214,6 +214,18 @@ if (prodEl) {
   }, 4000);
 }
 
+// copy a field's text (Shorts captions, hashtags …) ----------------------------
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-copy]");
+  if (!b) return;
+  const el = document.querySelector(b.dataset.copy);
+  if (!el) return;
+  const text = el.value !== undefined ? el.value : el.textContent;
+  try { await navigator.clipboard.writeText(text); }
+  catch { el.select && el.select(); document.execCommand("copy"); }
+  toast("Copied");
+});
+
 // generic auto-refresh ----------------------------------------------------------
 const auto = document.querySelector("[data-autorefresh]");
 if (auto) setTimeout(() => location.reload(), parseInt(auto.dataset.autorefresh, 10) * 1000);

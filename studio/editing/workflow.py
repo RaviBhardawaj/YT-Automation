@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from .. import ai, channels, config, db, logs, plans, uploads
-from . import engine, planner
+from . import clipper, engine, planner
 from .transcribe import transcribe
 
 STAGES = ["inspect", "transcribe", "plan", "render", "review"]
@@ -47,8 +47,23 @@ def output_language(request: str, ch: dict[str, Any] | None) -> str:
     return "Hindi" if re.search(r"[\u0900-\u097F]", request or "") else "English"
 
 
+def shorts_options(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """The clipper's settings from a form (anything unknown falls back to the defaults)."""
+    raw = raw or {}
+    try:
+        clips = max(0, min(clipper.MAX_CLIPS, int(raw.get("clips") or 0)))      # 0 = decide from the video's length
+    except (TypeError, ValueError):
+        clips = 0
+    lang = str(raw.get("language") or "auto")
+    flag = lambda k: raw.get(k, True) not in (False, "0", "false", "off", 0)   # noqa: E731
+    return {"clips": clips, "length": raw.get("length") if raw.get("length") in clipper.LENGTHS else "medium",
+            "captions": flag("captions"), "headline": flag("headline"), "face_crop": flag("face_crop"),
+            "remove_pauses": flag("remove_pauses"),
+            "language": lang if lang == "auto" or lang in channels.LANGUAGES else "auto"}
+
+
 def create(ws_id: int, request: str, media_ids: list[int], *, channel_id: int | None = None, fmt: str | None = None,
-           user_id: int | None = None, voice_id: int | str | None = None) -> int:
+           user_id: int | None = None, voice_id: int | str | None = None, shorts: dict[str, Any] | None = None) -> int:
     from .. import worker
     media = [uploads.get(int(m), ws_id) for m in media_ids]
     if not media or any(m is None for m in media):
@@ -68,10 +83,22 @@ def create(ws_id: int, request: str, media_ids: list[int], *, channel_id: int | 
         voice = {"engine": "clone", "voice_id": str(v["id"]), "name": v["name"]}
     language = output_language(request, ch)
     title = (request.strip() or f"Edit of {media[0]['original_name']}")[:90]
+    extra: dict[str, Any] = {}
+    if shorts is not None:                           # AI Shorts clipper: one long video → ranked vertical clips
+        videos = [m for m in media if m["kind"] == "video"]
+        if len(videos) != 1:
+            raise ValueError("choose exactly one video to cut into Shorts")
+        if (videos[0].get("duration") or 0) < 20:
+            raise ValueError("that video is shorter than 20 seconds — upload a longer video to cut Shorts from")
+        media, fmt = videos, "short"
+        extra = {"mode": "shorts", "shorts": shorts_options(shorts)}
+        if extra["shorts"]["language"] != "auto":
+            language = extra["shorts"]["language"]
+        title = f"Shorts from {videos[0]['original_name'].rsplit('.', 1)[0]}"[:90]
     pid = db.insert("productions", {
         "format": "short" if fmt == "short" else "long", "title": title, "status": "queued", "stage": "inspect",
         "kind": "edit", "channel_id": channel_id, "workspace_id": ws_id, "language": language,
-        "request": json.dumps({"request": request, "format": fmt, "user_id": user_id, "voice": voice},
+        "request": json.dumps({"request": request, "format": fmt, "user_id": user_id, "voice": voice, **extra},
                               ensure_ascii=False),
         "source_media": json.dumps([m["id"] for m in media]), "package": "{}", "timeline": "{}", "episode": "{}",
         "test_mode": 0, "created_at": db.iso(), "updated_at": db.iso()})
@@ -123,11 +150,26 @@ def stage_plan(p: dict[str, Any]) -> None:
     req = db.loads(p.get("request"), {}) or {}
     media = _sources(p)
     scenes = {int(k): v for k, v in (p["episode"].get("scenes") or {}).items()}
-    edit, meta = planner.plan(req.get("request") or "", media, scenes, language=p.get("language") or "English",
-                              fmt=req.get("format"))
+    clips = None
+    if req.get("mode") == "shorts":
+        opts, src = req.get("shorts") or {}, media[0]
+        language = p.get("language") or "English"
+        if opts.get("language", "auto") == "auto":   # titles and captions in the language that is spoken
+            language = clipper.spoken_language(src.get("transcript") or []) if src.get("transcript") else language
+            _save(p["id"], language=language)
+        try:
+            edit, meta, clips = clipper.plan(src, scenes.get(src["id"]) or [], opts, language=language,
+                                             notes=req.get("request") or "")
+        except ValueError as e:
+            raise SourceProblem(str(e)) from e
+    else:
+        edit, meta = planner.plan(req.get("request") or "", media, scenes, language=p.get("language") or "English",
+                                  fmt=req.get("format"))
     first = edit.outputs[0]
     pkg = {"edit_plan": edit.model_dump(), "planner": meta, "unsupported": edit.unsupported,
            "title": first.title, "description": first.description, "tags": first.tags}
+    if clips is not None:
+        pkg["clips"] = clips
     _save(p["id"], package=pkg, title=first.title[:100], format="short" if first.aspect == "9:16" else "long")
     note = f"Plan: {edit.summary}" + (f" — not possible here: {'; '.join(edit.unsupported)}" if edit.unsupported else "")
     logs.event("info", "editing", note[:500], production_id=p["id"])
@@ -150,9 +192,13 @@ def _render_one(p: dict[str, Any], idx: int, o: dict[str, Any], media: dict[int,
         start, end = float(s["start"]), min(float(s["end"]), float(m["duration"] or s["end"]))
         parts = engine.keep_intervals(start, end, engine.silences(m["path"], start, end)) \
             if o.get("remove_silences") and m.get("has_audio") else [(start, end)]
+        crops: list[float | None] = [None] * len(parts)
+        if o.get("reframe") == "face" and m["kind"] == "video":
+            parts, crops = engine.shot_crops(m["path"], start, end, parts,
+                                             (p["episode"].get("scenes") or {}).get(str(m["id"])) or [])
         for pi, (a, b) in enumerate(parts):
             c = work / f"o{idx}_s{si:03d}_{pi:03d}.mp4"
-            engine.cut_clip(m, a, b, w, h, o.get("reframe", "fit_blur"), speed, c)
+            engine.cut_clip(m, a, b, w, h, o.get("reframe", "fit_blur"), speed, c, crop_x=crops[pi])
             real = engine.probe(c)["duration"] or (b - a) / speed
             pieces.append({"media_id": m["id"], "src_start": a, "src_end": b, "out_start": t, "speed": speed})
             clips.append(c)
@@ -197,14 +243,22 @@ def _render_one(p: dict[str, Any], idx: int, o: dict[str, Any], media: dict[int,
         srt = out_dir / f"{stem}_subtitles.srt"
         engine.write_srt(cue_list, srt)
         result["srt"] = str(srt)
-    if o.get("subtitles") and cue_list:
-        track = engine.subtitle_track(cue_list, w, h, total, o.get("highlight_words") or [], work / f"o{idx}_subs")
+    track = engine.subtitle_track(cue_list, w, h, total, o.get("highlight_words") or [], work / f"o{idx}_subs") \
+        if o.get("subtitles") and cue_list else None
+    headline = None
+    if (o.get("headline") or "").strip():
+        headline = work / f"o{idx}_headline.png"
+        engine.headline_layer(o["headline"].strip(), w, h).save(headline)
+    if track or headline:
         subbed = out_dir / f"{stem}_video_subtitled.mp4"
-        engine.finish(joined, subbed, music_mood=o.get("music_mood", "none"), subs=track, total=total, work=work)
+        engine.finish(joined, subbed, music_mood=o.get("music_mood", "none"), subs=track, total=total, work=work,
+                      headline=headline)
         result["clean_video"], result["video"] = str(clean), str(subbed)
-    elif o.get("subtitles"):
+    if o.get("subtitles") and not cue_list:
         result["note"] = "subtitles requested but no speech was found in the source"
-    thumb = engine.thumbnail(Path(result["video"]), o["title"], out_dir / f"{stem}_thumbnail.jpg", total * 0.33)
+    vertical = o["aspect"] == "9:16"
+    thumb = engine.thumbnail(Path(result["video"]), (vertical and (o.get("headline") or "").strip()) or o["title"],
+                             out_dir / f"{stem}_thumbnail.jpg", total * 0.33, size=(1080, 1920) if vertical else None)
     checks = engine.check_output(Path(result["video"]), w, h, total)
     if o.get("subtitles"):
         checks.append({"name": "subtitles", "ok": bool(cue_list), "severity": "warn",
@@ -243,7 +297,13 @@ def translate_cues(cues: list[dict[str, Any]], language: str) -> list[dict[str, 
     return out
 
 
-def _package(o: dict[str, Any], plan_pkg: dict[str, Any], src_names: list[str]) -> dict[str, Any]:
+def _package(o: dict[str, Any], plan_pkg: dict[str, Any], src_names: list[str],
+             clip: dict[str, Any] | None = None) -> dict[str, Any]:
+    if clip:                                         # clipper output: the platform texts are already final
+        yt = clip["platforms"]["youtube"]
+        return {"title": yt["title"][:100], "description": yt["description"], "tags": yt["tags"],
+                "final_description": yt["description"][:4900], "sources": src_names, "clip": clip,
+                "platforms": clip["platforms"]}
     desc = (o.get("description") or "").strip()
     tags = [t.strip("# ") for t in (o.get("tags") or []) if t.strip("# ")][:15]
     final = desc + ("\n\n" + " ".join("#" + t.replace(" ", "") for t in tags[:5]) if tags else "")
@@ -267,6 +327,13 @@ def stage_render(p: dict[str, Any]) -> None:
         if idx < len(done) and done[idx].get("video") and Path(done[idx]["video"]).exists():
             continue                                # finished before a restart/retry: never re-rendered
         res = _render_one(p, idx, o, media, work)
+        clips = pkg.get("clips") or []
+        clip = clips[idx] if idx < len(clips) else None
+        if clip:                                    # posting details next to the clip, as a real file
+            details = workdir(p["id"]) / "outputs" / f"{idx + 1:02d}_details.txt"
+            details.write_text(clipper.details_text(o["title"], clip, next(iter(media.values()))["original_name"]),
+                               encoding="utf-8")
+            res["details"] = str(details)
         done = done[:idx] + [res]
         ep["outputs"] = done
         _save(p["id"], episode=ep)
@@ -288,7 +355,10 @@ def stage_review(p: dict[str, Any]) -> None:
     names = [m["original_name"] for m in _sources(p)]
     plan_outs = pkg["edit_plan"]["outputs"]
     ch = channels.get(p.get("channel_id")) if p.get("channel_id") else None
-    auto = bool(ch and ch.get("auto_publish") and ch.get("status") == "active" and oauth.connected(ch["id"]))
+    clips = pkg.get("clips") or []
+    # a batch of Shorts is never auto-published at once: the creator downloads or publishes the ones they want
+    auto = bool(ch and ch.get("auto_publish") and ch.get("status") == "active" and oauth.connected(ch["id"])) \
+        and not clips
     unsupported = pkg.get("unsupported") or []
     note = ("Not possible with the available tools: " + "; ".join(unsupported) + ". Everything else was done. ") \
         if unsupported else ""
@@ -298,7 +368,7 @@ def stage_review(p: dict[str, Any]) -> None:
     failed = []
     for idx, res in enumerate(outs):
         qa = {"passed": res["passed"], "checks": res["checks"], "auto_publish_ok": res["passed"]}
-        out_pkg = _package(plan_outs[idx], pkg, names)
+        out_pkg = _package(plan_outs[idx], pkg, names, clips[idx] if idx < len(clips) else None)
         fields = {"video_path": res["video"], "thumbnail_path": res["thumbnail"], "srt_path": res.get("srt"),
                   "qa": json.dumps(qa), "format": "short" if res["aspect"] == "9:16" else "long",
                   "title": out_pkg["title"]}

@@ -245,9 +245,12 @@ def create(n: int | None = None, audience: str = "india", fmt: str = "long", act
             raise ValueError("all lessons of the series have been generated")
     language = profile.language_for(audience)
     facts = facts_for(n, language)
+    from .. import channels
+    ch = channels.finance_channel() or {}
     pid = db.insert("productions", {
         "topic_id": None, "format": fmt, "title": facts["title"], "status": "queued", "stage": "script", "kind": "fib_lesson",
         "audience": audience, "language": language, "package": db.dumps({}),
+        "channel_id": ch.get("id"), "workspace_id": ch.get("workspace_id", 1),
         "episode": db.dumps({"facts": facts, "disclosure": DISCLOSURE[facts["lang"]]}), "test_mode": 0,
         "created_at": db.iso(), "updated_at": db.iso()})
     audit.record("lesson_requested", {"lesson": n, "audience": audience, "language": language}, production_id=pid, actor=actor)

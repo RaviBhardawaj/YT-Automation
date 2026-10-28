@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}AI Shorts clipper · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="head">
+  <div><h1>AI Shorts from a long video</h1>
+    <div class="muted">Upload one long video. The AI picks the moments that work on their own and cuts them as vertical clips for
+      YouTube Shorts, Instagram Reels and Facebook Reels, with titles, captions and hashtags for each platform.</div></div>
+</div>
+
+{% if not allowed %}
+<div class="note warn">“Upload &amp; edit videos” isn't enabled for your account, so the Shorts clipper isn't available yet. <a href="/billing">See plans</a></div>
+{% else %}
+<div class="card" id="creator" data-mode="shorts">
+  <h3 style="margin-top:0">1. Your long video</h3>
+  <div class="drop" id="drop">Drop a video here, or click to choose
+    <div class="small">Podcasts, interviews, classes, vlogs and streams work best — the AI reads what is said.
+      Up to {{ limits.max_upload_mb }} MB and {{ limits.max_upload_minutes }} minutes on your plan.</div></div>
+  <input type="file" id="files" accept="{{ accept }}" hidden>
+  <div id="queue"></div>
+  {% if recent %}
+  <details style="margin-top:8px" {{ 'open' if picked }}><summary class="small">Or use a video you uploaded before ({{ recent|length }})</summary>
+    {% for m in recent %}<label class="pick"><input type="radio" name="prev" class="prev" value="{{ m.id }}" {{ 'checked' if picked and picked.id == m.id }}>
+      {{ m.original_name }} <span class="muted">{% if m.duration %}{{ '%d:%02d' % (m.duration // 60, m.duration % 60) }} · {% endif %}{{ '%.1f' % (m.size_bytes / 1e6) }} MB</span></label>{% endfor %}
+  </details>{% endif %}
+
+  <h3>2. What you want back</h3>
+  <div class="grid g3">
+    <label class="f"><span>How many Shorts</span><select id="clips">
+      <option value="0">Decide from the video's length</option>
+      {% for n in (3, 5, 8, 10, 15) %}<option value="{{ n }}">{{ n }} Shorts</option>{% endfor %}</select></label>
+    <label class="f"><span>Length of each Short</span><select id="length">
+      {% for k, label in lengths.items() %}<option value="{{ k }}" {{ 'selected' if k == 'medium' }}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Language of titles &amp; captions</span><select id="language">
+      <option value="auto">Same as the video</option>
+      {% for l in languages %}<option value="{{ l }}">{{ l }}</option>{% endfor %}</select></label>
+  </div>
+  <div class="row small" style="margin:-2px 0 12px;gap:16px">
+    <label><input type="checkbox" id="opt-captions" checked> Captions burned in (key words highlighted)</label>
+    <label><input type="checkbox" id="opt-headline" checked> Hook headline for the first 3 seconds</label>
+    <label><input type="checkbox" id="opt-face" checked> Keep the speaker's face in frame</label>
+    <label><input type="checkbox" id="opt-pauses" checked> Remove long pauses</label>
+  </div>
+  <div class="grid g2">
+    <label class="f"><span>Anything the AI should look for? <span class="muted">(optional)</span></span>
+      <textarea id="req" rows="2" placeholder="e.g. Focus on the money-saving tips; skip the sponsor part"></textarea></label>
+    <label class="f"><span>Channel <span class="muted">(optional — to publish from the studio later)</span></span><select id="channel">
+      <option value="none" selected>No channel — I'll download them</option>
+      {% for c in channels %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select>
+      <span class="small muted">Shorts are never published automatically; you choose which ones to post.</span></label>
+  </div>
+  <button class="primary" id="go">Find my best Shorts</button>
+  <span class="muted small" id="gostate"></span>
+</div>
+<div class="note small">Takes a few minutes: the speech is transcribed on this computer, the AI ranks the moments, then each clip is
+  cropped to 1080×1920 and checked. You can leave this page — the results stay under “Your Shorts jobs”.</div>
+{% endif %}
+
+{% if jobs %}
+<div class="card" style="margin-top:16px">
+  <h2>Your Shorts jobs</h2>
+  <table>
+    {% for j in jobs %}<tr>
+      <td><a href="/shorts/{{ j.id }}">{{ j.title }}</a><div class="small muted">{{ j.created_at|dt }}{% if j.n %} · {{ j.n }} clips{% endif %}</div></td>
+      <td style="text-align:right">{% with p=j %}{% include "_status.html" %}{% endwith %}</td></tr>{% endfor %}
+  </table>
+</div>{% endif %}
+<script src="/static/create.js?v={{ static_v }}"></script>
+{% endblock %}

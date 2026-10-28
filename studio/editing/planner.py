@@ -15,12 +15,13 @@ from pydantic import BaseModel, Field
 from .. import ai
 
 ENGINE_CAN = ("cut and reorder segments; remove silences/pauses; vertical 9:16, square 1:1 or 16:9 reframing "
-              "(blurred-background fit or centre crop); burned-in subtitles (as spoken, or translated into another language) with "
+              "(blurred-background fit, centre crop, or a crop centred on the speaker's face per shot); a short "
+              "headline over the first seconds; burned-in subtitles (as spoken, or translated into another language) with "
               "highlighted keywords, plus an .srt file; intro and outro title cards; original background music (mood-based) "
               "mixed under the speech; loudness normalisation; speed change 0.5–2x; titles, descriptions, tags "
               "and a thumbnail for each output")
 ENGINE_CANNOT = ("replacing or dubbing the voiceover, AI-generated video or images, object removal, colour "
-                 "grading beyond basic, adding stock footage, lip-sync, face tracking")
+                 "grading beyond basic, adding stock footage, lip-sync, a crop that follows movement within one shot")
 
 
 class Segment(BaseModel):
@@ -33,13 +34,14 @@ class Segment(BaseModel):
 class Output(BaseModel):
     name: str = Field(description="short label, e.g. 'Main edit' or 'Short 2'")
     aspect: Literal["16:9", "9:16", "1:1", "original"] = "original"
-    reframe: Literal["fit_blur", "crop"] = "fit_blur"
+    reframe: Literal["fit_blur", "crop", "face"] = "fit_blur"
     segments: list[Segment] = Field(default_factory=list, description="in output order; empty = whole source")
     remove_silences: bool = False
     subtitles: bool = False
     subtitle_language: str = Field("original", description="'original' = as spoken, or a language to translate "
                                    "captions into (e.g. 'Hindi') when the creator asks for it")
     highlight_words: list[str] = Field(default_factory=list, description="keywords to colour in subtitles")
+    headline: str = Field("", description="optional 3–8 word headline shown over the first seconds")
     intro_text: str = ""
     outro_text: str = ""
     music_mood: Literal["none", "funny", "calm", "happy", "tense", "scary", "sad", "inspiring"] = "none"

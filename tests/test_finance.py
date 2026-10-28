@@ -947,3 +947,35 @@ class LessonTests(unittest.TestCase):
                                   "episode": db.dumps({"facts": {"lesson_no": before}}), "created_at": db.iso(),
                                   "updated_at": db.iso()})
         self.assertEqual(lessons.next_lesson_number("india"), before + 1)
+
+
+class ChannelOwnershipTests(unittest.TestCase):
+    """NIFTY videos belong to the NIFTY studio channel (its library, analytics and upload switch)."""
+
+    def test_lesson_and_episode_are_saved_on_the_nifty_channel(self):
+        from unittest import mock
+        from studio import worker
+        from studio.finance import episode, lessons
+        nifty = _channels.finance_channel()
+        res = import_fixture(date(2026, 7, 1), 45)
+        bars = marketdata.daily_bars(res["dataset_id"])
+        with mock.patch.object(worker, "enqueue", return_value=1):
+            pids = [lessons.create(1, audience="india"),
+                    episode.create(res["dataset_id"], bars[-3]["trade_date"], "historical_case_study")]
+        for pid in pids:
+            self.assertEqual(db.q1("SELECT channel_id FROM productions WHERE id=?", (pid,))["channel_id"], nifty["id"])
+
+    def test_orphaned_nifty_videos_are_adopted(self):
+        pid = db.insert("productions", {"format": "short", "title": "orphan", "status": "uploaded", "stage": "compliance",
+                                        "kind": "nifty_short", "test_mode": 0, "created_at": db.iso(), "updated_at": db.iso()})
+        self.assertGreaterEqual(_channels.adopt_finance_orphans(), 1)
+        self.assertEqual(db.q1("SELECT channel_id FROM productions WHERE id=?", (pid,))["channel_id"],
+                         _channels.finance_channel()["id"])
+
+    def test_lesson_report_needs_no_market_data(self):
+        from studio.finance import episode
+        pid = db.insert("productions", {"format": "long", "title": "Lesson", "status": "approved", "stage": "compliance",
+                                        "kind": "fib_lesson", "test_mode": 0, "package": db.dumps({"scenes": []}),
+                                        "episode": db.dumps({"facts": {"lesson_no": 2, "title": "Lesson"}}),
+                                        "created_at": db.iso(), "updated_at": db.iso()})
+        self.assertTrue(episode.write_report(pid).exists())

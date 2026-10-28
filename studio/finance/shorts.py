@@ -240,6 +240,7 @@ def create_for(parent_id: int, actor: str = "system") -> list[int]:
         pid = db.insert("productions", {
             "topic_id": None, "format": "short", "title": built["package"]["title"], "status": "queued", "stage": "voice",
             "kind": "nifty_short", "parent_id": parent_id, "audience": parent.get("audience") or "india",
+            "channel_id": parent.get("channel_id"), "workspace_id": parent.get("workspace_id") or 1,
             "language": parent.get("language"), "package": db.dumps(built["package"]),
             "episode": db.dumps(built["episode"]), "test_mode": 0, "created_at": db.iso(), "updated_at": db.iso()})
         audit.record("short_created", {"parent_id": parent_id, "segment": seg}, production_id=pid, actor=actor)

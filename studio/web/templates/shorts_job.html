@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ p.title }} · {{ app_name }}{% endblock %}
+{% block content %}
+{% set planned = p.package.clips or [] %}
+{% set done = (p.episode.outputs or [])|length %}
+<div class="head" {% if active %}data-watch-production="{{ p.id }}" data-status="{{ p.status }}" data-stage="{{ p.stage }}"{% if p.stage == 'render' %} data-autorefresh="20"{% endif %}{% endif %}>
+  <div><a class="small" href="/shorts">← AI Shorts clipper</a>
+    <h1>{{ p.title }}</h1>
+    <div class="muted small">{% if source %}{{ source.original_name }}{% if source.duration %} · {{ '%d:%02d' % (source.duration // 60, source.duration % 60) }}{% endif %} · {% endif %}
+      {{ p.created_at|dt }} · {% include "_status.html" %}</div></div>
+  <div class="row">
+    {% if ready %}<a class="btn primary" href="/download/{{ p.id }}/pack">⬇ Download all {{ ready }} (ZIP)</a>{% endif %}
+    <a class="btn" href="/productions/{{ p.id }}">Job details</a>
+  </div>
+</div>
+
+{% if active %}
+<div class="card">
+  <div class="stages">{% set labels = {'inspect': 'Checking the video', 'transcribe': 'Transcribing speech', 'plan': 'Finding the best moments', 'render': 'Cutting clips', 'review': 'Final checks'} %}
+    {% set ns = namespace(seen=false) %}
+    {% for s in stages %}{% if s == p.stage %}{% set ns.seen = true %}<span class="now">{{ labels.get(s, s) }}{% if s == 'render' and planned %} · {{ done }} of {{ planned|length }}{% endif %}</span>{% elif not ns.seen %}<span class="done">{{ labels.get(s, s) }}</span>{% else %}<span>{{ labels.get(s, s) }}</span>{% endif %}{% endfor %}</div>
+  <div class="small muted">Working in the background — this page updates by itself. Long videos take a few minutes to transcribe.</div>
+</div>
+{% elif p.status in ('needs_attention', 'failed') %}
+<div class="note err"><b>Stopped:</b> {{ p.error or 'the job did not finish' }}
+  <div style="margin-top:8px"><button class="sm" data-post="/api/productions/{{ p.id }}/retry" data-done="Retrying…">Retry from where it stopped</button></div></div>
+{% endif %}
+
+{% if p.package.planner and p.package.planner.picked_by and p.package.planner.picked_by != 'ai' %}
+<div class="note warn small">The AI was unavailable for part of this video, so some moments were picked by rules (clean opening line, dense speech). Retry later for AI-ranked picks.</div>{% endif %}
+
+{% if clips %}
+<div class="clips">
+  {% for c in clips %}{% set cp = c.clip.platforms %}{% set q = c.p %}
+  <div class="card clip">
+    <div class="spread"><span class="rank">#{{ loop.index }}</span>
+      <span><span class="score">{{ c.clip.score }}<small>/100</small></span></span></div>
+    {% if c.has_video %}<video controls preload="metadata" src="{{ media_url(q.video_path) }}"{% if q.thumbnail_path %} poster="{{ media_url(q.thumbnail_path) }}"{% endif %}></video>
+    {% else %}<div class="clip-wait">{% with p=q %}{% include "_status.html" %}{% endwith %}<div class="small muted" style="margin-top:6px">{{ q.error or '' }}</div></div>{% endif %}
+    <b class="clip-title">{{ cp.youtube.title }}</b>
+    <div class="small muted">{{ '%d:%02d' % (c.clip.start // 60, c.clip.start % 60) }}–{{ '%d:%02d' % (c.clip.end // 60, c.clip.end % 60) }} in the original · {{ '%.0f' % c.clip.seconds }} s{% if c.clip.picked_by == 'rules' %} · rule pick{% endif %}</div>
+    <div class="small" style="margin:6px 0">{{ c.clip.reason }}</div>
+    {% if c.files %}<div class="row" style="gap:6px">
+      {% for f in c.files %}<a class="btn sm {{ 'primary' if f.variant == 'video' }}" href="/download/{{ q.id }}/{{ f.variant }}" title="{{ f.label }} · {{ '%.1f' % (f.size / 1e6) }} MB">{{ {'video': '⬇ Video', 'clean': 'No text', 'srt': '.srt', 'thumbnail': 'Cover', 'details': 'Details .txt'}.get(f.variant, f.label) }}</a>{% endfor %}
+    </div>{% endif %}
+    <details><summary>YouTube Shorts</summary>
+      <div class="copy"><span class="small muted">Title</span><button class="sm" type="button" data-copy="#yt-t-{{ q.id }}">Copy</button></div>
+      <textarea readonly rows="2" id="yt-t-{{ q.id }}">{{ cp.youtube.title }}</textarea>
+      <div class="copy"><span class="small muted">Description</span><button class="sm" type="button" data-copy="#yt-d-{{ q.id }}">Copy</button></div>
+      <textarea readonly rows="4" id="yt-d-{{ q.id }}">{{ cp.youtube.description }}</textarea>
+      <div class="copy"><span class="small muted">Tags</span><button class="sm" type="button" data-copy="#yt-g-{{ q.id }}">Copy</button></div>
+      <textarea readonly rows="2" id="yt-g-{{ q.id }}">{{ cp.youtube.tags|join(', ') }}</textarea>
+    </details>
+    <details><summary>Instagram Reels</summary>
+      <div class="copy"><span class="small muted">Caption (max 5 hashtags)</span><button class="sm" type="button" data-copy="#ig-{{ q.id }}">Copy</button></div>
+      <textarea readonly rows="5" id="ig-{{ q.id }}">{{ cp.instagram.caption }}</textarea>
+    </details>
+    <details><summary>Facebook Reels</summary>
+      <div class="copy"><span class="small muted">Caption</span><button class="sm" type="button" data-copy="#fb-{{ q.id }}">Copy</button></div>
+      <textarea readonly rows="4" id="fb-{{ q.id }}">{{ cp.facebook.caption }}</textarea>
+    </details>
+    {% if c.has_video %}<a class="small" href="/productions/{{ q.id }}">Edit details or publish →</a>{% endif %}
+  </div>{% endfor %}
+</div>
+{% elif planned %}
+<div class="card"><h2>Moments found</h2>
+  {% for c in planned %}<div class="spread small" style="padding:4px 0;border-bottom:1px dashed var(--line)">
+    <span><b>#{{ c.rank }}</b> {{ c.platforms.youtube.title }} <span class="muted">· {{ '%d:%02d' % (c.start // 60, c.start % 60) }} · {{ '%.0f' % c.seconds }} s</span></span>
+    <span class="chip">{{ c.score }}/100{% if loop.index <= done %} · cut{% endif %}</span></div>{% endfor %}
+</div>
+{% endif %}
+
+{% if events %}
+<details style="margin-top:16px"><summary>Activity</summary>
+  <div class="events">{% for e in events %}<div class="lvl-{{ e.level }}">{{ e.created_at|dt }} — {{ e.message }}</div>{% endfor %}</div>
+</details>{% endif %}
+{% endblock %}

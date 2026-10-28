@@ -165,6 +165,30 @@ def ensure_default() -> None:
     db.ex("UPDATE productions SET channel_id=? WHERE channel_id IS NULL", (cid,))
 
 
+FINANCE_KINDS = ("nifty_pivot", "nifty_short", "fib_lesson")
+
+
+def finance_channel() -> dict[str, Any] | None:
+    """The studio channel that carries the NIFTY episodes, their Shorts and the lesson series."""
+    cur = get(current_id())
+    if cur and cur["workflow"] == "nifty_daily":
+        return cur
+    return _row(db.q1("SELECT * FROM channels WHERE workflow='nifty_daily' ORDER BY (status='active') DESC, id LIMIT 1"))
+
+
+def adopt_finance_orphans() -> int:
+    """NIFTY videos saved without a channel belong to the NIFTY channel (its library, analytics and upload switch)."""
+    ch = finance_channel()
+    if not ch:
+        return 0
+    n = db.q1("SELECT COUNT(*) AS n FROM productions WHERE channel_id IS NULL AND kind IN "
+              f"{FINANCE_KINDS!r}")["n"]
+    if n:
+        db.ex(f"UPDATE productions SET channel_id=?, workspace_id=? WHERE channel_id IS NULL AND kind IN {FINANCE_KINDS!r}",
+              (ch["id"], ch["workspace_id"]))
+    return n
+
+
 # ------------------------------------------------------------------ helpers used by the pipelines
 
 HANDLE_URL = re.compile(r"(?:youtube\.com/)?(@[\w.\-]{3,100})|youtube\.com/channel/(UC[\w\-]{22})|^(UC[\w\-]{22})$")

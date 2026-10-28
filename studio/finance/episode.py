@@ -16,7 +16,7 @@ from typing import Any, Literal
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 
-from .. import ai, config, db, logs, profile, settings
+from .. import ai, channels, config, db, logs, profile, settings
 from ..ai import prompts
 from ..media import graphics
 from . import analysis, audit, charts, gate, i18n, lint, marketdata
@@ -63,9 +63,10 @@ def create(dataset_id: int, basis_date: str, mode: str, fmt: str = "long", actor
         raise marketdata.DataError(f"the session after {basis_date} in dataset #{dataset_id} is "
                                    f"{facts.get('review_date')}, not {review_date}")
     title = title_for(facts)
+    ch = channels.finance_channel() or {}
     pid = db.insert("productions", {
         "topic_id": None, "format": fmt, "title": title, "status": "queued", "stage": "data", "kind": "nifty_pivot",
-        "audience": audience, "language": language,
+        "audience": audience, "language": language, "channel_id": ch.get("id"), "workspace_id": ch.get("workspace_id", 1),
         "package": db.dumps({}), "episode": db.dumps({"request": {"dataset_id": dataset_id, "basis_date": basis_date,
                                                                   "review_date": facts.get("review_date"),
                                                                   "mode": mode, "format": fmt}}),
@@ -977,7 +978,7 @@ def write_report(pid: int) -> Path:
              f"- Kind / format / language: {p.get('kind')} / {p['format']} / {p.get('language')}",
              f"- Status: {p['status']}" + (f" — {p['error']}" if p.get("error") else ""),
              f"- Created {p['created_at']} · updated {p['updated_at']}", ""]
-    if facts:
+    if facts.get("basis"):                       # market-data episodes (lessons carry no dataset)
         b = facts["basis"]
         lines += ["## Data", f"- Dataset #{facts['dataset_id']} (sha256 {facts['dataset_sha256'][:16]}…) · source: "
                   f"{source_name(facts)} · {facts['data_nature']} · retrieved {facts['retrieved_label']}",

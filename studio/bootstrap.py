@@ -23,6 +23,7 @@ def init(start_background: bool = False) -> None:
         marketdata.seed_sources()
         from . import channels
         channels.ensure_default()           # the original setup becomes studio channel #1 (with its history)
+        channels.adopt_finance_orphans()
         from . import scheduler, tasks  # noqa: F401  (registers task handlers)
         from .media import tts
         try:

@@ -23,6 +23,7 @@
       <div class="nav-group">Create</div>
       {{ item('/create', '✍️', 'Create video', page == 'create' and mode == 'create') }}
       {{ item('/edit', '✂️', 'Upload & edit', page == 'create' and mode == 'edit') }}
+      {{ item('/shorts', '🎞️', 'AI Shorts clipper', page in ('shorts', 'shorts_job')) }}
       {{ item('/ideas', '💡', 'Ideas', page in ('ideas', 'idea')) }}
       {{ item('/voices', '🎙️', 'My voice', page == 'voices') }}
       <div class="nav-group">My videos</div>

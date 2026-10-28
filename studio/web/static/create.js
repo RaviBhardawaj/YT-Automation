@@ -1,5 +1,5 @@
 "use strict";
-// Create / Upload & edit page: streamed uploads with progress and retry, then one /api/create call.
+// Create / Upload & edit / Shorts clipper pages: streamed uploads with progress and retry, then one /api/create call.
 (() => {
   const root = document.getElementById("creator");
   if (!root) return;
@@ -7,6 +7,9 @@
   const input = document.getElementById("files");
   const list = document.getElementById("queue");
   const uploaded = new Map();          // row element -> media id
+  const shorts = root.dataset.mode === "shorts";   // one long video in, ranked vertical clips out
+  const val = id => (document.getElementById(id) || {}).value;
+  const on = id => !!(document.getElementById(id) || {}).checked;
   let busy = 0;
 
   function human(n) { return n > 1e9 ? (n / 1e9).toFixed(1) + " GB" : (n / 1e6).toFixed(1) + " MB"; }
@@ -22,7 +25,7 @@
     xhr.open("POST", "/api/media/upload");
     xhr.setRequestHeader("X-CSRF-Token", CSRF);
     xhr.setRequestHeader("X-Filename", encodeURIComponent(file.name));
-    const ch = document.getElementById("channel").value;
+    const ch = val("channel");
     if (ch && ch !== "none") xhr.setRequestHeader("X-Channel", ch);
     xhr.upload.onprogress = e => { if (e.lengthComputable) bar.style.width = (e.loaded / e.total * 100).toFixed(0) + "%"; };
     xhr.onload = async () => {
@@ -49,6 +52,12 @@
   }
 
   function add(files) {
+    if (shorts) {                       // one video per job: a new file replaces the previous one
+      files = [...files].slice(0, 1);
+      list.innerHTML = "";
+      uploaded.clear();
+      document.querySelectorAll(".prev:checked").forEach(r => { r.checked = false; });
+    }
     for (const file of files) {
       const row = document.createElement("div");
       row.className = "filerow";
@@ -74,8 +83,9 @@
     if (busy) { state.textContent = "Wait for the uploads to finish."; return; }
     const chSel = document.getElementById("channel");
     if (!chSel.value) { toast("Choose which channel this video is for (or “No channel”)", "err"); chSel.focus(); return; }
-    const ids = [...uploaded.values(), ...[...document.querySelectorAll(".prev:checked")].map(x => +x.value)];
-    if (root.dataset.mode === "edit" && !ids.length) { toast("Add at least one file to edit", "err"); return; }
+    let ids = [...uploaded.values(), ...[...document.querySelectorAll(".prev:checked")].map(x => +x.value)];
+    if (shorts) ids = ids.slice(-1);
+    if (root.dataset.mode !== "create" && !ids.length) { toast(shorts ? "Add the video to cut Shorts from" : "Add at least one file to edit", "err"); return; }
     const ai = document.getElementById("aivideo");
     const wantAi = !!(ai && ai.checked);
     if (wantAi) {
@@ -91,8 +101,11 @@
       const j = await api("/api/create", {
         request: document.getElementById("req").value, media_ids: ids,
         channel_id: chSel.value === "none" ? null : chSel.value, no_upload: chSel.value === "none", ai_video: wantAi,
-        format: document.getElementById("format").value || null,
-        voice_id: (document.getElementById("voice") || {}).value || null,
+        format: val("format") || null,
+        voice_id: val("voice") || null,
+        shorts: shorts ? { clips: +val("clips") || 0, length: val("length"), language: val("language"),
+                           captions: on("opt-captions"), headline: on("opt-headline"), face_crop: on("opt-face"),
+                           remove_pauses: on("opt-pauses") } : undefined,
       });
       toast(j.detail || "Started");
       location.href = j.next;

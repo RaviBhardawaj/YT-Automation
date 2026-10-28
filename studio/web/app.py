@@ -94,6 +94,7 @@ ADMIN_ONLY = ("/system", "/api/system/", "/settings", "/compliance", "/niches", 
 # /<prefix>/<id>: the id must belong to the signed-in workspace (404 otherwise — never reveal other tenants' data)
 OWNED_PATHS = [(re.compile(r"^/(?:api/)?productions/(\d+)"), "productions"),
                (re.compile(r"^/download/(\d+)"), "productions"),
+               (re.compile(r"^/shorts/(\d+)"), "productions"),
                (re.compile(r"^/(?:api/)?(?:ideas|topics)/(\d+)"), "topics"),
                (re.compile(r"^/(?:api/)?channels/(\d+)"), "channels"),
                (re.compile(r"^/api/characters/(\d+)"), "characters"),
@@ -257,6 +258,9 @@ PAGE_HELP = {
     "dashboard": "Your studio at a glance. Start with <b>Create video</b> or <b>Upload &amp; edit</b>; finished videos land in the <b>Video library</b>.",
     "create": "Describe the video in your own words — topic, style, language, length. You can also paste a YouTube link for inspiration "
               "(its topic is used, never its content). Pick the channel it's for, then <b>Create video</b>. It's made in the background; you can leave the page.",
+    "shorts": "Upload one long video — a podcast, interview, class or stream. The AI reads what is said, picks the moments that work on "
+              "their own, crops them to vertical around the speaker and adds captions. Each clip comes with titles, captions and hashtags "
+              "for YouTube, Instagram and Facebook, ready to download.",
     "edit": "Upload your video or audio (or pick an earlier upload), then say what to change: “remove pauses and add Hindi subtitles”, "
             "“make 3 vertical Shorts of the best moments”. Your original file is never changed.",
     "ideas": "Write or paste your own prompt to make a video right away — or pick a channel and click <b>Generate ideas</b> for suggestions "
@@ -2070,8 +2074,11 @@ async def api_create(request: Request):
         if data.get("voice_id"):
             plans.require(ws, "voice_clone")
         if media_ids:
+            shorts = data.get("shorts") if isinstance(data.get("shorts"), dict) else None
             pid = editing.create(ws, req, media_ids, channel_id=cid, fmt=fmt, user_id=request.state.sess["user"]["id"],
-                                 voice_id=data.get("voice_id") or None)
+                                 voice_id=data.get("voice_id") or None, shorts=shorts)
+            if shorts is not None:
+                return ok(production_ids=[pid], next=f"/shorts/{pid}", detail="Finding the best moments…")
             return ok(production_ids=[pid], next=f"/productions/{pid}", detail="Edit job started")
         if not req:
             return bad("Describe the video you want, or add files to edit.")
@@ -2094,6 +2101,39 @@ async def api_create(request: Request):
         return bad(str(e))
     pids = res.get("production_ids") or []
     return ok(production_ids=pids, next=f"/productions/{pids[0]}" if pids else "/queue", detail="Video job started")
+
+
+@app.get("/shorts", response_class=HTMLResponse)
+def shorts_page(request: Request, media: str = ""):
+    """AI Shorts clipper: upload one long video, get its best moments as vertical clips with posting details."""
+    from .. import channels as chmod
+    from ..editing import clipper
+    ws = ws_id(request)
+    picked = next((m for m in (uploads_mod().get(int(x), ws) for x in media.split(",") if x.isdigit())
+                   if m and m["kind"] == "video"), None)
+    recent = db.q("SELECT * FROM media WHERE workspace_id=? AND status='ready' AND kind='video' ORDER BY id DESC LIMIT 30",
+                  (ws,))
+    jobs = db.q("SELECT id, title, status, stage, created_at, json_array_length(package, '$.clips') AS n FROM productions "
+                "WHERE workspace_id=? AND kind='edit' AND json_extract(request, '$.mode')='shorts' ORDER BY id DESC LIMIT 20",
+                (ws,))
+    return page(request, "shorts.html", channels=chmod.all_channels(ws), recent=recent, picked=picked, jobs=jobs,
+                limits=plans.limits(ws), lengths=clipper.LENGTH_LABELS, languages=chmod.LANGUAGES,
+                accept=",".join(sorted(uploads_mod().KINDS["video"])), allowed=plans.can(ws, "upload_edit"))
+
+
+@app.get("/shorts/{pid}", response_class=HTMLResponse)
+def shorts_job_page(request: Request, pid: int):
+    job = pipeline.load(pid)
+    req = db.loads(job.get("request"), {}) or {}
+    if job.get("kind") != "edit" or req.get("mode") != "shorts":
+        return RedirectResponse(f"/productions/{pid}", status_code=303)
+    stages, _, _ = pipeline.stages_for("edit")
+    sources = [m for m in (uploads_mod().get(i, ws_id(request)) for i in db.loads(job.get("source_media"), []) or []) if m]
+    clips = shorts_clips(job) if job["package"].get("clips") else []
+    return page(request, "shorts_job.html", p=job, opts=req.get("shorts") or {}, stages=stages, clips=clips,
+                source=sources[0] if sources else None, active=job["status"] not in pipeline.TERMINAL,
+                ready=sum(1 for c in clips if c["has_video"]),
+                events=db.q("SELECT * FROM logs WHERE production_id=? ORDER BY id DESC LIMIT 12", (pid,)))
 
 
 @app.get("/uploads", response_class=HTMLResponse)
@@ -2149,20 +2189,88 @@ def outputs_of(p: dict[str, Any]) -> list[dict[str, Any]]:
     ep = p.get("episode") if isinstance(p.get("episode"), dict) else db.loads(p.get("episode"), {}) or {}
     res = (ep.get("output") or (ep.get("outputs") or [None])[0]) if p.get("kind") in ("edit", "edit_clip") else None
     if res and res.get("clean_video") and Path(res["clean_video"]).is_file():
-        out.insert(1, {"variant": "clean", "label": "Video without burned-in subtitles",
+        out.insert(1, {"variant": "clean", "label": "Video without burned-in text",
                        "size": Path(res["clean_video"]).stat().st_size, "path": res["clean_video"]})
+    if res and res.get("details") and Path(res["details"]).is_file():
+        out.append({"variant": "details", "label": "Titles, captions & hashtags (.txt)",
+                    "size": Path(res["details"]).stat().st_size, "path": res["details"]})
     return out
+
+
+def safe_filename(text: str | None, fallback: str, limit: int = 60) -> str:
+    """A download name that keeps every script intact (Hindi vowel signs too) and drops only unsafe characters."""
+    import unicodedata
+    keep = "".join(ch for ch in (text or "") if ch in " -_" or unicodedata.category(ch)[0] in "LMN")
+    return re.sub(r"\s+", " ", keep).strip()[:limit].strip() or fallback
+
+
+def shorts_clips(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every clip of a Shorts job in rank order (clip 1 is the job itself), with its details and files."""
+    rows = [job] + [pipeline.load(r["id"]) for r in db.q(
+        "SELECT id FROM productions WHERE parent_id=? AND kind='edit_clip' "
+        "ORDER BY CAST(json_extract(episode, '$.output_index') AS INTEGER), id", (job["id"],))]
+    plan = job["package"].get("clips") or []
+    out = []
+    for i, p in enumerate(rows):
+        clip = (p.get("package") or {}).get("clip") or (plan[i] if i < len(plan) else None)
+        if not clip:
+            continue
+        files = outputs_of(p) if p.get("video_path") else []
+        out.append({"p": p, "clip": clip, "files": files,
+                    "has_video": any(f["variant"] == "video" for f in files)})
+    return out
+
+
+def shorts_pack(job: dict[str, Any]) -> Path:
+    """One ZIP with every finished clip: video, clean video, captions, cover and posting details, plus a CSV index."""
+    import csv
+    import io
+    import zipfile
+    import time
+    clips = [c for c in shorts_clips(job) if c["has_video"]]
+    if not clips:
+        raise HTTPException(404, "No finished clips yet.")
+    folder = config.PRODUCTIONS_DIR / f"{job['id']:05d}"
+    for old in folder.glob("shorts-*.zip"):          # left behind by an interrupted download
+        if time.time() - old.stat().st_mtime > 3600:
+            old.unlink(missing_ok=True)
+    dest = folder / f"shorts-{secrets.token_hex(4)}.zip"
+    index = io.StringIO()
+    w = csv.writer(index)
+    w.writerow(["rank", "score", "file", "start", "end", "seconds", "youtube_title", "youtube_description", "youtube_tags",
+                "instagram_caption", "facebook_caption", "why"])
+    with zipfile.ZipFile(dest, "w") as z:
+        for n, c in enumerate(clips, 1):
+            folder = f"{n:02d} - {safe_filename(c['clip']['platforms']['youtube']['title'], 'clip', 50)}"
+            for f in c["files"]:
+                fname = {"video": "short.mp4", "clean": "short (no text).mp4", "srt": "captions.srt",
+                         "thumbnail": "cover.jpg", "details": "details.txt"}.get(f["variant"])
+                if fname:
+                    z.write(f["path"], f"{folder}/{fname}", compress_type=zipfile.ZIP_DEFLATED
+                            if fname.endswith((".srt", ".txt")) else zipfile.ZIP_STORED)
+            pl = c["clip"]["platforms"]
+            w.writerow([n, c["clip"]["score"], f"{folder}/short.mp4", c["clip"]["start"], c["clip"]["end"],
+                        c["clip"]["seconds"], pl["youtube"]["title"], pl["youtube"]["description"],
+                        ", ".join(pl["youtube"]["tags"]), pl["instagram"]["caption"], pl["facebook"]["caption"],
+                        c["clip"]["reason"]])
+        z.writestr("clips.csv", "\ufeff" + index.getvalue(), compress_type=zipfile.ZIP_DEFLATED)
+    return dest
 
 
 @app.get("/download/{pid}/{variant}")
 def download(pid: int, variant: str):
     p = pipeline.load(pid)
+    if variant == "pack" and p["package"].get("clips"):          # every clip of a Shorts job in one ZIP
+        from starlette.background import BackgroundTask
+        z = shorts_pack(p)
+        return FileResponse(z, media_type="application/zip", filename=f"{safe_filename(p.get('title'), 'shorts')}.zip",
+                            background=BackgroundTask(z.unlink, missing_ok=True))
     f = next((o for o in outputs_of(p) if o["variant"] == variant), None)
     if not f:
         raise HTTPException(404, "This file doesn't exist (yet). Check the job status.")
-    safe = re.sub(r"[^\w\- ]+", "", p.get("title") or f"video-{pid}", flags=re.UNICODE).strip()[:60] or f"video-{pid}"
+    safe = safe_filename(p.get("title"), f"video-{pid}")
     ext = Path(f["path"]).suffix
-    suffix = {"clean": " (no subtitles)", "srt": "", "thumbnail": " thumbnail"}.get(variant, "")
+    suffix = {"clean": " (no text)", "srt": "", "thumbnail": " thumbnail", "details": " details"}.get(variant, "")
     return FileResponse(f["path"], media_type=mimetypes.guess_type(f["path"])[0] or "application/octet-stream",
                         filename=f"{safe}{suffix}{ext}")
 

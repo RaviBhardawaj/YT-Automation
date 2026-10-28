@@ -5,6 +5,8 @@
   <div style="min-width:0">
     <div class="muted small"><a href="/productions{{ '?channel=' ~ p.channel_id if p.channel_id }}">Library</a> / #{{ p.id }} · {{ p.format }}{% if p.test_mode %} · test mode{% endif %}</div>
     <h1>{{ pkg.title or p.title or 'Untitled' }}</h1>
+    {% if pkg.clips %}<div class="note small">Shorts job — see every clip with its captions and downloads on the <a href="/shorts/{{ p.id }}">Shorts page</a>.</div>
+    {% elif pkg.clip and p.parent_id %}<div class="note small">Short #{{ pkg.clip.rank }} of a <a href="/shorts/{{ p.parent_id }}">Shorts job</a> (score {{ pkg.clip.score }}/100).</div>{% endif %}
     <div class="row">{% include "_status.html" %}
       {% if topic %}<span class="muted small">from idea “{{ topic.title }}” (score {{ '%.0f' % topic.score }})</span>{% endif %}</div>
     <div class="stages">{% for s in stages %}{% set idx = stages.index(p.stage) if p.stage in stages else 0 %}
@@ -123,7 +125,7 @@
       <a href="/media-files/{{ m.id }}?download=1">download original</a></div>{% endfor %}
     {% else %}<div class="muted small">{{ 'Generated from your prompt — no uploaded files.' }}</div>{% endif %}
     {% set rq = loads(p.request, {}) or {} %}{% if rq.request %}<div class="small" style="margin-top:8px"><b>Your request:</b> {{ rq.request }}</div>{% endif %}
-    {% if p.package.edit_plan %}<div class="small muted" style="margin-top:6px">Plan: {{ p.package.edit_plan.summary }} ({{ 'AI plan' if p.package.planner.planner == 'ai' else 'rule-based plan — AI unavailable' }})</div>{% endif %}
+    {% if p.package.edit_plan %}<div class="small muted" style="margin-top:6px">Plan: {{ p.package.edit_plan.summary }} ({{ 'AI Shorts clipper' if p.package.planner.planner == 'clipper' else 'AI plan' if p.package.planner.planner == 'ai' else 'rule-based plan — AI unavailable' }})</div>{% endif %}
     {% if p.package.unsupported %}<div class="note warn small">Not possible with the connected tools: {{ p.package.unsupported|join('; ') }}. Everything else was done.</div>{% endif %}
   </div>
 </div>
