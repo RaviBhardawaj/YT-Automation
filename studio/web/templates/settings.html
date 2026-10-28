@@ -144,17 +144,20 @@
   <h2>Visual sources</h2>
   <p class="muted small">Tried in order for each scene. Only licences allowing commercial use and modification are accepted, and every asset's licence and attribution is stored and added to the description. If nothing suitable is found, the app renders original abstract art in your brand palette.</p>
   <table>
-    {% set desc = {'pexels':'Pexels — free stock photos & video (API key)','pixabay':'Pixabay — free stock photos & video (API key)','openverse':'Openverse — CC-licensed images (CC0, PD, BY, BY-SA only)','wikimedia':'Wikimedia Commons — CC0 / public-domain / BY / BY-SA images','local_sd':'Local Stable Diffusion (A1111/Forge/Draw Things API) — original AI images','gemini_image':'Gemini image generation — paid per image, counts toward the AI limit','procedural':'Original procedural art (always available)'} %}
-    {% for p in s['visuals.order'] %}<tr><td><label><input type="checkbox" name="visuals.enabled::{{ p }}" {{ 'checked' if s['visuals.enabled'].get(p) }} {{ 'disabled' if p == 'procedural' }}> {{ desc.get(p, p) }}</label></td></tr>{% endfor %}
+    {% set desc = {'pexels':'Pexels — free stock photos & video (API key)','pixabay':'Pixabay — free stock photos & video (API key)','openverse':'Openverse — CC-licensed images (CC0, PD, BY, BY-SA only)','wikimedia':'Wikimedia Commons — CC0 / public-domain / BY / BY-SA images','cloudflare_image':'Cloudflare FLUX — free daily AI images (photo-real, or cartoon for kids channels) when no stock fits','local_sd':'Local Stable Diffusion (A1111/Forge/Draw Things API) — original AI images','gemini_image':'Gemini image generation — paid per image, counts toward the AI limit','procedural':'Original procedural art (always available)'} %}
+    {% set vorder = s['visuals.order'] if 'cloudflare_image' in s['visuals.order'] else s['visuals.order'][:-1] + ['cloudflare_image'] + s['visuals.order'][-1:] %}
+    {% for p in vorder %}<tr><td><label><input type="checkbox" name="visuals.enabled::{{ p }}" {{ 'checked' if s['visuals.enabled'].get(p, p == 'cloudflare_image') }} {{ 'disabled' if p == 'procedural' }}> {{ desc.get(p, p) }}</label></td></tr>{% endfor %}
   </table>
-  <label class="f" style="margin-top:10px"><span>Order (comma-separated)</span><input name="visuals.order" data-type="list" value="{{ s['visuals.order']|join(', ') }}"></label>
+  <label class="f" style="margin-top:10px"><span>Order (comma-separated)</span><input name="visuals.order" data-type="list" value="{{ vorder|join(', ') }}"></label>
   <label><input type="checkbox" name="visuals.prefer_video" {{ 'checked' if s['visuals.prefer_video'] }}> Prefer stock video clips for scenes marked as motion</label>
   <div class="grid g3" style="margin-top:12px">
+    <label class="f"><span>Cloudflare account ID (free FLUX images; token under Credentials)</span><input name="visuals.cloudflare_account_id" value="{{ s['visuals.cloudflare_account_id'] }}" placeholder="32-character account ID"></label>
+    <label class="f"><span>Film look</span><select name="render.film_look"><option value="auto" {{ 'selected' if s['render.film_look'] != 'off' }}>Auto — cinematic for real footage, bright for kids</option><option value="off" {{ 'selected' if s['render.film_look'] == 'off' }}>Off</option></select></label>
     <label class="f"><span>Local SD API URL</span><input name="visuals.local_sd_url" value="{{ s['visuals.local_sd_url'] }}"></label>
     <label class="f"><span>Gemini image model</span><input name="visuals.gemini_image_model" value="{{ s['visuals.gemini_image_model'] }}"></label>
     <label class="f"><span>Gemini price per image (USD)</span><input type="number" step="0.001" name="visuals.gemini_image_price" data-type="number" value="{{ s['visuals.gemini_image_price'] }}"></label>
   </div>
-  <div class="note small"><b>About cinematic AI video:</b> generating realistic motion video locally needs far more GPU memory than this Mac has, and hosted text-to-video services are paid per second. This app builds motion from licensed stock clips, Ken Burns camera moves, transitions and kinetic captions instead. AI-generated images are flagged as synthetic when uploading.</div>
+  <div class="note small"><b>About cinematic AI video:</b> generating realistic motion video locally needs far more GPU memory than this Mac has, and hosted text-to-video services are paid per second. This app builds motion from licensed stock clips, free FLUX images with camera moves, transitions, a consistent film grade and kinetic captions instead. Kids channels get cartoon-style visuals; every other channel gets real footage and photo-real images — never mixed. AI-generated images are flagged as synthetic when uploading.</div>
   <button type="submit" class="primary">Save visuals</button>
 </form>
 

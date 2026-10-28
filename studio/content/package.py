@@ -29,7 +29,8 @@ WORDS_PER_SECOND = {"hi": 2.5, "en": 2.7}
 class Scene(BaseModel):
     narration: str = Field(..., min_length=3, max_length=700, description="Exact words the narrator speaks")
     caption_text: str = Field(..., max_length=700, description="Subtitle text for this scene; empty string = same as narration")
-    visual_description: str = Field(..., min_length=5, max_length=400, description="What the viewer sees; concrete and filmable")
+    visual_description: str = Field(..., min_length=5, max_length=400,
+                                    description="The shot like a film director: shot size, subject + action, setting, light")
     visual_query: str = Field(..., min_length=2, max_length=80, description="2-5 ENGLISH keywords for stock media search")
     visual_type: Literal["video", "photo", "illustration", "text_card"]
     on_screen_text: str = Field(..., max_length=60, description="Optional headline overlay (max 6 words) or empty string")
@@ -285,7 +286,11 @@ VISUAL_RULES = (
     "the thing are fine (a doctor, a patient, a student, a family); NEVER a named or real, identifiable person, face "
     "portrait or public figure (a stock photo of a random person must never stand in for a real person). When a "
     "scene is about a specific person, use visual_type 'text_card' with their name/role as on_screen_text. "
-    "visual_description = one sentence describing exactly what should be on screen. No brand names or text. This is the ONLY "
+    "visual_description = one sentence written like a film director's shot: shot size (wide / medium / close-up), "
+    "the subject and what it is doing, the setting, and the light or time of day (e.g. 'Close-up of an elderly "
+    "man's hands pricking a fingertip with a glucose meter, kitchen table, soft morning window light'). It is used "
+    "to find or generate a real-looking picture, so make it concrete and photographable. Plan the scenes like a "
+    "film: open with a strong establishing or hook shot and vary shot sizes. No brand names or text. This is the ONLY "
     "field that is always English. on_screen_text is shown to viewers, so it uses the channel's display language "
     "and script (see LANGUAGE). visual_type: 'video' for motion, 'photo' for a still, 'illustration' for abstract "
     "concepts, 'text_card' for a key number or statement shown as a designed card. Vary visuals from scene to scene.")

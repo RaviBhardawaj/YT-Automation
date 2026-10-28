@@ -92,6 +92,8 @@ DEFAULTS: dict[str, Any] = {
     "visuals.vision_gemini_model": "gemini-flash-lite-latest",
     "visuals.vision_per_minute": 14,              # Gemini Flash-Lite free-tier pacing for those checks
     "visuals.min_relevance": 6,                   # 0-10: pictures scoring lower are not used
+    "visuals.cloudflare_account_id": "",          # Workers AI account for free FLUX.2 klein images
+    "render.film_look": "auto",                   # auto = cinematic grade for real footage, bright for kids; off
     "brand": {
         "channel_name": "",
         "primary": "#FFD23F",
@@ -178,6 +180,12 @@ SECRETS: dict[str, dict[str, str]] = {
         "label": "Claude API key (Anthropic)",
         "purpose": "Optional high-quality research synthesis and scriptwriting. Billed per token, separately from Claude Pro/Max.",
         "url": "https://platform.claude.com/settings/keys",
+    },
+    "cloudflare_api_token": {
+        "label": "Cloudflare Workers AI token",
+        "purpose": "Free daily AI images (FLUX.2 klein): photo-real scene images when no stock footage fits, and "
+                   "kids' cartoon art. Needs the account ID under Settings → Visuals.",
+        "url": "https://developers.cloudflare.com/workers-ai/get-started/rest-api/",
     },
     "gemini_api_key": {
         "label": "Gemini API key",

@@ -6,12 +6,14 @@ Only licences that allow commercial use *and* modification are accepted.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import re
-import time
 import subprocess
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -95,13 +97,14 @@ def pexels(query: str, kind: str, fmt: str) -> list[Candidate]:
             for p in data.get("photos", [])]
 
 
-def pixabay(query: str, kind: str, fmt: str) -> list[Candidate]:
+def pixabay(query: str, kind: str, fmt: str, look: str = "real") -> list[Candidate]:
     key = settings.secret("pixabay_api_key")
     if not key:
         return []
     lic, lic_url = "Pixabay Content License", "https://pixabay.com/service/license-summary/"
     if kind == "video":
-        data = net.get_json("https://pixabay.com/api/videos/", {"key": key, "q": query[:100], "per_page": 12, "safesearch": "true"})
+        data = net.get_json("https://pixabay.com/api/videos/", {"key": key, "q": query[:100], "per_page": 12, "safesearch": "true",
+                                                                "video_type": "animation" if look == "cartoon" else "film"})
         out = []
         for h in data.get("hits", []):
             v = h.get("videos", {}).get("large") or h.get("videos", {}).get("medium") or {}
@@ -113,7 +116,8 @@ def pixabay(query: str, kind: str, fmt: str) -> list[Candidate]:
                                  f"Video by {h.get('user', 'unknown')} on Pixabay",
                                  extra={"text": h.get("tags") or "", "thumb": thumb}))
         return out
-    data = net.get_json("https://pixabay.com/api/", {"key": key, "q": query[:100], "image_type": "photo", "per_page": 20,
+    data = net.get_json("https://pixabay.com/api/", {"key": key, "q": query[:100], "per_page": 20,
+                                                    "image_type": "illustration" if look == "cartoon" else "photo",
                                                     "safesearch": "true",
                                                     "orientation": "vertical" if fmt == "short" else "horizontal"})
     return [Candidate("pixabay", f"p{h['id']}", "image", h["largeImageURL"], h.get("pageURL", ""), h["imageWidth"],
@@ -221,6 +225,62 @@ def generate_local_sd(prompt: str, w: int, h: int, out: Path) -> Candidate:
                      attribution="")
 
 
+CF_MODEL = "@cf/black-forest-labs/flux-2-klein-4b"
+CF_FREE_NEURONS = 10_000                      # Workers AI free allowance per day (resets 00:00 UTC)
+LOOK_PROMPT = {
+    "real": ("Photorealistic cinematic film still, natural lighting, realistic textures, shot on a 35mm lens, "
+             "shallow depth of field, true-to-life colours. No text, no letters, no logos, no watermark."),
+    "cartoon": ("Bright, friendly 2D cartoon illustration for young children, clean outlines, soft shading, "
+                "cheerful colours, simple uncluttered background. No text, no letters, no logos, no watermark."),
+}
+
+
+def cloudflare_ready() -> bool:
+    return bool((settings.get("visuals.cloudflare_account_id") or "").strip()) and \
+        settings.has_secret("cloudflare_api_token")
+
+
+def cloudflare_used_today() -> int:
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+    return int(db.q1("SELECT COALESCE(SUM(output_tokens),0) AS n FROM ai_usage WHERE provider='cloudflare' AND ok=1 "
+                     "AND created_at>=?", (day,))["n"])
+
+
+def generate_cloudflare(prompt: str, fmt: str, out: Path, look: str = "real") -> Candidate:
+    """Free FLUX.2 klein image on Cloudflare Workers AI, styled for the channel (photo-real or kids' cartoon).
+    Stays inside the free daily allowance: when it is used up, the next option is tried instead of paying."""
+    if not cloudflare_ready():
+        raise net.FetchError("Cloudflare Workers AI is not set up (token + account ID)")
+    w, h = (768, 1344) if fmt == "short" else (1344, 768)
+    neurons = int(-(-w // 512) * -(-h // 512) * 26.05)
+    if cloudflare_used_today() + neurons > CF_FREE_NEURONS * 0.95:
+        raise net.FetchError("today's free Cloudflare image allowance is used up")
+    seed = int(hashlib.sha1(out.name.encode() + prompt.encode()).hexdigest()[:7], 16)
+    form = {k: (None, v) for k, v in {"prompt": f"{prompt}. {LOOK_PROMPT.get(look, LOOK_PROMPT['real'])}"[:2400],
+                                      "width": str(w), "height": str(h), "seed": str(seed)}.items()}
+    account = settings.get("visuals.cloudflare_account_id").strip()
+    r = httpx.post(f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{CF_MODEL}", files=form,
+                   headers={"Authorization": f"Bearer {settings.secret('cloudflare_api_token')}"}, timeout=240)
+    ok = r.status_code == 200
+    try:
+        db.insert("ai_usage", {"provider": "cloudflare", "model": CF_MODEL, "task": "scene_image", "input_tokens": 0,
+                               "output_tokens": neurons if ok else 0, "cost_usd": 0.0, "ok": int(ok),
+                               "error": "" if ok else f"HTTP {r.status_code} {r.text[:250]}", "created_at": db.iso()})
+    except Exception:  # usage logging must never stop a video
+        pass
+    if r.status_code == 429:
+        raise net.FetchError("Cloudflare free image allowance reached for today")
+    r.raise_for_status()
+    img = (r.json().get("result") or {}).get("image") or ""
+    if not img:
+        raise net.FetchError("Cloudflare returned no image (the prompt may have been filtered)")
+    out.write_bytes(base64.b64decode(img))
+    with Image.open(out) as im:
+        iw, ih = im.size
+    return Candidate("cloudflare_image", out.stem, "image", "", "", iw, ih, "AI-generated (FLUX.2 klein, Cloudflare)",
+                     "", "AI image", attribution="", extra={"synthetic": True})
+
+
 def generate_gemini_image(prompt: str, fmt: str, out: Path) -> Candidate:
     from ..ai import router
     key = settings.secret("gemini_api_key")
@@ -287,11 +347,19 @@ def fetch(c: Candidate) -> Path:
 
 # ------------------------------------------------------------------ per-scene selection
 
+GENERATORS = ("cloudflare_image", "local_sd", "gemini_image")
+PHOTO_ONLY = ("pexels", "openverse", "wikimedia")       # real photos/footage only — never used for kids' cartoon style
+
+
 def provider_order(scene: dict[str, Any]) -> list[str]:
-    enabled = settings.get("visuals.enabled")
-    order = [p for p in settings.get("visuals.order") if enabled.get(p)]
+    enabled = settings.get("visuals.enabled") or {}
+    order = list(settings.get("visuals.order") or [])
+    if "cloudflare_image" not in order:            # free generator: before the local/paid ones (older saved orders)
+        at = next((i for i, p in enumerate(order) if p in ("local_sd", "gemini_image", "procedural")), len(order))
+        order.insert(at, "cloudflare_image")
+    order = [p for p in order if enabled.get(p, p == "cloudflare_image")]
     if scene["visual_type"] == "illustration":
-        gens = [p for p in order if p in ("local_sd", "gemini_image")]
+        gens = [p for p in order if p in GENERATORS]
         order = gens + [p for p in order if p not in gens]
     return order
 
@@ -331,6 +399,13 @@ def _frame(c: Candidate, path: Path) -> bytes:
     return r.stdout
 
 
+def _want(scene: dict[str, Any]) -> str:
+    want = f"{scene.get('visual_description') or ''} ({scene.get('visual_query') or ''})"
+    if scene.get("_look") == "cartoon":
+        want += " — it must be a bright, child-friendly cartoon or illustration (a real photo scores 0-2)"
+    return want
+
+
 def _preview(c: Candidate) -> bytes | None:
     """The candidate's small preview image (image hosts throttle bursts: paced and retried)."""
     if not c.extra.get("thumb"):
@@ -359,7 +434,7 @@ def _verify(c: Candidate, scene: dict[str, Any], topic: str, full: Path | None =
         if not raw:
             return None
         return vision.judge(raw, topic=topic, narration=scene.get("narration") or "",
-                            want=f"{scene.get('visual_description') or ''} ({scene.get('visual_query') or ''})",
+                            want=_want(scene),
                             key=f"{c.provider}:{c.provider_id}:{scene.get('visual_query')}")
     except (net.FetchError, httpx.HTTPError, OSError, subprocess.SubprocessError) as e:
         log.info("preview check skipped for %s:%s: %s", c.provider, c.provider_id, e)
@@ -375,7 +450,7 @@ def _verify_many(cs: list[Candidate], scene: dict[str, Any], topic: str) -> list
     if not have:
         return [None] * len(cs)
     res = vision.judge_many([raws[i] for i in have], topic=topic, narration=scene.get("narration") or "",
-                            want=f"{scene.get('visual_description') or ''} ({scene.get('visual_query') or ''})")
+                            want=_want(scene))
     out: list[dict[str, Any] | None] = [None] * len(cs)
     for i, v in zip(have, res or []):
         out[i] = v
@@ -384,7 +459,7 @@ def _verify_many(cs: list[Candidate], scene: dict[str, Any], topic: str) -> list
 
 def choose(scene: dict[str, Any], idx: int, fmt: str, used: set[str], out_dir: Path, seed: str,
            providers: list[str] | None = None, failures: dict[str, int] | None = None,
-           topic: str = "") -> dict[str, Any]:
+           topic: str = "", look: str = "real") -> dict[str, Any]:
     """Return an asset record for one scene. Never raises.
 
     Stock candidates are ranked by how well their own tags/description match the scene, then a vision model
@@ -393,6 +468,7 @@ def choose(scene: dict[str, Any], idx: int, fmt: str, used: set[str], out_dir: P
     words. An unrelated picture is never used just to fill the screen.
     `failures` is shared across a production's scenes: a provider that fails twice is skipped afterwards."""
     w, h = config.frame_size(fmt)
+    scene = {**scene, "_look": look}
     notes: list[str] = []
     failures = failures if failures is not None else {}
     need = int(settings.get("visuals.min_relevance") or 6)
@@ -412,22 +488,31 @@ def choose(scene: dict[str, Any], idx: int, fmt: str, used: set[str], out_dir: P
         for prov in (provider_order(scene) if providers is None else providers):
             if prov == "procedural":
                 break
+            if look == "cartoon" and prov in PHOTO_ONLY:
+                continue                                    # kids' videos stay in cartoon style: no real photos
             if failures.get(prov, 0) >= 2:
                 continue
             try:
-                if prov in ("local_sd", "gemini_image"):
-                    if near:                                # free on-topic stock before a generated (paid) image
+                if prov in GENERATORS:
+                    if near and prov != "cloudflare_image":   # free on-topic stock before a paid/local image
                         return take_near()
                     target = out_dir / f"gen_{idx:03d}.png"
                     prompt = (f"{scene['visual_description']} ({scene['visual_query']}). For a video about: {topic}"
                               if topic else f"{scene['visual_description']} ({scene['visual_query']})")
-                    c = generate_local_sd(prompt, w, h, target) if prov == "local_sd" else generate_gemini_image(prompt, fmt, target)
+                    if prov == "cloudflare_image":
+                        c = generate_cloudflare(prompt, fmt, target, look)
+                    elif prov == "local_sd":
+                        c = generate_local_sd(f"{prompt}. {LOOK_PROMPT.get(look, '')}", w, h, target)
+                    else:
+                        c = generate_gemini_image(f"{prompt}. {LOOK_PROMPT.get(look, '')}", fmt, target)
                     rec = _record(c, target, idx)
                     rec.update({"notes": notes, "relevance": {"how": "generated from the scene description"}})
                     return rec
                 for query in queries_for(scene):
                     for kind in (["video", "image"] if want_video else ["image"]):
-                        cands = [c for c in SEARCHERS[prov](query, kind, fmt)
+                        found = SEARCHERS[prov](query, kind, fmt, look) if prov == "pixabay" else \
+                            SEARCHERS[prov](query, kind, fmt)
+                        cands = [c for c in found
                                  if f"{c.provider}:{c.provider_id}" not in used
                                  and min(c.width, c.height) >= _min_side(c.kind, fmt)
                                  and (c.kind == "image" or c.duration >= 3)]

@@ -197,7 +197,7 @@ def stage_assets(p: dict[str, Any]) -> str | None:
         # test mode: original procedural art only (no network, no API keys needed)
         rec = visuals.choose(scene, idx, p["format"], used, work, seed,
                              providers=[] if p["test_mode"] else None, failures=failures,
-                             topic=pkg.get("title") or p.get("title") or "")
+                             topic=pkg.get("title") or p.get("title") or "", look=video_look(p))
         notes = rec.pop("notes", [])
         rec["relevance"] = db.dumps(rec.pop("relevance", {}))
         rec.pop("synthetic", None)
@@ -240,6 +240,21 @@ def _ai_clip(p: dict[str, Any], scene: dict[str, Any], idx: int, work: Path) -> 
             "source_url": "", "page_url": "", "local_path": str(target), "license": "AI-generated (Google Gemini)",
             "license_url": "", "author": "Google Gemini Omni", "attribution": "", "width": info["width"],
             "height": info["height"], "duration": info["duration"]}
+
+
+def video_look(p: dict[str, Any]) -> str:
+    """'cartoon' for children's content, 'real' for everything else. A video takes the style of its own channel
+    (a stand-alone video, of its own topic) — kids' visuals and market/factual visuals are never mixed."""
+    from . import channels
+    plan = p.get("request") if isinstance(p.get("request"), dict) else db.loads(p.get("request"), {}) or {}
+    if plan.get("content_type") == "kids":
+        return "cartoon"
+    if plan.get("no_upload"):
+        return "real"
+    ch = channels.get(p.get("channel_id")) or {}
+    if ch.get("workflow") == "nifty_daily":
+        return "real"
+    return "cartoon" if ch.get("made_for_kids") or "kids" in (ch.get("styles") or []) else "real"
 
 
 def video_voice(p: dict[str, Any]) -> dict[str, Any] | None:
@@ -371,6 +386,7 @@ def stage_render(p: dict[str, Any]) -> str | None:
     (work / "overlays").mkdir(exist_ok=True)
     (work / "clips").mkdir(exist_ok=True)
     style = settings.get("brand").get("caption_style", "bold")
+    look = video_look(p)
     assets = {a["scene_index"]: a for a in db.q("SELECT * FROM assets WHERE production_id=?", (p["id"],))}
     wm_path = work / "overlays" / "watermark.png"
     wm = graphics.watermark_png(w, h, fmt, wm_path)
@@ -416,10 +432,10 @@ def stage_render(p: dict[str, Any]) -> str | None:
         clip = work / "clips" / f"scene_{idx:03d}.mp4"
         sig = {"dur": round(dur, 3), "pad": pad, "asset": asset["local_path"], "kind": asset["kind"],
                "caps": [c["text"] for c in cues], "head": head, "style": style, "wm": bool(wm), "brand": settings.get("brand"),
-               "ribbon": bool(ribbon)}
+               "ribbon": bool(ribbon), "look": look, "grade": settings.get("render.film_look")}
         sig_path = clip.with_suffix(".json")
         if not (clip.exists() and sig_path.exists() and json.loads(sig_path.read_text()) == json.loads(db.dumps(sig))):
-            render.scene_clip(idx, asset, dur, pad, overlays, fmt, work / "clips", clip, f"p{p['id']}")
+            render.scene_clip(idx, asset, dur, pad, overlays, fmt, work / "clips", clip, f"p{p['id']}", look=look)
             sig_path.write_text(db.dumps(sig))
         clips.append((clip, dur))
         t0 += dur

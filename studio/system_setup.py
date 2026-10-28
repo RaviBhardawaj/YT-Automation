@@ -107,12 +107,17 @@ def components() -> list[dict[str, Any]]:
             ("gemini_api_key", "Gemini key (free tier)", "Checks that every picture matches its scene; backup writer.", True),
             ("pexels_api_key", "Pexels key (free, optional)", "More HD stock footage. Without it the studio uses Pixabay plus Wikimedia Commons and Openverse (no key needed).", True),
             ("pixabay_api_key", "Pixabay key (free)", "Free stock videos and photos.", True),
+            ("cloudflare_api_token", "Cloudflare Workers AI (free, ~150 AI images a day)",
+             "Photo-real images for scenes with no matching stock, and kids' cartoon art. Add the token here and the "
+             "account ID under Settings → Visuals.", True),
             ("youtube_api_key", "YouTube Data API key (free)", "Competitor and trend research.", True),
             ("sarvam_api_key", "Sarvam key (paid, best Hindi voices)", "Most natural Hindi voices; free Kokoro is used when absent.", False),
             ("anthropic_api_key", "Claude key (paid)", "Highest-quality writing; only used when free options fail.", False)]
     for name, label, why, free in keys:
+        ok = settings.has_secret(name) and (name != "cloudflare_api_token"
+                                            or bool((settings.get("visuals.cloudflare_account_id") or "").strip()))
         out.append({"id": name, "group": "Free API keys" if free else "Paid (optional)", "name": label,
-                    "ok": settings.has_secret(name), "why": why, "free": free,
+                    "ok": ok, "why": why, "free": free,
                     "link": settings.SECRETS.get(name, {}).get("url"), "key": True})
     return out
 

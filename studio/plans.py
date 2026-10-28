@@ -86,7 +86,7 @@ def used(ws_id: int) -> dict[str, float]:
     out["videos"] = db.q1("SELECT COUNT(*) AS n FROM productions WHERE workspace_id=? AND created_at>=? "
                           "AND parent_id IS NULL AND status<>'rejected'", (ws_id, since))["n"]
     out["storage_bytes"] = storage_bytes(ws_id)
-    out["channels"] = db.q1("SELECT COUNT(*) AS n FROM channels WHERE workspace_id=?", (ws_id,))["n"]
+    out["channels"] = db.q1("SELECT COUNT(*) AS n FROM channels WHERE workspace_id=? AND status<>'hidden'", (ws_id,))["n"]
     out["active_jobs"] = db.q1(
         "SELECT COUNT(*) AS n FROM tasks t JOIN productions p ON p.id=t.production_id "
         "WHERE p.workspace_id=? AND t.status='running'", (ws_id,))["n"]

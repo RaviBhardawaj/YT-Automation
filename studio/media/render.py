@@ -74,8 +74,22 @@ def anim_dir(final_frame: Path) -> Path:
     return final_frame.with_name(final_frame.stem + "_frames")
 
 
+GRADES = {
+    # one consistent colour treatment for every clip of a video, so stock, photos and AI images look like one film
+    "real": "eq=contrast=1.06:saturation=0.94:gamma=0.98,colorbalance=rs=0.02:bs=-0.02:rh=0.015:bh=-0.02,"
+            "vignette=angle=PI/5,noise=alls=5:allf=t,",
+    "cartoon": "eq=contrast=1.03:saturation=1.10,",           # bright and clean for children: no grain, no vignette
+}
+
+
+def _grade(look: str, kind: str) -> str:
+    if settings.get("render.film_look") == "off" or kind == "anim":
+        return ""                                            # charts/data animations stay exact
+    return GRADES.get(look, "")
+
+
 def scene_clip(idx: int, asset: dict[str, Any], content: float, pad: float, overlays: list[dict[str, Any]],
-               fmt: str, work: Path, out: Path, seed: str) -> Path:
+               fmt: str, work: Path, out: Path, seed: str, look: str = "real") -> Path:
     w, h = config.frame_size(fmt)
     total = content + pad
     frames = max(1, round(total * config.FPS))
@@ -91,13 +105,13 @@ def scene_clip(idx: int, asset: dict[str, Any], content: float, pad: float, over
     elif asset["kind"] == "video":
         inputs += ["-stream_loop", "-1", "-t", f"{total:.3f}", "-i", asset["local_path"]]
         graph = [f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase:flags=bicubic,crop={w}:{h},"
-                 f"fps={config.FPS},setsar=1,format=yuv420p[b0]"]
+                 f"fps={config.FPS},setsar=1,{_grade(look, 'video')}format=yuv420p[b0]"]
     else:
         still = prepare_still(Path(asset["local_path"]), w, h, work / f"still_{idx:03d}.jpg")
         z, x, y = _motion(f"{seed}:{idx}", frames, gentle=bool(asset.get("is_card")))
         inputs += ["-i", str(still)]
         graph = [f"[0:v]zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={w}x{h}:fps={config.FPS},"
-                 f"setsar=1,format=yuv420p[b0]"]
+                 f"setsar=1,{'' if asset.get('is_card') else _grade(look, 'still')}format=yuv420p[b0]"]
     for k, ov in enumerate(overlays, start=1):
         inputs += ["-loop", "1", "-t", f"{total:.3f}", "-i", str(ov["path"])]
         start, end = max(0.0, ov["start"]), min(total, ov["end"])

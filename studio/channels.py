@@ -42,10 +42,29 @@ def get(channel_id: int | None) -> dict[str, Any] | None:
 
 
 def all_channels(workspace_id: int | None = None) -> list[dict[str, Any]]:
-    """Every channel (scheduler/system use), or one workspace's channels (anything shown to a user)."""
+    """Every channel (scheduler/system use), or one workspace's channels (anything shown to a user).
+    The hidden stand-alone holder is never included: it is not a channel anyone publishes to."""
     if workspace_id is None:
-        return [_row(r) for r in db.q("SELECT * FROM channels ORDER BY id")]
-    return [_row(r) for r in db.q("SELECT * FROM channels WHERE workspace_id=? ORDER BY id", (workspace_id,))]
+        return [_row(r) for r in db.q("SELECT * FROM channels WHERE status<>'hidden' ORDER BY id")]
+    return [_row(r) for r in db.q("SELECT * FROM channels WHERE workspace_id=? AND status<>'hidden' ORDER BY id",
+                                  (workspace_id,))]
+
+
+HOLDER_NAME = "Stand-alone videos (download only)"
+
+
+def holder(workspace_id: int) -> int:
+    """Where 'no channel' videos are made: a hidden, download-only placeholder per account, so a stand-alone video
+    (a diabetes explainer, a silver-price video) is never filed under — or styled like — a real channel."""
+    row = db.q1("SELECT id FROM channels WHERE workspace_id=? AND status='hidden' ORDER BY id LIMIT 1", (workspace_id,))
+    if row:
+        return row["id"]
+    cid = db.insert("channels", {**clean({"name": HOLDER_NAME, "workflow": "auto", "formats": "both",
+                                          "uploads_enabled": False, "auto_publish": False, "schedule_enabled": False}),
+                                 "styles": "[]", "workspace_id": workspace_id, "created_at": db.iso(),
+                                 "updated_at": db.iso()})
+    db.update("channels", cid, {"status": "hidden"})
+    return cid
 
 
 def current_id() -> int | None:

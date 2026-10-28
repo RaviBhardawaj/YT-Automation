@@ -452,7 +452,8 @@ def _publishing_problems(ws: int) -> list[dict[str, Any]]:
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    if not db.q1("SELECT 1 FROM channels WHERE workspace_id=?", (ws_id(request),)) and not is_admin(request):
+    if not db.q1("SELECT 1 FROM channels WHERE workspace_id=? AND status<>'hidden'", (ws_id(request),)) \
+            and not is_admin(request):
         return RedirectResponse("/welcome", status_code=303)
     from .. import channels as chmod
     cid = _channel_arg(request, request.query_params.get("channel"))
@@ -1983,18 +1984,10 @@ async def api_media_upload(request: Request):
 
 
 def _general_channel(ws: int, language: str = "English") -> int | None:
-    """Where a channel-less video is made: a general-purpose channel, never the NIFTY daily slot."""
+    """Where a channel-less video is made: the account's hidden download-only holder — never a real channel,
+    so a stand-alone video is not filed under (or styled like) the kids or the market channel."""
     from .. import channels as chmod
-    mine = chmod.all_channels(ws)
-    general = [c for c in mine if c["workflow"] in ("auto", "factual", "animated_story")]
-    auto = [c for c in general if c["workflow"] == "auto"]
-    if auto or general:
-        return (auto or general)[0]["id"]
-    try:
-        plans.check(ws, "channel")
-        return chmod.create({"name": "General videos", "workflow": "auto", "formats": "both", "language": language}, ws)
-    except plans.LimitExceeded:
-        return mine[0]["id"] if mine else None
+    return chmod.holder(ws)
 
 
 # ------------------------------------------------------------------ my voice (cloned voices)
@@ -2365,7 +2358,7 @@ def billing_page(request: Request):
 def admin_page(request: Request):
     users = db.q("SELECT u.*, (SELECT GROUP_CONCAT(workspace_id) FROM workspace_members m WHERE m.user_id=u.id) AS ws "
                  "FROM users u ORDER BY u.id")
-    workspaces = db.q("SELECT w.*, (SELECT COUNT(*) FROM channels c WHERE c.workspace_id=w.id) AS channels, "
+    workspaces = db.q("SELECT w.*, (SELECT COUNT(*) FROM channels c WHERE c.workspace_id=w.id AND c.status<>'hidden') AS channels, "
                       "(SELECT COUNT(*) FROM productions p WHERE p.workspace_id=w.id) AS videos, "
                       "(SELECT email FROM users u WHERE u.id=w.owner_user_id) AS owner FROM workspaces w ORDER BY w.id")
     for w in workspaces:
