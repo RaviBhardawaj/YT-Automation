@@ -124,6 +124,16 @@ class PublishingTests(unittest.TestCase):
         self.assertEqual(db.q1("SELECT status FROM tasks WHERE id=?", (tid,))["status"], "pending")
 
 
+    def test_pausing_never_relabels_an_uploaded_video(self):
+        from studio import jobs
+        cid = channels.create({"name": "Live one"}, 1)
+        pid = prod(cid, status="uploaded", youtube_video_id="abc123")
+        tid = worker.enqueue("production", {"production_id": pid}, production_id=pid, max_attempts=2)  # a stray task
+        self.assertEqual(jobs.pause(pid), 0)
+        self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "uploaded")
+        self.assertEqual(db.q1("SELECT status FROM tasks WHERE id=?", (tid,))["status"], "pending")
+
+
 class FinanceRuleScopeTests(unittest.TestCase):
     def test_finance_wording_rule_only_for_finance_videos(self):
         from studio import pipeline

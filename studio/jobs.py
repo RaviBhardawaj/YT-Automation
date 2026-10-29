@@ -131,6 +131,9 @@ def _factual(ch: dict[str, Any], plan: dict[str, Any], idea: dict[str, Any] | No
 # ------------------------------------------------------------------ job controls
 
 def pause(pid: int) -> int:
+    p = db.q1("SELECT status FROM productions WHERE id=?", (pid,))
+    if not p or p["status"] in ("uploaded", "rejected", "failed", "test_passed"):
+        return 0                                # finished videos are never paused (a stray task must not relabel one)
     n = db.ex("UPDATE tasks SET status='paused', last_error='paused by user', updated_at=? "
               "WHERE production_id=? AND status='pending'", (db.iso(), pid))
     if n:
