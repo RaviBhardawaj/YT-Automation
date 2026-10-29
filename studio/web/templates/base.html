@@ -25,6 +25,7 @@
       {{ item('/edit', '✂️', 'Upload & edit', page == 'create' and mode == 'edit') }}
       {{ item('/shorts', '🎞️', 'AI Shorts clipper', page in ('shorts', 'shorts_job')) }}
       {{ item('/ideas', '💡', 'Ideas', page in ('ideas', 'idea')) }}
+      {% if film_studio_on %}{{ item('/film-studio', '🎞️', 'Film Studio', page in ('film_studio', 'film_studio_film', 'film_cast')) }}{% endif %}
       {{ item('/voices', '🎙️', 'My voice', page == 'voices') }}
       <div class="nav-group">My videos</div>
       {{ item('/projects', '⏳', 'In progress', page == 'projects') }}

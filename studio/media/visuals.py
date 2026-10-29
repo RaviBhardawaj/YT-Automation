@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import logging
 import re
@@ -246,21 +247,43 @@ def cloudflare_used_today() -> int:
                      "AND created_at>=?", (day,))["n"])
 
 
-def generate_cloudflare(prompt: str, fmt: str, out: Path, look: str = "real") -> Candidate:
+class AllowanceUsedUp(net.FetchError):
+    """Today's free image allowance is spent; it resets at 00:00 UTC (05:30 IST)."""
+
+
+def cf_neurons(w: int, h: int, refs: int = 0) -> int:
+    return int(-(-w // 512) * -(-h // 512) * 26.05 + refs * 5.37)
+
+
+def generate_cloudflare(prompt: str, fmt: str, out: Path, look: str = "real", *, refs: list[Path] | None = None,
+                        size: tuple[int, int] | None = None) -> Candidate:
     """Free FLUX.2 klein image on Cloudflare Workers AI, styled for the channel (photo-real or kids' cartoon).
+    refs: up to 4 reference pictures the model keeps faces/places consistent with.
     Stays inside the free daily allowance: when it is used up, the next option is tried instead of paying."""
     if not cloudflare_ready():
         raise net.FetchError("Cloudflare Workers AI is not set up (token + account ID)")
-    w, h = (768, 1344) if fmt == "short" else (1344, 768)
-    neurons = int(-(-w // 512) * -(-h // 512) * 26.05)
+    w, h = size or ((768, 1344) if fmt == "short" else (1344, 768))
+    refs = [r for r in (refs or []) if r and Path(r).exists()][:4]
+    neurons = cf_neurons(w, h, len(refs))
     if cloudflare_used_today() + neurons > CF_FREE_NEURONS * 0.95:
-        raise net.FetchError("today's free Cloudflare image allowance is used up")
+        raise AllowanceUsedUp("today's free Cloudflare image allowance is used up")
     seed = int(hashlib.sha1(out.name.encode() + prompt.encode()).hexdigest()[:7], 16)
+    files = {}
+    for i, ref in enumerate(refs):                 # references must be under 512x512
+        with Image.open(ref) as im:
+            im = im.convert("RGB")
+            im.thumbnail((504, 504))
+            buf = io.BytesIO()
+            im.save(buf, "PNG")
+        files[f"input_image_{i}"] = (f"ref{i}.png", buf.getvalue(), "image/png")
     form = {k: (None, v) for k, v in {"prompt": f"{prompt}. {LOOK_PROMPT.get(look, LOOK_PROMPT['real'])}"[:2400],
-                                      "width": str(w), "height": str(h), "seed": str(seed)}.items()}
+                                      "width": str(w), "height": str(h), "seed": str(seed)}.items()} | files
     account = settings.get("visuals.cloudflare_account_id").strip()
-    r = httpx.post(f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{CF_MODEL}", files=form,
-                   headers={"Authorization": f"Bearer {settings.secret('cloudflare_api_token')}"}, timeout=240)
+    # IPv4 only: this network advertises IPv6 it can't carry reliably, which made each image take minutes
+    with httpx.Client(transport=httpx.HTTPTransport(local_address="0.0.0.0", retries=1),
+                      timeout=httpx.Timeout(180, connect=15)) as client:
+        r = client.post(f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{CF_MODEL}", files=form,
+                        headers={"Authorization": f"Bearer {settings.secret('cloudflare_api_token')}"})
     ok = r.status_code == 200
     try:
         db.insert("ai_usage", {"provider": "cloudflare", "model": CF_MODEL, "task": "scene_image", "input_tokens": 0,
@@ -269,7 +292,7 @@ def generate_cloudflare(prompt: str, fmt: str, out: Path, look: str = "real") ->
     except Exception:  # usage logging must never stop a video
         pass
     if r.status_code == 429:
-        raise net.FetchError("Cloudflare free image allowance reached for today")
+        raise AllowanceUsedUp("Cloudflare free image allowance reached for today")
     r.raise_for_status()
     img = (r.json().get("result") or {}).get("image") or ""
     if not img:

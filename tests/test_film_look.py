@@ -83,6 +83,35 @@ class HolderTests(unittest.TestCase):
         self.assertEqual(channels.holder(ws), h)
 
 
+class DecideLaterTests(unittest.TestCase):
+    def test_create_defaults_to_no_channel_and_publish_needs_a_real_channel(self):
+        from fastapi.testclient import TestClient
+        from studio.web import app as webapp
+        pw = "a long enough password"
+        if not auth.has_users():
+            auth.register("first-admin@test.local", pw)
+        if not db.q1("SELECT id FROM users WHERE email='later@test.local'"):
+            auth.approve(auth.register("later@test.local", pw)["user_id"], 1)
+        tok, _ = auth.login("later@test.local", pw)
+        ws = auth.session(tok)["workspace"]["id"]
+        c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", raise_server_exceptions=False)
+        c.cookies.set("sid", tok)
+        c.headers["X-CSRF-Token"] = webapp.csrf_for_seed(tok)
+        page = c.get("/create").text
+        self.assertIn("No channel yet", page)
+        self.assertRegex(page, r'value="none" selected')
+        vid = Path(tempfile.mkdtemp()) / "v.mp4"
+        vid.write_bytes(b"x")
+        pid = db.insert("productions", {"format": "long", "title": "Stand-alone", "status": "awaiting_approval",
+                                        "stage": "review", "kind": "general", "workspace_id": ws,
+                                        "channel_id": channels.holder(ws), "video_path": str(vid), "package": "{}",
+                                        "qa": json.dumps({"passed": True}), "created_at": db.iso(),
+                                        "updated_at": db.iso()})
+        r = c.post(f"/api/productions/{pid}/publish", json={"privacy": "private"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Pick one of your channels", r.text)
+
+
 class FluxTests(unittest.TestCase):
     def test_free_generator_uses_channel_style_and_respects_daily_allowance(self):
         settings.set("visuals.cloudflare_account_id", "acct")
@@ -100,12 +129,12 @@ class FluxTests(unittest.TestCase):
             def raise_for_status():
                 return None
 
-        def post(url, files=None, headers=None, timeout=None):
+        def post(self, url, files=None, headers=None, timeout=None):
             sent["prompt"] = files["prompt"][1]
             return R()
         out = Path(tempfile.mkdtemp()) / "g.png"
         with mock.patch.object(settings, "has_secret", lambda n: True), \
-                mock.patch.object(settings, "secret", lambda n: "tok"), mock.patch("httpx.post", post):
+                mock.patch.object(settings, "secret", lambda n: "tok"), mock.patch("httpx.Client.post", post):
             c = visuals.generate_cloudflare("a doctor checks a foot", "long", out, look="cartoon")
             self.assertIn("cartoon", sent["prompt"])
             self.assertEqual(c.provider, "cloudflare_image")

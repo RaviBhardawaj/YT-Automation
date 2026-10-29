@@ -242,11 +242,13 @@ class FreshCastTests(unittest.TestCase):
             fresh = jobs.create(cid, "A funny cartoon about a clever crow", use_cast=False)["plan"]
             named = jobs.create(cid, "A funny cartoon where Bholu meets a clever crow", use_cast=False)["plan"]
             ticked = jobs.create(cid, "A funny cartoon about a clever crow", use_cast=True)["plan"]
-            legacy = jobs.create(cid, "A funny cartoon about a clever crow")["plan"]
+            legacy = jobs.create(cid, "A funny cartoon about a clever crow", actor="schedule")["plan"]
+            prompt = jobs.create(cid, "A funny cartoon about a clever crow")["plan"]      # the user's own prompt
         self.assertIs(fresh["use_cast"], False)
         self.assertIs(named["use_cast"], True)                  # naming a cast member brings them in
         self.assertIs(ticked["use_cast"], True)
         self.assertNotIn("use_cast", legacy)                    # schedules/series keep the recurring cast
+        self.assertIs(prompt["use_cast"], False)                # a user's prompt never borrows the channel's cast
         # one-off characters never join the recurring cast
         sp = {"new_characters": [{"key": "N1", "name": "Kauwa", "gender": "male", "age": "adult"}],
               "cast": ["N1"], "scenes": [{"characters": ["N1"], "lines": [{"speaker": "N1"}]}]}

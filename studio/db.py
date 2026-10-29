@@ -567,6 +567,69 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_lessons_ch ON lessons(channel_id, status);
     """,
+    # v17: Photorealistic Film Studio (additive only) — approved references, the shot list and every take of a shot
+    """
+    CREATE TABLE film_refs (
+        id INTEGER PRIMARY KEY,
+        production_id INTEGER NOT NULL,
+        workspace_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,                           -- character | location | prop
+        ref_key TEXT NOT NULL,                        -- F1, LOC, P1 … (stable within the production)
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        file_path TEXT,
+        status TEXT NOT NULL DEFAULT 'proposed',      -- proposed | approved | rejected
+        version INTEGER NOT NULL DEFAULT 1,
+        meta TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_film_refs_prod ON film_refs(production_id, kind, ref_key);
+    CREATE TABLE film_shots (
+        id INTEGER PRIMARY KEY,
+        production_id INTEGER NOT NULL,
+        workspace_id INTEGER NOT NULL,
+        scene_no INTEGER NOT NULL,
+        shot_no INTEGER NOT NULL,
+        shot_type TEXT NOT NULL DEFAULT 'medium',     -- establishing | wide | medium | close_up | over_shoulder | reaction | insert | cutaway
+        target_seconds REAL NOT NULL DEFAULT 3.0,
+        camera TEXT NOT NULL DEFAULT '{}',            -- angle, movement
+        characters TEXT NOT NULL DEFAULT '[]',        -- ref keys present
+        action TEXT NOT NULL DEFAULT '',
+        dialogue TEXT NOT NULL DEFAULT '[]',          -- [{speaker, text, line_id}]
+        props TEXT NOT NULL DEFAULT '[]',
+        lighting TEXT NOT NULL DEFAULT '',
+        continuity TEXT NOT NULL DEFAULT '{}',        -- {prev, next, notes}
+        provider TEXT,
+        motion_type TEXT NOT NULL DEFAULT 'planned',  -- planned | static | camera_move | animated_image | video | dialogue_video | lipsync_verified
+        status TEXT NOT NULL DEFAULT 'planned',       -- planned | queued | generating | ready | needs_review | approved | rejected | failed | waiting
+        current_take INTEGER,
+        qa TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (production_id, scene_no, shot_no)
+    );
+    CREATE INDEX idx_film_shots_prod ON film_shots(production_id, status);
+    CREATE TABLE film_takes (
+        id INTEGER PRIMARY KEY,
+        shot_id INTEGER NOT NULL,
+        production_id INTEGER NOT NULL,
+        workspace_id INTEGER NOT NULL,
+        take_no INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT '',
+        prompt TEXT NOT NULL DEFAULT '',
+        settings TEXT NOT NULL DEFAULT '{}',
+        file_path TEXT,
+        motion_type TEXT NOT NULL,                    -- what this take really is (never upgraded by a label)
+        cost_usd REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'ready',         -- ready | failed | approved | rejected
+        error TEXT,
+        qa TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_film_takes_shot ON film_takes(shot_id, take_no);
+    """,
 ]
 
 

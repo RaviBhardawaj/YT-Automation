@@ -93,7 +93,16 @@ DEFAULTS: dict[str, Any] = {
     "visuals.vision_per_minute": 14,              # Gemini Flash-Lite free-tier pacing for those checks
     "visuals.min_relevance": 6,                   # 0-10: pictures scoring lower are not used
     "visuals.cloudflare_account_id": "",          # Workers AI account for free FLUX.2 klein images
-    "render.film_look": "auto",                   # auto = cinematic grade for real footage, bright for kids; off
+    "render.film_look": "auto",
+    # Photorealistic Film Studio — off until the owner switches it on (Settings → Film Studio)
+    "film_studio.enabled": False,
+    "film_studio.budget_inr": 0,                  # hard budget: paid providers are never used at ₹0
+    "film_studio.max_retries_per_shot": 2,
+    "film_studio.auto_approve_refs": False,
+    "film_studio.paid_providers": [],
+    "film_studio.zerogpu_space": "zerogpu-aoti/wan2-2-fp8da-aoti-faster",
+    "film_studio.video_shots": "key",             # key = real video for the most important shots | all | none
+    "film_studio.video_clips_per_run": 4,         # free GPU quota is small: at most this many clips per day             # paid providers the owner allows (only when the budget is above ₹0)       # True = shots may start from proposed pictures without a review                   # auto = cinematic grade for real footage, bright for kids; off
     "brand": {
         "channel_name": "",
         "primary": "#FFD23F",
@@ -186,6 +195,12 @@ SECRETS: dict[str, dict[str, str]] = {
         "purpose": "Free daily AI images (FLUX.2 klein): photo-real scene images when no stock footage fits, and "
                    "kids' cartoon art. Needs the account ID under Settings → Visuals.",
         "url": "https://developers.cloudflare.com/workers-ai/get-started/rest-api/",
+    },
+    "hf_token": {
+        "label": "Hugging Face token (free)",
+        "purpose": "Free real-motion clips for the Film Studio through a ZeroGPU Space (about 5 GPU-minutes a day on a "
+                   "free account). A read-only token is enough.",
+        "url": "https://huggingface.co/settings/tokens",
     },
     "gemini_api_key": {
         "label": "Gemini API key",

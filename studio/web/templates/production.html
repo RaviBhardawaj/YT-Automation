@@ -5,6 +5,7 @@
   <div style="min-width:0">
     <div class="muted small"><a href="/productions{{ '?channel=' ~ p.channel_id if p.channel_id }}">Library</a> / #{{ p.id }} · {{ p.format }}{% if p.test_mode %} · test mode{% endif %}</div>
     <h1>{{ pkg.title or p.title or 'Untitled' }}</h1>
+    {% if p.kind == 'film' %}<div class="note small">Photorealistic film — <a href="/productions/{{ p.id }}/cast">Cast review</a> (approve characters and location){% if pkg.shot_plan %} · {{ pkg.shot_plan.shots }} shots planned, {{ '%.1f' % (pkg.shot_plan.runtime / 60) }} min{% endif %}.</div>{% endif %}
     {% if pkg.clips %}<div class="note small">Shorts job — see every clip with its captions and downloads on the <a href="/shorts/{{ p.id }}">Shorts page</a>.</div>
     {% elif pkg.clip and p.parent_id %}<div class="note small">Short #{{ pkg.clip.rank }} of a <a href="/shorts/{{ p.parent_id }}">Shorts job</a> (score {{ pkg.clip.score }}/100).</div>{% endif %}
     <div class="row">{% include "_status.html" %}
@@ -161,7 +162,10 @@
     {% if p.status == 'awaiting_approval' %}
       <div class="small muted" style="margin-bottom:8px">Download it and publish yourself, or publish / schedule it to one of your connected channels. Nothing is published until you confirm.</div>
       <div id="approve-form">
+        {% set standalone = p.channel_id not in my_channels|map(attribute='id')|list %}
+        {% if standalone %}<div class="note small">This video was made on its own, not for a channel. Pick where it fits — kids' channels get kids' content; market and factual videos belong on their matching channel.</div>{% endif %}
         <label class="f"><span>Channel</span><select name="channel_id">
+          {% if standalone %}<option value="" selected disabled>Choose a channel…</option>{% endif %}
           {% for c in my_channels %}<option value="{{ c.id }}" {{ 'selected' if c.id == p.channel_id }} {{ 'disabled' if not c.connected }}>{{ c.name }}{{ ' — ' ~ c.youtube_title if c.connected and c.youtube_title else (' — not connected' if not c.connected else '') }}</option>
           {% else %}<option value="">No channels yet</option>{% endfor %}</select></label>
         {% if not my_channels|selectattr('connected')|list %}<div class="note warn small">None of your channels is connected to YouTube. Connect one under <a href="/channels">YouTube channels</a>, or use Download.</div>{% endif %}

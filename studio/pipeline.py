@@ -571,6 +571,9 @@ def stages_for(kind: str) -> tuple[list[str], dict[str, str], dict[str, Any]]:
     if kind in ("edit", "edit_clip"):
         from .editing import workflow as editing
         return (editing.STAGES if kind == "edit" else editing.CLIP_STAGES), editing.STATUS, editing.STAGE_FN
+    if kind == "film":
+        from .creative import film
+        return film.STAGES, film.STATUS, film.STAGE_FN
     if kind in ("story", "story_short"):
         from .creative import workflow as story
         return (story.STAGES if kind == "story" else story.SHORT_STAGES), story.STATUS, story.STAGE_FN

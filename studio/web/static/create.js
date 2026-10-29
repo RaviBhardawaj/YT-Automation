@@ -82,7 +82,6 @@
     const state = document.getElementById("gostate");
     if (busy) { state.textContent = "Wait for the uploads to finish."; return; }
     const chSel = document.getElementById("channel");
-    if (!chSel.value) { toast("Choose which channel this video is for (or “No channel”)", "err"); chSel.focus(); return; }
     let ids = [...uploaded.values(), ...[...document.querySelectorAll(".prev:checked")].map(x => +x.value)];
     if (shorts) ids = ids.slice(-1);
     if (root.dataset.mode !== "create" && !ids.length) { toast(shorts ? "Add the video to cut Shorts from" : "Add at least one file to edit", "err"); return; }

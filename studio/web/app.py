@@ -102,7 +102,8 @@ OWNED_PATHS = [(re.compile(r"^/(?:api/)?productions/(\d+)"), "productions"),
                (re.compile(r"^/(?:api/)?media-files/(\d+)"), "media"),
                (re.compile(r"^/media/productions/(\d+)/"), "productions"),
                (re.compile(r"^/media/channels/(\d+)/"), "channels"),
-               (re.compile(r"^/api/voices/(\d+)"), "voices")]
+               (re.compile(r"^/api/voices/(\d+)"), "voices"),
+               (re.compile(r"^/film-studio/(\d+)"), "productions")]
 
 
 _attempts: dict[str, list[float]] = {}
@@ -305,6 +306,11 @@ def _my_usage(ws: int) -> dict[str, Any]:
             "pct": min(100, int(use["videos"] / lim["videos_per_month"] * 100)) if lim["videos_per_month"] else 0}
 
 
+def _film_studio_on(ws: int) -> bool:
+    from .. import film_studio
+    return film_studio.enabled(ws)
+
+
 def common(request: Request | None = None) -> dict[str, Any]:
     spend = router.month_spend()
     budget = float(settings.get("ai.monthly_budget_usd"))
@@ -320,6 +326,7 @@ def common(request: Request | None = None) -> dict[str, Any]:
             "awaiting": db.q1("SELECT COUNT(*) AS n FROM productions WHERE status='awaiting_approval' AND workspace_id=?",
                               (ws,))["n"],
             "media_url": media_url, "loads": db.loads, "me": sess["user"] if sess else None,
+            "film_studio_on": bool(sess) and _film_studio_on(ws),
             "workspace": sess["workspace"] if sess else None, "role": sess["role"] if sess else None,
             "is_admin": bool(sess and sess["user"]["is_admin"]),
             "sarvam": tts.sarvam_status() if settings.has_secret("sarvam_api_key") else {"ok": True},
@@ -788,7 +795,11 @@ def settings_page(request: Request, tab: str = "ai"):
     for c in yt_channels:
         c["connected"] = oauth.connected(c["id"])
     from ..social import meta as _meta
-    return page(request, "settings.html", tab=tab, yt_channels=yt_channels, meta_ready=_meta.configured(),
+    film_providers = film_usage = None
+    if tab == "film":
+        from ..film_studio import providers as film_pv
+        film_providers, film_usage = film_pv.status_all(), film_pv.usage()
+    return page(request, "settings.html", tab=tab, film_providers=film_providers, film_usage=film_usage, yt_channels=yt_channels, meta_ready=_meta.configured(),
                 meta_redirect=_meta.REDIRECT_URI, meta_secret_set=settings.has_secret("meta_app_secret"), s=settings.all_settings(), secrets=settings.secret_status(),
                 providers=providers.status_all() if tab == "ai" else [], provider_names=settings.PROVIDERS,
                 ai_tasks=settings.AI_TASKS, voices=main_voices, other_voices=other_voices, channel_lang=profile.language(),
@@ -1333,7 +1344,8 @@ SETTABLE = {
     "research.sources", "research.region", "research.max_page_fetch", "research.youtube_daily_unit_budget",
     "research.contact",
     "visuals.order", "visuals.enabled", "visuals.prefer_video", "visuals.local_sd_url", "visuals.gemini_image_model",
-    "visuals.gemini_image_price", "brand", "render.preset", "render.crf", "render.transition", "render.music_file",
+    "visuals.gemini_image_price", "visuals.cloudflare_account_id", "render.film_look", "film_studio.enabled",
+    "film_studio.max_retries_per_shot", "brand", "render.preset", "render.crf", "render.transition", "render.music_file",
     "render.music_license", "render.music_volume", "youtube.privacy_default", "youtube.category_id",
     "youtube.upload_captions", "youtube.made_for_kids", "youtube.audit_passed", "youtube.disclose_tts", "publish.mode",
     "publish.slots", "production.max_active", "production.short_seconds", "production.long_minutes",
@@ -2052,7 +2064,7 @@ async def api_create(request: Request):
     from ..editing import workflow as editing
     data = await body(request)
     ws = ws_id(request)
-    req = str(data.get("request") or "").strip()[:4000]
+    req = str(data.get("request") or "").strip()[:40_000]
     fmt = data.get("format") or None
     media_ids = [int(x) for x in data.get("media_ids") or [] if str(x).isdigit()]
     cid = int(data["channel_id"]) if str(data.get("channel_id") or "").isdigit() else None
@@ -2270,6 +2282,188 @@ def download(pid: int, variant: str):
 
 # ------------------------------------------------------------------ publishing
 
+@app.get("/productions/{pid}/cast", response_class=HTMLResponse)
+def film_cast_page(request: Request, pid: int):
+    from ..film_studio import casting
+    p = pipeline.load(pid)
+    if p.get("kind") != "film":
+        return RedirectResponse(f"/productions/{pid}", status_code=303)
+    refs = casting.latest(pid, ws_id(request))
+    busy = {(db.loads(t["payload"], {}) or {}).get("ref_id") for t in
+            db.q("SELECT payload FROM tasks WHERE type='film_ref' AND status IN ('pending','running') AND production_id=?",
+                 (pid,))}
+    rows = []
+    for (kind, key), r in sorted(refs.items(), key=lambda kv: (kv[0][0] != "character", kv[0][1])):
+        r["url"] = media_url(r.get("file_path")) if r.get("file_path") else None
+        r["approved_url"] = media_url((r.get("approved") or {}).get("file_path")) if r.get("approved") else None
+        r["busy"] = r["id"] in busy
+        rows.append(r)
+    return page(request, "film_cast.html", p=p, refs=rows, missing=casting.missing(pid, ws_id(request)),
+                fields=casting.BIBLE_FIELDS)
+
+
+@app.post("/api/productions/{pid}/cast/{rid}/{action}")
+async def api_film_cast(request: Request, pid: int, rid: int, action: str):
+    from ..film_studio import casting, store
+    ws = ws_id(request)
+    r = db.q1("SELECT * FROM film_refs WHERE id=? AND workspace_id=? AND production_id=?", (rid, ws, pid))
+    if not r and action != "continue":
+        return bad("not found", 404)
+    data = await body(request)
+    if action in ("approve", "reject"):
+        if action == "approve" and not (r.get("file_path") and Path(r["file_path"]).exists()):
+            return bad("This picture isn't made yet.")
+        store.set_ref_status(rid, ws, "approved" if action == "approve" else "rejected")
+        detail = "Approved" if action == "approve" else "Rejected — regenerate it with new direction"
+    elif action == "regenerate":
+        new = casting.new_version(rid, ws, description=data.get("description"), notes=str(data.get("notes") or ""),
+                                  bible={k.removeprefix("bible."): v for k, v in data.items() if k.startswith("bible.")})
+        worker.enqueue("film_ref", {"production_id": pid, "ref_id": new, "workspace_id": ws},
+                       production_id=pid, max_attempts=3)
+        return ok(detail="Making a new version — about a minute; earlier versions are kept")
+    elif action == "continue":
+        detail = "Nothing to continue"
+    else:
+        return bad("unknown action")
+    p = pipeline.load(pid)
+    if not casting.missing(pid, ws) and p["status"] == "needs_review" and p["stage"] == "cast":
+        pipeline.save(pid, status="queued", error=None)
+        worker.enqueue("production", {"production_id": pid}, production_id=pid, max_attempts=3, dedupe=True)
+        detail += " — whole cast approved, filming continues"
+    return ok(detail=detail)
+
+
+# ------------------------------------------------------------------ Photorealistic Film Studio (opt-in)
+
+def _studio_guard(request: Request) -> HTMLResponse | None:
+    from .. import film_studio
+    if film_studio.enabled(ws_id(request)):
+        return None
+    return page(request, "message.html", title="Film Studio is switched off",
+                message="The Photorealistic Film Studio isn't switched on for this account. The platform admin can "
+                        "switch it on under Settings → Film Studio and grant it under Users & website.")
+
+
+@app.get("/film-studio", response_class=HTMLResponse)
+def film_studio_page(request: Request):
+    if (off := _studio_guard(request)):
+        return off
+    from ..film_studio import providers as fpv, store as fstore
+    ws = ws_id(request)
+    films = db.q("SELECT id, title, status, stage, error, created_at, updated_at FROM productions WHERE workspace_id=? "
+                 "AND kind='film' ORDER BY id DESC LIMIT 50", (ws,))
+    for f in films:
+        f["summary"] = fstore.summary(f["id"], ws)
+    quota = {p["id"]: p for p in fpv.status_all() if p["id"] in ("cloudflare_flux", "hf_zerogpu", "kokoro")}
+    return page(request, "film_studio.html", films=films, quota=quota)
+
+
+@app.post("/api/film-studio/new")
+async def api_film_new(request: Request):
+    from .. import channels as chmod, film_studio
+    from ..creative import film
+    from ..creative import request as reqmod
+    ws = ws_id(request)
+    try:
+        film_studio.require(ws)
+        plans.require(ws, "create")
+        plans.check(ws, "video")
+    except (film_studio.StudioOff, ValueError) as e:
+        return bad(str(e))
+    data = await body(request)
+    text = str(data.get("text") or "").strip()[:40_000]
+    if len(text) < 20:
+        return bad("Write an idea (a few sentences) or paste a screenplay.")
+    holder = chmod.holder(ws)
+    plan = reqmod.plan(text, {"language": data.get("language") or None}, None)
+    plan.update({"request": text, "no_upload": True, "use_cast": False})
+    pid = film.create(holder, text, plan=plan, actor="user")
+    return ok(next=f"/film-studio/{pid}", detail="Film started")
+
+
+@app.get("/film-studio/{pid}", response_class=HTMLResponse)
+def film_studio_film(request: Request, pid: int):
+    if (off := _studio_guard(request)):
+        return off
+    from ..film_studio import casting, edit as fedit, providers as fpv, store as fstore
+    ws = ws_id(request)
+    p = pipeline.load(pid)
+    if p.get("kind") != "film":
+        return RedirectResponse(f"/productions/{pid}", status_code=303)
+    shots = fstore.shots(pid, ws)
+    for s in shots:
+        take = db.q1("SELECT * FROM film_takes WHERE id=?", (s["current_take"],)) if s.get("current_take") else None
+        st = db.loads((take or {}).get("settings"), {}) or {}
+        src = (take or {}).get("file_path")
+        s["thumb"] = media_url(st.get("keyframe") or (src if src and not src.endswith(".mp4") else None))
+        s["video"] = media_url(src) if src and src.endswith(".mp4") else None
+        s["takes_n"] = db.q1("SELECT COUNT(*) AS n FROM film_takes WHERE shot_id=?", (s["id"],))["n"]
+    scenes: dict[int, list] = {}
+    for s in shots:
+        scenes.setdefault(s["scene_no"], []).append(s)
+    exp = fedit.export_dir(pid)
+    files = [{"name": f, "url": media_url(str(exp / f))} for f in
+             ("film.mp4", "film.srt", "timeline.json", "shot_manifest.json", "metadata.json", "licences.json",
+              "quality_report.json") if (exp / f).exists()]
+    kids = db.q("SELECT id, title, status FROM productions WHERE parent_id=? AND kind='film_short' ORDER BY id", (pid,))
+    stages, _, _ = pipeline.stages_for("film")
+    active = p["status"] not in pipeline.TERMINAL and p["status"] not in ("paused", "needs_review", "paused_budget")
+    return page(request, "film_studio_film.html", p=p, pkg=p["package"], scenes=scenes, summary=fstore.summary(pid, ws),
+                files=files, kids=kids, stages=stages, active=active, missing_cast=casting.missing(pid, ws),
+                quota={x["id"]: x for x in fpv.status_all() if x["id"] in ("cloudflare_flux", "hf_zerogpu")},
+                film_url=media_url(str(exp / "film.mp4")) if (exp / "film.mp4").exists() else None)
+
+
+@app.post("/api/productions/{pid}/shots/{sid}/{action}")
+def api_film_shot(request: Request, pid: int, sid: int, action: str):
+    from ..film_studio import generate, store as fstore
+    ws = ws_id(request)
+    try:
+        s = fstore.shot(sid, ws)
+    except fstore.NotFound:
+        return bad("not found", 404)
+    if s["production_id"] != pid:
+        return bad("not found", 404)
+    if action == "approve":
+        fstore.set_shot(sid, ws, status="approved")
+        return ok(detail="Shot approved")
+    if action == "reject":
+        fstore.set_shot(sid, ws, status="rejected")
+        return ok(detail="Shot rejected — retry it for a new take")
+    if action == "retry":
+        cont = dict(s["continuity"])
+        cont["qa_retry"] = int(cont.get("qa_retry") or 0) + 1            # a fresh picture of its own
+        fstore.set_shot(sid, ws, current_take=None, status="queued", continuity=cont)
+    elif action == "upgrade":
+        generate.upgrade_to_video(sid, ws)
+    else:
+        return bad("unknown action")
+    worker.enqueue("film_shots_run", {"production_id": pid}, production_id=pid, max_attempts=3, dedupe=True)
+    return ok(detail="Queued — earlier takes are kept; the film is re-edited when it's done")
+
+
+@app.post("/api/productions/{pid}/film-shorts/{index}/make")
+def api_film_short_make(request: Request, pid: int, index: int):
+    p = pipeline.load(pid)
+    if p.get("kind") != "film" or not 0 <= index < len((p["package"] or {}).get("shorts_proposals") or []):
+        return bad("not found", 404)
+    worker.enqueue("film_short_make", {"production_id": pid, "index": index}, production_id=pid, max_attempts=2)
+    return ok(detail="Making the Short — it appears below in about a minute (it is never published by itself)")
+
+
+@app.get("/api/productions/{pid}/shots")
+def api_film_shots(request: Request, pid: int):
+    """The film's shot list with each shot's real motion type and status (read-only)."""
+    from ..film_studio import store
+    try:
+        shots = store.shots(pid, ws_id(request))
+        summary = store.summary(pid, ws_id(request))
+    except store.NotFound:
+        return bad("not found", 404)
+    plan = (pipeline.load(pid).get("package") or {}).get("shot_plan") or {}
+    return ok(summary=summary, coverage=plan.get("coverage"), shots=shots)
+
+
 @app.post("/api/productions/{pid}/publish")
 async def api_publish(request: Request, pid: int):
     """Choose the destination channel, confirm metadata, then publish now / schedule / keep private."""
@@ -2283,7 +2477,7 @@ async def api_publish(request: Request, pid: int):
     if p["status"] in ("uploading", "uploaded") or p.get("youtube_video_id"):
         return bad("Already uploaded" + (f": https://youtu.be/{p['youtube_video_id']}" if p.get("youtube_video_id") else "."))
     cid = int(data.get("channel_id") or p.get("channel_id") or 0)
-    if not cid or not auth.owns(ws_id(request), "channels", cid):
+    if not cid or not auth.owns(ws_id(request), "channels", cid) or (chmod.get(cid) or {}).get("status") == "hidden":
         return bad("Pick one of your channels to publish to.")
     if not chmod.uploads_allowed(chmod.get(cid)):
         return bad(f"Uploads are switched off for '{chmod.get(cid)['name']}'. Switch them on under YouTube channels, "

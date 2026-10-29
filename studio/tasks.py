@@ -44,6 +44,32 @@ def _learning_review(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     return learning.review_all()
 
 
+@worker.handler("film_ref")
+def _film_ref(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    """One new version of a character or location picture (Cast review → Regenerate)."""
+    from .creative import film
+    from .film_studio import casting
+    r = casting.generate(int(payload["ref_id"]), int(payload["workspace_id"]),
+                         film.workdir(int(payload["production_id"])) / "cast", film._gen)
+    return {"ref": r["id"], "file": r["file_path"]}
+
+
+@worker.handler("film_short_make")
+def _film_short_make(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from . import pipeline
+    from .film_studio import shorts
+    return {"short": shorts.make(pipeline.load(int(payload["production_id"])), int(payload["index"]))}
+
+
+@worker.handler("film_shots_run")
+def _film_shots_run(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    """Regenerate / upgrade single shots of a finished film, then re-edit and re-check it."""
+    from . import pipeline
+    pid = int(payload["production_id"])
+    pipeline.save(pid, stage="shots", status="queued", error=None)
+    return pipeline.run_production({"production_id": pid}, task)
+
+
 @worker.handler("voice_preview")
 def _voice_preview(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     from .media import voiceclone

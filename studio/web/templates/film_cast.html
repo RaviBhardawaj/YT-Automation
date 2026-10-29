@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div style="min-width:0">
+    <div class="muted small"><a href="/productions/{{ p.id }}">#{{ p.id }} {{ p.title }}</a> / Cast review</div>
+    <h1>Cast review</h1>
+    <div class="muted">Every shot is filmed from the pictures you approve here, so faces, clothes and the set stay the same throughout the film. Regenerating makes a new version — earlier versions are kept, and an approved picture is never replaced without your approval.</div>
+  </div>
+  <div class="row">
+    {% if missing %}<span class="chip warn">waiting for {{ missing|length }}</span>{% else %}<span class="chip ok">all approved</span>{% endif %}
+    {% if not missing and p.status == 'needs_review' %}<button class="primary" data-post="/api/productions/{{ p.id }}/cast/0/continue">Continue filming</button>{% endif %}
+  </div>
+</div>
+{% if missing %}<div class="note small">Waiting for approval: {{ missing|join(', ') }}. Filming continues by itself once every picture is approved.</div>{% endif %}
+
+<div class="grid g2">
+{% for r in refs %}
+<div class="card" id="ref{{ r.id }}">
+  <div class="spread">
+    <div><b>{{ r.name }}</b> <span class="chip">{{ 'character' if r.kind == 'character' else r.kind }}</span>
+      <span class="chip">version {{ r.version }}{% if r.versions > 1 %} of {{ r.versions }}{% endif %}</span>
+      {% if r.status == 'approved' %}<span class="chip ok">approved</span>{% elif r.status == 'rejected' %}<span class="chip err">rejected</span>{% else %}<span class="chip warn">to review</span>{% endif %}</div>
+  </div>
+  <div class="grid g2" style="margin-top:8px">
+    <div>
+      {% if r.url %}<img src="{{ r.url }}" alt="{{ r.name }} — version {{ r.version }}" style="width:100%;border-radius:8px">
+      {% elif r.busy %}<div class="small" data-autorefresh="20">Making this picture… (about a minute)</div>
+      {% else %}<div class="small muted">Not made yet.</div>{% endif %}
+    </div>
+    <div>
+      {% if r.approved and r.approved.id != r.id %}<div class="small muted">Currently approved (version {{ r.approved.version }}):</div>
+        <img src="{{ r.approved_url }}" alt="approved {{ r.name }}" style="width:100%;border-radius:8px;opacity:.85">{% endif %}
+      {% if r.kind == 'character' %}
+        <dl class="small" style="margin:0">{% for k in fields %}{% if r.meta.bible and r.meta.bible[k] %}<dt class="muted">{{ k|capitalize }}</dt><dd style="margin:0 0 4px">{{ r.meta.bible[k] }}</dd>{% endif %}{% endfor %}</dl>
+      {% else %}<div class="small">{{ r.description[:400] }}</div>{% endif %}
+      {% if r.meta.notes %}<div class="small muted">Extra direction: {{ r.meta.notes }}</div>{% endif %}
+    </div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    {% if r.url and r.status != 'approved' %}<button class="sm primary" data-post="/api/productions/{{ p.id }}/cast/{{ r.id }}/approve">Approve</button>{% endif %}
+    {% if r.url and r.status != 'rejected' %}<button class="sm" data-post="/api/productions/{{ p.id }}/cast/{{ r.id }}/reject">Reject</button>{% endif %}
+  </div>
+  <details style="margin-top:8px"><summary class="small">Regenerate with changes</summary>
+    <div id="regen{{ r.id }}" style="margin-top:8px">
+      {% if r.kind == 'character' %}
+        {% for k in ['age', 'appearance', 'clothing'] %}<label class="f"><span>{{ k|capitalize }}</span><input name="bible.{{ k }}" value="{{ (r.meta.bible or {}).get(k, '') }}"></label>{% endfor %}
+      {% else %}<label class="f"><span>Description</span><textarea name="description" rows="3">{{ r.description }}</textarea></label>{% endif %}
+      <label class="f"><span>Extra direction (optional)</span><input name="notes" maxlength="400" placeholder="e.g. older, greyer moustache, sitting on a charpai"></label>
+      <button class="sm" data-post="/api/productions/{{ p.id }}/cast/{{ r.id }}/regenerate" data-collect="#regen{{ r.id }}" data-reload="no" data-done="New version on the way — refresh in a minute">Make a new version</button>
+    </div>
+  </details>
+</div>
+{% endfor %}
+</div>
+{% endblock %}

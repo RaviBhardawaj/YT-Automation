@@ -16,6 +16,9 @@ from . import channels, db, logs, worker
 from .creative import request as reqmod
 
 
+MAX_REQUEST = 40_000            # a full screenplay fits (it is used as written, never cut short)
+
+
 def _norm(title: str) -> str:
     return re.sub(r"[^\w]+", " ", title.lower()).strip()
 
@@ -42,7 +45,7 @@ def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fm
         raise ValueError("channel not found")
     from . import plans
     plans.check(ch["workspace_id"], "video")
-    request = (request or "").strip()[:2000]
+    request = (request or "").strip()[:MAX_REQUEST]
     idea = db.q1("SELECT * FROM topics WHERE id=?", (idea_id,)) if idea_id else None
     if idea and (idea.get("workspace_id") != ch["workspace_id"] or idea.get("channel_id") not in (None, channel_id)):
         raise ValueError("that idea belongs to another channel")
@@ -78,11 +81,19 @@ def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fm
         if not v:
             raise ValueError("that voice isn't one of yours")
         plan["voice"] = {"engine": "clone", "voice_id": str(v["id"]), "name": v["name"]}
+    if use_cast is None and actor == "user" and request:
+        use_cast = False      # the user's own prompt/script: its own characters, never the channel's cast by default
     if use_cast is not None:                           # False = stand-alone video with its own fresh characters
         from .creative import characters as charmod
         named = any(c["name"] and c["name"].lower() in (request or "").lower()
                     for c in charmod.for_channel(channel_id))
         plan["use_cast"] = bool(use_cast) or named     # naming a cast member in the prompt brings them in
+    from .creative import film
+    if not ref and film.wants_film(request):          # a real-looking film, not a cartoon
+        from . import film_studio
+        film_studio.require(ch["workspace_id"])       # switched off: say so, never fall back to a cartoon
+        pid = film.create(channel_id, request, plan={**plan, "request": request}, actor=actor)
+        return {"production_ids": [pid], "plan": {**plan, "workflow": "film"}}
     if plan["workflow"] == "animated_story":
         from .creative import workflow
         pid = workflow.create(channel_id, plan["request"], idea_id=idea_id, fmt=plan["format"], actor=actor,

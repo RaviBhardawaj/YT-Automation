@@ -96,7 +96,6 @@ def resume_paused(reason_like: str = "%budget%") -> int:
 
 def _run(task: dict[str, Any]) -> None:
     from . import pipeline
-    from .youtube.upload import UploadError
     fn = _handlers.get(task["type"])
     pid = task.get("production_id")
     if not fn:
@@ -126,10 +125,11 @@ def _run(task: dict[str, Any]) -> None:
     except Exception as e:  # retry with backoff
         detail = f"{type(e).__name__}: {e}"
         log.error("task %s %s failed: %s\n%s", task["id"], task["type"], detail, traceback.format_exc())
-        retry_after = getattr(e, "retry_after", None) if isinstance(e, UploadError) else None
+        retry_after = getattr(e, "retry_after", None)
         # YouTube's daily limit/quota, a dropped connection or a YouTube outage is temporary: the upload just goes
-        # out at the next chance and never uses up its attempts
-        temporary = task["type"] in ("upload", "social_upload") and (
+        # out at the next chance and never uses up its attempts. Any job can also say it is only waiting
+        # (e.g. a free daily allowance that resets tomorrow) by raising an error with temporary=True.
+        temporary = bool(getattr(e, "temporary", False)) or task["type"] in ("upload", "social_upload") and (
             retry_after is not None or isinstance(e, (httpx.TransportError, OSError)))
         if temporary or task["attempts"] < task["max_attempts"]:
             delay = retry_after or (900 if temporary else BACKOFF[min(task["attempts"] - 1, len(BACKOFF) - 1)])

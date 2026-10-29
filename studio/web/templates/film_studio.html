@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head">
+  <div><h1>Film Studio</h1>
+    <div class="muted">Turn an idea or your own screenplay into a realistic-looking film: approved cast and location, a planned shot list, a distinct voice for every character, real motion for key shots where the free GPU quota allows, and an honest label on every shot. Budget ₹0 — nothing paid is used.</div></div>
+</div>
+
+<form class="card" data-form="/api/film-studio/new" data-done="Film started" style="margin-bottom:14px">
+  <h2>New film</h2>
+  <label class="f"><span>Your idea (a few sentences) or a full screenplay — paste it as written; scenes, characters and dialogue are kept word for word</span>
+    <textarea name="text" rows="8" required placeholder="SCENE 1 — …&#10;BALBIR:&#10;&quot;Oye, jaldi baant cards!&quot;"></textarea></label>
+  <div class="row"><button class="primary" type="submit">Start the film</button>
+    <span class="muted small">No channel needed — you choose where to publish after you've watched it.</span></div>
+</form>
+
+<div class="card tight" style="margin-bottom:14px">
+  <div class="row small">
+    {% for k, q in quota.items() %}<span><b>{{ q.name.split(' — ')[0].split(' (')[0] }}</b>: {% if q.usable_now %}<span class="chip ok">ready</span>{% else %}<span class="chip">off</span>{% endif %} <span class="muted">{{ q.detail }}</span></span>{% endfor %}
+  </div>
+</div>
+
+<h2>Your films</h2>
+{% for f in films %}
+<div class="card" style="margin-bottom:10px">
+  <div class="spread">
+    <div style="min-width:0"><a href="/film-studio/{{ f.id }}"><b>{{ f.title }}</b></a>
+      <div class="muted small">#{{ f.id }} · {{ f.created_at|dt }} · {{ f.summary.shots }} shots
+        {% for m, n in f.summary.by_motion.items() %} · {{ n }} {{ {'video':'real video','camera_move':'stills with camera move','planned':'not made yet'}.get(m, m) }}{% endfor %}</div>
+      {% if f.error %}<div class="small">{{ f.error }}</div>{% endif %}</div>
+    <div class="row">{% set p = f %}{% include "_status.html" %}<a class="btn sm" href="/film-studio/{{ f.id }}">Open</a></div>
+  </div>
+</div>
+{% else %}<div class="card empty">No films yet — start one above.</div>{% endfor %}
+{% endblock %}

@@ -2,7 +2,7 @@
 {% block content %}
 <div class="head"><div><h1>Settings</h1><div class="muted">Credentials live in the macOS Keychain; everything else in the local database.</div></div></div>
 <div class="tabs">
-  {% for k, l in [('ai','AI providers'),('keys','Credentials'),('voice','Voice'),('visuals','Visuals'),('brand','Branding & render'),('youtube','YouTube'),('facebook','Facebook & Instagram'),('research','Research'),('production','Production')] %}
+  {% for k, l in [('ai','AI providers'),('keys','Credentials'),('voice','Voice'),('visuals','Visuals'),('brand','Branding & render'),('youtube','YouTube'),('facebook','Facebook & Instagram'),('research','Research'),('production','Production'),('film','Film Studio')] %}
   <a href="/settings?tab={{ k }}" class="{{ 'on' if tab == k }}">{{ l }}</a>{% endfor %}
 </div>
 
@@ -314,5 +314,32 @@
   <label><input type="checkbox" name="production.auto_pick_topics" {{ 'checked' if s['production.auto_pick_topics'] }}> Daily plan may pick top-scored ideas automatically (otherwise only ideas you approved)</label>
   <div style="margin-top:12px"><button type="submit" class="primary">Save</button></div>
 </form>
+{% elif tab == 'film' %}
+<form class="card" data-form="/api/settings">
+  <h2>Photorealistic Film Studio</h2>
+  <p class="muted small">Turns screenplays and ideas into realistic-looking films: approved character and location references, a shot list, and one take per shot that says honestly what it is (still image, still with camera move, or real video). Off until you switch it on. Each account also needs the “Photorealistic Film Studio” permission (Users &amp; website). Budget is fixed at ₹0: paid providers are never used.</p>
+  <label><input type="checkbox" name="film_studio.enabled" {{ 'checked' if s['film_studio.enabled'] }}> Switch on the Film Studio for this platform</label>
+  <label class="f" style="max-width:260px;margin-top:10px"><span>Automatic retries per shot</span><input type="number" min="0" max="5" name="film_studio.max_retries_per_shot" data-type="number" value="{{ s['film_studio.max_retries_per_shot'] }}"></label>
+  <button type="submit" class="primary">Save Film Studio</button>
+</form>
+<div class="card" style="margin-top:14px">
+  <h2>Providers</h2>
+  <p class="muted small">What each provider can do, whether it is free and when that was checked, its licence, and whether it can be used right now. Budget ₹0: paid providers are never used, not even as a fallback. When no free provider can make real video, a shot becomes a still image with a camera move — and is labelled that way.</p>
+  <div style="overflow-x:auto"><table class="small">
+    <tr><th>Provider</th><th>Can do</th><th>Cost</th><th>Licence</th><th>Now</th></tr>
+    {% for p in film_providers or [] %}<tr>
+      <td><b>{{ p.name }}</b><div class="muted">{{ p.where }} · {{ p.model }}</div></td>
+      <td>{{ p.caps|join(', ')|replace('_', ' ') }}</td>
+      <td>{% if p.cost == 'paid' %}<span class="chip warn">paid</span>{% elif p.cost == 'free_local' %}<span class="chip ok">free · local</span>{% else %}<span class="chip ok">free allowance</span>{% endif %}
+        {% if p.allowance %}<div class="muted">{{ p.allowance }}</div>{% endif %}<div class="muted">checked {{ p.checked }}</div></td>
+      <td>{{ p.licence }}{% if p.commercial is sameas none %} <span class="chip">verify</span>{% endif %}</td>
+      <td>{% if p.usable_now %}<span class="chip ok">usable</span>{% else %}<span class="chip">no</span>{% endif %}<div class="muted">{{ p.detail }}</div></td>
+    </tr>{% endfor %}
+  </table></div>
+  <h3 style="margin-top:14px">Usage, last 30 days</h3>
+  <div style="overflow-x:auto"><table class="small"><tr><th>Provider</th><th>Task</th><th>Calls</th><th>Succeeded</th><th>Units</th><th>Cost (USD)</th></tr>
+    {% for u in film_usage or [] %}<tr><td>{{ u.provider }}</td><td>{{ u.task }}</td><td>{{ u.calls }}</td><td>{{ u.ok }}</td><td>{{ u.units or '' }}</td><td>{{ '%.4f' % (u.cost_usd or 0) }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">No usage recorded yet.</td></tr>{% endfor %}</table></div>
+</div>
 {% endif %}
 {% endblock %}

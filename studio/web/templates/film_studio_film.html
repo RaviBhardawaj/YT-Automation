@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<div data-watch-production="{{ p.id }}" data-status="{{ p.status }}" data-stage="{{ p.stage }}"></div>
+<div class="head">
+  <div style="min-width:0">
+    <div class="muted small"><a href="/film-studio">Film Studio</a> / #{{ p.id }}</div>
+    <h1>{{ pkg.title or p.title }}</h1>
+    <div class="row">{% include "_status.html" %}
+      <span class="muted small">{{ summary.shots }} shots ·
+        {% for m, n in summary.by_motion.items() %}{{ n }} {{ {'video':'real video','camera_move':'stills with camera move','planned':'not made yet','static':'stills'}.get(m, m) }}{{ ' · ' if not loop.last }}{% endfor %}
+        · cost ₹0 (${{ '%.2f' % summary.cost_usd }})</span></div>
+    <div class="stages">{% for s in stages %}{% set idx = stages.index(p.stage) if p.stage in stages else 0 %}
+      <span class="{{ 'now' if active and s == p.stage else 'done' if loop.index0 < idx or p.status == 'awaiting_approval' else '' }}">{{ s }}</span>{% endfor %}</div>
+  </div>
+  <div class="row">
+    {% if p.status == 'paused' %}<button data-post="/api/productions/{{ p.id }}/job/resume">Resume</button>
+    {% elif active %}<button data-post="/api/productions/{{ p.id }}/job/pause">Pause</button>{% endif %}
+    {% if p.status in ('failed','needs_attention') %}<button class="primary" data-post="/api/productions/{{ p.id }}/job/retry">Retry failed step</button>{% endif %}
+    {% if p.status not in ('uploaded','uploading','rejected') %}<button class="danger" data-post="/api/productions/{{ p.id }}/job/cancel" data-confirm="Cancel this film? Finished shots are kept.">Cancel</button>{% endif %}
+    <a class="btn" href="/productions/{{ p.id }}">Publish / details</a>
+  </div>
+</div>
+{% if p.error %}<div class="note {{ 'warn' if p.status in ('needs_review','needs_attention','awaiting_approval') else '' }}">{{ p.error }}</div>{% endif %}
+{% if active %}<div class="note small" data-autorefresh="20">Working on it — {{ p.status }}. This page refreshes by itself.</div>{% endif %}
+{% if missing_cast %}<div class="note small">Waiting for cast approval: {{ missing_cast|join(', ') }} — <a href="/productions/{{ p.id }}/cast">open Cast review</a>.</div>
+{% else %}<div class="small muted" style="margin-bottom:8px"><a href="/productions/{{ p.id }}/cast">Cast review</a> — characters and location are approved.</div>{% endif %}
+
+<div class="grid g3" style="margin-bottom:14px">
+  <div class="card tight"><b class="small">Runtime</b>
+    <div class="small">{% if pkg.shot_plan %}{{ '%.1f' % (pkg.shot_plan.runtime / 60) }} min planned{% if pkg.shot_plan.coverage %} · {{ pkg.shot_plan.coverage.message }}{% endif %}{% else %}not planned yet{% endif %}</div></div>
+  <div class="card tight"><b class="small">Free capacity today</b>
+    {% for k, q in quota.items() %}<div class="small">{{ 'Images' if k == 'cloudflare_flux' else 'Real video' }}: <span class="muted">{{ q.detail }}</span></div>{% endfor %}</div>
+  <div class="card tight"><b class="small">Audio</b>
+    <div class="small">{% if pkg.audio_sync %}{{ pkg.audio_sync.attached }} lines on their speakers' shots{% if pkg.audio_sync.warnings %} · <span class="chip warn">{{ pkg.audio_sync.warnings|length }} warning(s)</span>{% endif %}{% else %}not recorded yet{% endif %}</div>
+    <div class="small muted">Lip-sync: not supported on stills; unverified on AI video.</div></div>
+</div>
+
+{% if film_url %}
+<div class="card" style="margin-bottom:14px">
+  <h2>Preview</h2>
+  <video controls preload="metadata" src="{{ film_url }}" style="width:100%;border-radius:8px;background:#000"></video>
+  <div class="row" style="margin-top:8px">{% for f in files %}<a class="btn sm" href="{{ f.url }}" target="_blank" rel="noopener">{{ f.name }}</a>{% endfor %}</div>
+</div>
+{% endif %}
+
+{% if p.qa and p.qa.checks %}
+<div class="card" style="margin-bottom:14px">
+  <h2>Quality checks</h2>
+  <table class="small">{% for c in p.qa.checks %}<tr>
+    <td>{% if c.severity == 'info' %}<span class="chip info">info</span>{% elif c.ok is sameas true %}<span class="chip ok">ok</span>{% elif c.ok is sameas none %}<span class="chip">unverified</span>{% elif c.severity == 'fail' %}<span class="chip err">failed</span>{% else %}<span class="chip warn">check</span>{% endif %}</td>
+    <td><b>{{ c.name }}</b> <span class="muted">({{ c.kind }})</span></td><td>{{ c.detail }}</td></tr>{% endfor %}</table>
+</div>
+{% endif %}
+
+{% if pkg.shorts_proposals %}
+<div class="card" style="margin-bottom:14px">
+  <h2>Shorts</h2>
+  <div class="muted small">Proposed moments — each starts on a line and ends on a laugh or the end of a line. Making one creates a vertical video for you to watch; nothing is published by itself.</div>
+  {% for s in pkg.shorts_proposals %}<div class="spread small" style="padding:6px 0">
+    <span>{{ '%d:%02d' % (s.start // 60, s.start % 60) }}–{{ '%d:%02d' % (s.end // 60, s.end % 60) }} · {{ s.lines }} lines{% if s.payoff %} · ends on a laugh{% endif %} · “{{ s.first_line }}…”</span>
+    <button class="sm" data-post="/api/productions/{{ p.id }}/film-shorts/{{ loop.index0 }}/make" data-reload="no">Make Short</button></div>{% endfor %}
+  {% for k in kids %}<div class="small"><a href="/productions/{{ k.id }}">{{ k.title }}</a> {% set p2 = k %}<span class="chip">{{ k.status|replace('_',' ') }}</span></div>{% endfor %}
+</div>
+{% endif %}
+
+<h2>Shots</h2>
+{% for sc, rows in scenes.items() %}
+<div class="card" style="margin-bottom:12px">
+  <b>Scene {{ sc }}</b> <span class="muted small">{{ rows|length }} shots · {{ '%.0f' % (rows|sum(attribute='target_seconds')) }} s</span>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-top:8px">
+  {% for s in rows %}
+    <div class="card tight" style="min-width:0">
+      {% if s.video %}<video src="{{ s.video }}" muted loop playsinline preload="none" poster="{{ s.thumb or '' }}" style="width:100%;border-radius:6px" controls></video>
+      {% elif s.thumb %}<img src="{{ s.thumb }}" alt="shot {{ s.scene_no }}.{{ s.shot_no }}" loading="lazy" style="width:100%;border-radius:6px">
+      {% else %}<div class="muted small" style="aspect-ratio:16/9;display:grid;place-items:center;border:1px dashed var(--line,#ccc);border-radius:6px">not made yet</div>{% endif %}
+      <div class="small" style="margin-top:4px"><b>{{ s.scene_no }}.{{ s.shot_no }}</b> {{ s.shot_type|replace('_',' ') }} · {{ '%.1f' % s.target_seconds }} s</div>
+      <div class="row" style="gap:4px">
+        <span class="chip {{ 'ok' if s.motion_type in ('video','dialogue_video','lipsync_verified') else '' }}">{{ s.motion_label }}</span>
+        <span class="chip {{ 'warn' if s.status in ('needs_review','failed','waiting') else 'ok' if s.status == 'approved' else '' }}">{{ s.status|replace('_',' ') }}</span>
+        {% if s.takes_n > 1 %}<span class="chip">{{ s.takes_n }} takes</span>{% endif %}</div>
+      {% if s.dialogue %}<div class="small" style="margin-top:4px"><b>{{ s.dialogue[0].name }}:</b> {{ s.dialogue[0].text[:90] }}</div>
+      {% elif s.action %}<div class="small muted" style="margin-top:4px">{{ s.action[:90] }}</div>{% endif %}
+      {% if s.continuity.video_wanted %}<div class="small" style="color:var(--warn,#b45309)">{{ s.continuity.video_wanted }}</div>{% endif %}
+      {% if s.camera.angle and s.camera.angle != 'eye level' %}<div class="small muted">{{ s.camera.angle }}{% if s.camera.notes %} — {{ s.camera.notes[:60] }}{% endif %}</div>{% endif %}
+      <div class="row" style="margin-top:6px;gap:4px">
+        {% if s.current_take and s.status != 'approved' %}<button class="sm" data-post="/api/productions/{{ p.id }}/shots/{{ s.id }}/approve">Approve</button>{% endif %}
+        <button class="sm" data-post="/api/productions/{{ p.id }}/shots/{{ s.id }}/retry" data-reload="no">Retry</button>
+        {% if s.current_take and s.motion_type not in ('video','dialogue_video','lipsync_verified') %}<button class="sm" data-post="/api/productions/{{ p.id }}/shots/{{ s.id }}/upgrade" data-reload="no" title="Real motion with the free GPU quota">Make it video</button>{% endif %}
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+</div>
+{% else %}<div class="card empty">The shot list appears once the script has been read.</div>{% endfor %}
+{% endblock %}

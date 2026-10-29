@@ -1,0 +1,123 @@
+"""Film Studio phase 5: provider registry, free-first routing and the ₹0 guard (no network, no paid calls).
+Run: .venv/bin/python -m unittest discover -s tests -v"""
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+os.environ.setdefault("STUDIO_DATA_DIR", tempfile.mkdtemp(prefix="studio-test-"))
+os.environ.setdefault("STUDIO_KEYRING_SERVICE", "yt-automation-studio-tests")  # never the real Keychain logins
+
+from studio import config, db  # noqa: E402
+
+config.ensure_dirs()
+db.migrate()
+from studio import auth, channels, pipeline, settings  # noqa: E402
+from studio.creative import film  # noqa: E402
+from studio.film_studio import providers as pv  # noqa: E402
+
+auth.ensure_default_workspace()
+channels.ensure_default()
+
+
+def healthy(*ids):
+    """Patch health so exactly these providers report available."""
+    return mock.patch.object(pv, "health", lambda pid: {"available": pid in ids, "detail": "test"})
+
+
+class RegistryTests(unittest.TestCase):
+    def test_every_provider_documents_what_it_is(self):
+        need = {"id", "name", "caps", "where", "model", "cost", "checked", "licence", "commercial", "hardware",
+                "limits", "est_cost_usd", "fallback", "health"}
+        for p in pv.REGISTRY:
+            self.assertLessEqual(need, set(p), p["id"])
+            self.assertIn(p["cost"], ("free_local", "free_allowance", "paid"))
+            self.assertTrue(set(p["caps"]) <= set(pv.CAPS), p["id"])
+            if p["cost"] == "free_allowance":
+                self.assertTrue(p.get("allowance"), f"{p['id']} must say what the free allowance is")
+
+    def test_status_page_data_never_calls_paid_services(self):
+        with mock.patch("httpx.get", side_effect=AssertionError("network")), \
+                mock.patch("httpx.post", side_effect=AssertionError("network")):
+            rows = pv.status_all()
+        self.assertEqual(len(rows), len(pv.REGISTRY))
+
+
+class RoutingTests(unittest.TestCase):
+    def tearDown(self):
+        settings.set("film_studio.budget_inr", 0)
+        settings.set("film_studio.paid_providers", [])
+
+    def test_free_local_first_then_free_allowance(self):
+        with healthy("cloudflare_flux", "local_sd"):
+            self.assertEqual(pv.choose("image")["provider"], "local_sd")
+        with healthy("cloudflare_flux"):
+            self.assertEqual(pv.choose("image_ref")["provider"], "cloudflare_flux")
+
+    def test_paid_never_used_at_zero_budget_even_with_a_key(self):
+        with healthy("gemini_image", "gemini_omni", "ffmpeg_camera"):
+            with self.assertRaises(pv.NoFreeProvider):
+                pv.choose("image_ref")
+            v = pv.choose("video_i2v")
+        self.assertNotEqual(v["provider"], "gemini_omni")
+        with self.assertRaises(pv.PaidBlocked):
+            pv.guard("gemini_omni")
+
+    def test_paid_needs_budget_and_explicit_listing(self):
+        settings.set("film_studio.budget_inr", 500)
+        with healthy("gemini_image"):
+            with self.assertRaises(pv.NoFreeProvider):
+                pv.choose("image_ref")                       # budget alone is not enough
+            settings.set("film_studio.paid_providers", ["gemini_image"])
+            self.assertEqual(pv.choose("image_ref")["provider"], "gemini_image")
+        pv.guard("gemini_image")
+
+    def test_no_free_video_becomes_a_labelled_camera_move(self):
+        with healthy("ffmpeg_camera"):
+            c = pv.choose("video_i2v")
+        self.assertEqual(c["provider"], "ffmpeg_camera")
+        self.assertEqual(c["motion_type"], "camera_move")
+        self.assertIn("not as video", c["limitation"])
+        with healthy("ffmpeg_camera", "wan22_local"):
+            self.assertEqual(pv.choose("video_i2v")["motion_type"], "video")
+
+
+class FilmImageRoutingTests(unittest.TestCase):
+    def test_film_images_go_through_the_manager(self):
+        out = Path(tempfile.mkdtemp()) / "a.png"
+        with healthy(), mock.patch("studio.media.visuals.cloudflare_ready", lambda: False):
+            with self.assertRaises(pipeline.NeedsAttention):
+                film._gen("x", out)                          # nothing free set up: stop with the reason
+        with healthy(), mock.patch("studio.media.visuals.cloudflare_ready", lambda: True):
+            with self.assertRaises(film.WaitForAllowance):
+                film._gen("x", out)                          # set up but spent today: wait for the reset
+        called = {}
+        with healthy("cloudflare_flux"), mock.patch("studio.media.visuals.generate_cloudflare",
+                                                    lambda *a, **k: called.setdefault("cf", True)):
+            film._gen("x", out, refs=[out])
+        self.assertTrue(called.get("cf"))
+
+
+class SettingsPageTests(unittest.TestCase):
+    def test_film_settings_tab_lists_providers(self):
+        from fastapi.testclient import TestClient
+        from studio.web import app as webapp
+        pw = "a long enough password"
+        if not auth.has_users():
+            auth.register("first-admin@test.local", pw)
+        admin = db.q1("SELECT email FROM users WHERE is_admin=1 ORDER BY id LIMIT 1")["email"]
+        tok, _ = auth.login(admin, pw)
+        c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", raise_server_exceptions=True)
+        c.cookies.set("sid", tok)
+        r = c.get("/settings?tab=film")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Cloudflare Workers AI", r.text)
+        self.assertIn("free allowance", r.text)
+        self.assertIn("paid", r.text)
+
+
+if __name__ == "__main__":
+    unittest.main()
