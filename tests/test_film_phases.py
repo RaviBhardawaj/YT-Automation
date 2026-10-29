@@ -164,6 +164,21 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(insert["motion_type"], "camera_move")
         self.assertIn("real video failed", insert["continuity"]["video_wanted"])
 
+    def test_zero_clip_limit_makes_no_video_calls_and_says_why(self):
+        settings.set("film_studio.video_clips_per_run", 0)
+        try:
+            p = run_all(new_film())
+        finally:
+            settings.set("film_studio.video_clips_per_run", 4)
+        self.assertEqual(CALLS["video"], 0)
+        shots = store.shots(p["id"], 1)
+        self.assertTrue(all(s["motion_type"] == "camera_move" for s in shots))
+        wanted = [s for s in shots if generate.wants_video(s)]
+        take = store.takes(wanted[0]["id"], 1)[-1]
+        st = json.loads(take["settings"])
+        self.assertTrue(st["video_requested"])
+        self.assertIn("clip limit", st["fallback_reason"])
+
     def test_resume_skips_finished_shots(self):
         pid = new_film()
         p = run_all(pid, video=False)

@@ -93,15 +93,23 @@ def _secret(name: str, what: str) -> Callable[[], tuple[bool, str]]:
 
 
 def _wan_health() -> tuple[bool, str]:
-    marker = config.DATA_DIR / "models" / "wan2.2-ti2v-5b"
-    return (marker.exists(), "installed" if marker.exists() else
-            "not installed — about 17–21 GB download; needs your approval and free disk")
+    """Never 'available' on a name or a folder alone: there is no local Wan 2.2 inference in this app (a 16 GB
+    Apple-Silicon Mac cannot run it usefully), so it is listed for information and never chosen."""
+    return False, ("not available — this app has no local Wan 2.2 inference (needs a 24 GB+ GPU); real video comes "
+                   "from the free Hugging Face Space")
 
 
 def _zerogpu_health() -> tuple[bool, str]:
+    from . import zerogpu
     if not settings.has_secret("hf_token"):
-        return False, "add a free Hugging Face token (Credentials) — about 5 GPU-minutes a day"
-    return True, f"token saved · Space {settings.get('film_studio.zerogpu_space')}"
+        return False, "add a free Hugging Face token (Credentials) — a few GPU-minutes a day"
+    until = zerogpu.quota_until()
+    if until:
+        return False, f"today's free GPU minutes are used up — asked again after {until:%H:%M} UTC"
+    left = video_budget()
+    if left["left"] <= 0:
+        return False, f"today's clip limit reached ({left['used']} of {left['limit']}) — Settings → Film Studio"
+    return True, f"token saved · Space {zerogpu.space()} · {left['left']} of {left['limit']} clips left today"
 
 
 CHECKED = "2026-10-29"
@@ -138,7 +146,8 @@ REGISTRY: list[dict[str, Any]] = [
      "limits": "a few seconds per clip", "est_cost_usd": 0.0, "fallback": ["hf_zerogpu"], "health": _wan_health},
     {"id": "hf_zerogpu", "name": "Hugging Face ZeroGPU Space (video)", "caps": ["video_t2v", "video_i2v"],
      "where": "remote", "model": "Wan 2.2 14B fast (zerogpu-aoti Space)", "cost": "free_allowance",
-     "allowance": "5 GPU-minutes a day on a free account (1–3 short clips)", "checked": CHECKED,
+     "allowance": "a few GPU-minutes a day on a free account (1–3 short clips); app limit per day in Settings",
+     "checked": CHECKED,
      "source": "huggingface.co/docs/hub/spaces-zerogpu", "licence": "Wan 2.2: Apache-2.0 (recheck)",
      "commercial": None, "hardware": "none (cloud)", "limits": "queues; daily quota",
      "est_cost_usd": 0.0, "fallback": [], "health": _zerogpu_health},
@@ -259,6 +268,55 @@ def candidates(cap: str) -> list[dict[str, Any]]:
         if (p["cost"] in FREE or paid_allowed(p["id"])) and health(p["id"])["available"]:
             out.append({"provider": p["id"], "name": p["name"], "cost": p["cost"], "motion_type": _motion(cap)})
     return out
+
+
+# ------------------------------------------------------------------ real video: budget and execution
+
+VIDEO_MODES = ("key", "all", "none")
+DEFAULT_CLIPS_PER_DAY = 4
+
+
+def video_mode() -> str:
+    m = (settings.get("film_studio.video_shots") or "key").strip().lower()
+    return m if m in VIDEO_MODES else "key"
+
+
+def video_budget() -> dict[str, Any]:
+    """The free-video clip limit per day and what is left. An unset value uses the default; an explicit 0 means no
+    real-video clips at all; anything else is validated (whole numbers 0–100). Counted from the usage log, so the
+    limit holds across retries, upgrades and restarts."""
+    row = db.q1("SELECT value FROM settings WHERE key='film_studio.video_clips_per_run'")
+    raw = db.loads(row["value"], None) if row else None       # unset (no stored value) ≠ an explicit 0
+    warning = ""
+    if raw is None or raw == "":
+        limit, source = DEFAULT_CLIPS_PER_DAY, "default"
+    else:
+        try:
+            limit, source = int(raw), "set"
+            if not 0 <= limit <= 100:
+                raise ValueError
+        except (TypeError, ValueError):
+            limit, source = DEFAULT_CLIPS_PER_DAY, "default"
+            warning = f"'{raw}' is not a valid clip limit (0–100) — the default {DEFAULT_CLIPS_PER_DAY} is used"
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+    used = int(db.q1("SELECT COUNT(*) AS n FROM ai_usage WHERE provider IN ('hf_zerogpu') AND task='video_shot' "
+                     "AND ok=1 AND created_at>=?", (day,))["n"])
+    return {"limit": limit, "used": used, "left": max(0, limit - used), "source": source, "warning": warning,
+            "mode": video_mode()}
+
+
+def run_video(provider_id: str, image: Path, prompt: str, out: Path, *, seconds: float,
+              seed: int = 42) -> dict[str, Any]:
+    """Execute image-to-video with exactly the provider that was chosen. Only providers with a real adapter here can
+    run; anything else is refused with the reason — never routed through another provider's adapter."""
+    guard(provider_id)
+    if provider_id == "hf_zerogpu":
+        from . import zerogpu
+        info = zerogpu.generate(image, prompt, out, seconds=seconds, seed=seed)
+        return {**info, "provider": "hf_zerogpu", "model": f"Wan 2.2 · {info['space']}", "start_image": str(image),
+                "refs_supported": False}
+    raise NoFreeProvider(f"{BY_ID.get(provider_id, {}).get('name', provider_id)} has no video adapter in this app "
+                         "— not used")
 
 
 def _motion(cap: str) -> str:

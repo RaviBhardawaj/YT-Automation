@@ -320,6 +320,16 @@
   <p class="muted small">Turns screenplays and ideas into realistic-looking films: approved character and location references, a shot list, and one take per shot that says honestly what it is (still image, still with camera move, or real video). Off until you switch it on. Each account also needs the “Photorealistic Film Studio” permission (Users &amp; website). Budget is fixed at ₹0: paid providers are never used.</p>
   <label><input type="checkbox" name="film_studio.enabled" {{ 'checked' if s['film_studio.enabled'] }}> Switch on the Film Studio for this platform</label>
   <label class="f" style="max-width:260px;margin-top:10px"><span>Automatic retries per shot</span><input type="number" min="0" max="5" name="film_studio.max_retries_per_shot" data-type="number" value="{{ s['film_studio.max_retries_per_shot'] }}"></label>
+  <h3>Real video (free)</h3>
+  <div class="grid g2">
+    <label class="f"><span>Which shots get real video</span><select name="film_studio.video_shots">
+      {% for v, l in [('key', 'Key shots — physical actions, scene openings, inserts, reactions'), ('all', 'All shots (waits for the free quota when it runs out)'), ('none', 'None — stills with camera moves only')] %}
+      <option value="{{ v }}" {{ 'selected' if (s['film_studio.video_shots'] or 'key') == v }}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="f"><span>Real-video clips per day (0 = none)</span><input type="number" min="0" max="100" name="film_studio.video_clips_per_run" data-type="number" value="{{ film_video.limit if film_video else s['film_studio.video_clips_per_run'] }}"></label>
+  </div>
+  {% if film_video %}<div class="note small">Today: <b>{{ film_video.used }}</b> of {{ film_video.limit }} clips used{% if film_video.source == 'default' %} (default limit){% endif %} · mode <b>{{ film_video.mode }}</b> · Hugging Face Space: {{ film_video.zerogpu }}.
+    Free GPU minutes are limited, so most shots are stills with a camera move — always labelled as such, never called video.</div>
+  {% if film_video.warning %}<div class="note warn small">{{ film_video.warning }}</div>{% endif %}{% endif %}
   <button type="submit" class="primary">Save Film Studio</button>
 </form>
 <div class="card" style="margin-top:14px">

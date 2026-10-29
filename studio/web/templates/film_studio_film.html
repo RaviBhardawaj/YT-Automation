@@ -25,6 +25,19 @@
 {% if missing_cast %}<div class="note small">Waiting for cast approval: {{ missing_cast|join(', ') }} — <a href="/productions/{{ p.id }}/cast">open Cast review</a>.</div>
 {% else %}<div class="small muted" style="margin-bottom:8px"><a href="/productions/{{ p.id }}/cast">Cast review</a> — characters and location are approved.</div>{% endif %}
 
+{% if video %}<div class="card tight" style="margin-bottom:14px">
+  <div class="spread"><b class="small">What this film really contains</b><span class="muted small">real-video mode <b>{{ video.mode }}</b> · {{ video.used }} of {{ video.limit }} free clips used today</span></div>
+  <div class="row small" style="margin-top:6px">
+    <span class="chip ok">{{ video.counts.video }} real video</span>
+    <span class="chip">{{ video.counts.camera_move }} still + camera move</span>
+    <span class="chip">{{ video.counts.static }} still</span>
+    {% if video.counts.failed %}<span class="chip err">{{ video.counts.failed }} failed</span>{% endif %}
+    {% if video.counts.waiting %}<span class="chip warn">{{ video.counts.waiting }} waiting for free quota</span>{% endif %}
+    {% if video.counts.needs_review %}<span class="chip warn">{{ video.counts.needs_review }} need review</span>{% endif %}
+    {% if video.counts.missing %}<span class="chip">{{ video.counts.missing }} not made yet</span>{% endif %}
+  </div>
+  <div class="small muted" style="margin-top:4px">Real video: {{ video.zerogpu }}</div>
+</div>{% endif %}
 <div class="grid g3" style="margin-bottom:14px">
   <div class="card tight"><b class="small">Runtime</b>
     <div class="small">{% if pkg.shot_plan %}{{ '%.1f' % (pkg.shot_plan.runtime / 60) }} min planned{% if pkg.shot_plan.coverage %} · {{ pkg.shot_plan.coverage.message }}{% endif %}{% else %}not planned yet{% endif %}</div></div>
@@ -80,7 +93,10 @@
         {% if s.takes_n > 1 %}<span class="chip">{{ s.takes_n }} takes</span>{% endif %}</div>
       {% if s.dialogue %}<div class="small" style="margin-top:4px"><b>{{ s.dialogue[0].name }}:</b> {{ s.dialogue[0].text[:90] }}</div>
       {% elif s.action %}<div class="small muted" style="margin-top:4px">{{ s.action[:90] }}</div>{% endif %}
+      {% if s.take_provider %}<div class="small muted">by {{ s.take_provider }}{% if s.take_model %} · {{ s.take_model[:40] }}{% endif %}</div>{% endif %}
       {% if s.continuity.video_wanted %}<div class="small" style="color:var(--warn,#b45309)">{{ s.continuity.video_wanted }}</div>{% endif %}
+      {% if s.continuity.motion_flag %}<div class="small" style="color:var(--warn,#b45309)">{{ s.continuity.motion_flag }}</div>{% endif %}
+      {% if s.last_error and s.motion_type not in ('video','dialogue_video','lipsync_verified') %}<div class="small muted">last video attempt: {{ s.last_error[:110] }}</div>{% endif %}
       {% if s.camera.angle and s.camera.angle != 'eye level' %}<div class="small muted">{{ s.camera.angle }}{% if s.camera.notes %} — {{ s.camera.notes[:60] }}{% endif %}</div>{% endif %}
       <div class="row" style="margin-top:6px;gap:4px">
         {% if s.current_take and s.status != 'approved' %}<button class="sm" data-post="/api/productions/{{ p.id }}/shots/{{ s.id }}/approve">Approve</button>{% endif %}

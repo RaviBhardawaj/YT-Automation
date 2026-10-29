@@ -826,11 +826,12 @@ def settings_page(request: Request, tab: str = "ai"):
     for c in yt_channels:
         c["connected"] = oauth.connected(c["id"])
     from ..social import meta as _meta
-    film_providers = film_usage = None
+    film_providers = film_usage = film_video = None
     if tab == "film":
         from ..film_studio import providers as film_pv
-        film_providers, film_usage = film_pv.status_all(), film_pv.usage()
-    return page(request, "settings.html", tab=tab, film_providers=film_providers, film_usage=film_usage, yt_channels=yt_channels, meta_ready=_meta.configured(),
+        film_providers, film_usage, film_video = film_pv.status_all(), film_pv.usage(), film_pv.video_budget()
+        film_video["zerogpu"] = film_pv.health("hf_zerogpu")["detail"]
+    return page(request, "settings.html", tab=tab, film_providers=film_providers, film_usage=film_usage, film_video=film_video, yt_channels=yt_channels, meta_ready=_meta.configured(),
                 meta_redirect=_meta.REDIRECT_URI, meta_secret_set=settings.has_secret("meta_app_secret"), s=settings.all_settings(), secrets=settings.secret_status(),
                 providers=providers.status_all() if tab == "ai" else [], provider_names=settings.PROVIDERS,
                 ai_tasks=settings.AI_TASKS, voices=main_voices, other_voices=other_voices, channel_lang=profile.language(),
@@ -1390,7 +1391,7 @@ SETTABLE = {
     "research.contact",
     "visuals.order", "visuals.enabled", "visuals.prefer_video", "visuals.local_sd_url", "visuals.gemini_image_model",
     "visuals.gemini_image_price", "visuals.cloudflare_account_id", "render.film_look", "film_studio.enabled",
-    "film_studio.max_retries_per_shot", "brand", "render.preset", "render.crf", "render.transition", "render.music_file",
+    "film_studio.max_retries_per_shot", "film_studio.video_shots", "film_studio.video_clips_per_run", "brand", "render.preset", "render.crf", "render.transition", "render.music_file",
     "render.music_license", "render.music_volume", "youtube.privacy_default", "youtube.category_id",
     "youtube.upload_captions", "youtube.made_for_kids", "youtube.audit_passed", "youtube.disclose_tts", "publish.mode",
     "publish.slots", "production.max_active", "production.short_seconds", "production.long_minutes",
@@ -1419,6 +1420,15 @@ async def api_settings(request: Request):
                 return bad("Shorts per episode must be a number from 0 to 6")
             if not 0 <= v <= 6:
                 return bad("Shorts per episode must be a number from 0 to 6")
+        if k == "film_studio.video_shots" and v not in ("key", "all", "none"):
+            return bad("Real-video shots must be key, all or none")
+        if k == "film_studio.video_clips_per_run":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                return bad("Real-video clips per day must be a whole number from 0 to 100")
+            if not 0 <= v <= 100:
+                return bad("Real-video clips per day must be a whole number from 0 to 100")
         if k == "nifty.daily_audience" and v not in profile.AUDIENCES:
             return bad("unknown audience")
         if k == "publish.mode" and v not in ("approve_first", "auto_after_validation"):
@@ -2453,7 +2463,30 @@ def film_studio_film(request: Request, pid: int):
     kids = db.q("SELECT id, title, status FROM productions WHERE parent_id=? AND kind='film_short' ORDER BY id", (pid,))
     stages, _, _ = pipeline.stages_for("film")
     active = p["status"] not in pipeline.TERMINAL and p["status"] not in ("paused", "needs_review", "paused_budget")
+    for s in shots:                                        # the provider/model of the current take, and why video failed
+        take = db.q1("SELECT provider, model, motion_type FROM film_takes WHERE id=?", (s["current_take"],)) \
+            if s.get("current_take") else None
+        s["take_provider"] = (take or {}).get("provider")
+        s["take_model"] = (take or {}).get("model")
+        last_fail = db.q1("SELECT error FROM film_takes WHERE shot_id=? AND status='failed' ORDER BY id DESC LIMIT 1",
+                          (s["id"],))
+        s["last_error"] = (last_fail or {}).get("error")
+    counts = {"video": 0, "camera_move": 0, "static": 0, "failed": 0, "waiting": 0, "needs_review": 0, "missing": 0}
+    for s in shots:
+        mt = s["motion_type"]
+        if not s.get("current_take"):
+            counts["missing"] += 1
+        elif mt in ("video", "dialogue_video", "lipsync_verified"):
+            counts["video"] += 1
+        elif mt == "camera_move":
+            counts["camera_move"] += 1
+        else:
+            counts["static"] += 1
+        if s["status"] in ("failed", "waiting", "needs_review"):
+            counts[s["status"]] += 1
+    video = {**fpv.video_budget(), "zerogpu": fpv.health("hf_zerogpu")["detail"], "counts": counts}
     return page(request, "film_studio_film.html", p=p, pkg=p["package"], scenes=scenes, summary=fstore.summary(pid, ws),
+                video=video,
                 files=files, kids=kids, stages=stages, active=active, missing_cast=casting.missing(pid, ws),
                 quota={x["id"]: x for x in fpv.status_all() if x["id"] in ("cloudflare_flux", "hf_zerogpu")},
                 film_url=media_url(str(exp / "film.mp4")) if (exp / "film.mp4").exists() else None)

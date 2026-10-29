@@ -218,9 +218,15 @@ def _gen(prompt: str, out: Path, *, refs: list[Path] | None = None, size: tuple[
             hiccup = e
             tried.append(f"{pick['name']}: {type(e).__name__}")
             continue
-        if refs and "image_ref" not in providers.BY_ID[pick["provider"]]["caps"]:
+        used = [str(r) for r in refs or []] if "image_ref" in providers.BY_ID[pick["provider"]]["caps"] else []
+        if refs and not used:
             logs.event("info", "film", f"{out.name}: made by {pick['name']} without the cast pictures (the reference "
                                        "allowance is used up) — retry the shot later to match faces exactly")
+        try:                                            # which provider made the picture and which references it used
+            out.with_suffix(".json").write_text(json.dumps({"provider": pick["provider"], "refs_used": used,
+                                                            "refs_wanted": [str(r) for r in refs or []]}))
+        except OSError:
+            pass
         return out
     if hiccup is not None and not any(t.endswith("used up") for t in tried):
         raise NetworkHiccup(f"image services didn't answer ({type(hiccup).__name__}) — retrying in a few minutes")
@@ -435,6 +441,8 @@ def stage_qa(p: dict[str, Any]) -> str | None:
                           float((p.get("timeline") or {}).get("total_duration") or 0), missing)
     creative, failing = qa.creative(p)
     checks += creative
+    clips, counts = qa.clip_checks(p)                    # what each shot really is + real-video file/motion checks
+    checks += clips
     film = p["package"]
     rounds = int(film.get("qa_rounds") or 0)
     if failing and rounds < int(settings.get("film_studio.max_retries_per_shot") or 2):
@@ -446,7 +454,7 @@ def stage_qa(p: dict[str, Any]) -> str | None:
                        production_id=p["id"])
             return "shots"                                  # redo only those shots, then re-edit
     hard = [c for c in checks if c["severity"] == "fail" and c["ok"] is False]
-    report = {"passed": not hard, "auto_publish_ok": False, "checks": checks,
+    report = {"passed": not hard, "auto_publish_ok": False, "checks": checks, "shot_counts": counts,
               "unverified": [c["name"] for c in checks if c["ok"] is None]}
     from ..film_studio import edit
     (edit.export_dir(p["id"]) / "quality_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))

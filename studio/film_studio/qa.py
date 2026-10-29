@@ -31,6 +31,74 @@ def _ff(args: list[str], timeout: int = 1800) -> str:
     return r.stderr
 
 
+STATIC_DIFF = 0.6          # mean frame-to-frame change (0-255 grey) below which a clip counts as nearly static
+DUP_DIFF = 0.15            # a frame this close to the previous one counts as a duplicate
+
+
+def motion_stats(path: str | Path, fps: int = 6) -> dict[str, Any]:
+    """Cheap local motion diagnostics: sample small grey frames and measure how much consecutive frames change.
+    A diagnostic signal only — it can show that a clip is (nearly) static, never that motion is realistic."""
+    import numpy as np
+    p = Path(path)
+    if not p.exists():
+        return {"checked": False, "reason": "no file"}
+    w, h = 64, 36
+    r = subprocess.run([config.FFMPEG, "-v", "error", "-i", str(p), "-vf", f"fps={fps},scale={w}:{h},format=gray",
+                        "-f", "rawvideo", "-"], capture_output=True, timeout=120)
+    n = len(r.stdout) // (w * h)
+    if r.returncode != 0 or n < 2:
+        return {"checked": False, "reason": "could not read frames", "frames": n}
+    frames = np.frombuffer(r.stdout[: n * w * h], dtype=np.uint8).reshape(n, h, w).astype(np.float32)
+    diffs = np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
+    mean, dup = float(diffs.mean()), float((diffs < DUP_DIFF).mean())
+    return {"checked": True, "frames": n, "mean_change": round(mean, 2), "max_change": round(float(diffs.max()), 2),
+            "duplicate_ratio": round(dup, 2), "static": mean < STATIC_DIFF or dup > 0.8,
+            "seconds": round(n / fps, 2)}
+
+
+def clip_checks(p: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Per-film counts of what every shot really is, plus a check of each real-video take's file and motion."""
+    ws, pid = p["workspace_id"], p["id"]
+    counts = {"shots": 0, "video": 0, "camera_move": 0, "static": 0, "failed": 0, "waiting": 0, "needs_review": 0,
+              "missing": 0}
+    bad, still_like, short = [], [], []
+    for sh in store.shots(pid, ws):
+        counts["shots"] += 1
+        if sh["status"] in ("waiting", "needs_review", "failed"):
+            counts[sh["status"]] += 1
+        if not sh.get("current_take"):
+            counts["missing"] += 1
+            continue
+        mt = sh["motion_type"]
+        counts["video" if mt in ("video", "dialogue_video", "lipsync_verified") else
+               "camera_move" if mt == "camera_move" else "static"] += 1
+        if mt not in ("video", "dialogue_video", "lipsync_verified"):
+            continue
+        take = next((t for t in store.takes(sh["id"], ws) if t["id"] == sh["current_take"]), None)
+        f = (take or {}).get("file_path") or ""
+        if not f or not Path(f).exists() or Path(f).stat().st_size < 1024:
+            bad.append(f"{sh['scene_no']}.{sh['shot_no']}")
+            continue
+        m = (json.loads((take or {}).get("settings") or "{}").get("motion_check") or {}) or motion_stats(f)
+        if m.get("static"):
+            still_like.append(f"{sh['scene_no']}.{sh['shot_no']}")
+        if m.get("checked") and m.get("seconds", 9) < 1.2:
+            short.append(f"{sh['scene_no']}.{sh['shot_no']}")
+    checks = [
+        _check("real-video files present", not bad, "every video take has its file" if not bad else
+               f"missing or empty: {', '.join(bad[:8])}"),
+        _check("real-video clips move", not still_like, f"{counts['video']} clips checked" if not still_like else
+               f"nearly static (review or retry): {', '.join(still_like[:8])}", kind="creative", severity="warn"),
+        _check("real-video clip length", not short, "no unexpectedly short clips" if not short else
+               f"very short: {', '.join(short[:8])}", severity="warn"),
+        _check("what the film contains", True,
+               f"{counts['video']} real video · {counts['camera_move']} still + camera move · {counts['static']} still"
+               f" · {counts['failed']} failed · {counts['waiting']} waiting · {counts['needs_review']} need review",
+               kind="creative", severity="info"),
+    ]
+    return checks, counts
+
+
 def _check(name: str, ok: bool | None, detail: str, kind: str = "technical", severity: str = "fail") -> dict[str, Any]:
     return {"name": name, "ok": ok, "detail": detail, "kind": kind,
             "severity": severity if ok is not None else "unverified"}
@@ -151,6 +219,8 @@ def regenerate(p: dict[str, Any], shot_ids: list[int]) -> dict[str, list[int]]:
             continue
         cont = dict(sh["continuity"])
         cont["qa_retry"] = n
+        if sh.get("current_take"):                       # recorded: which take (and what kind) QA set aside
+            cont["replaced_take"] = {"take": sh["current_take"], "motion_type": sh["motion_type"], "why": "off-script"}
         store.set_shot(sid, ws, current_take=None, status="queued", continuity=cont)
         retried.append(sid)
     return {"retried": retried, "escalated": escalated}

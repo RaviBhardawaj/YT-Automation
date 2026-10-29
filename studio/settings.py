@@ -104,7 +104,8 @@ DEFAULTS: dict[str, Any] = {
     "film_studio.paid_providers": [],
     "film_studio.zerogpu_space": "zerogpu-aoti/wan2-2-fp8da-aoti-faster",
     "film_studio.video_shots": "key",             # key = real video for the most important shots | all | none
-    "film_studio.video_clips_per_run": 4,         # free GPU quota is small: at most this many clips per day             # paid providers the owner allows (only when the budget is above ₹0)       # True = shots may start from proposed pictures without a review                   # auto = cinematic grade for real footage, bright for kids; off
+    "film_studio.video_clips_per_run": 4,         # real-video clips per DAY (free GPU quota is small; 0 = none)
+    "film_studio.zerogpu_quota_until": "",        # set when the Space says the free minutes are used up
     "brand": {
         "channel_name": "",
         "primary": "#FFD23F",
