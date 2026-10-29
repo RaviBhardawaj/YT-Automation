@@ -36,7 +36,20 @@ def plan_for(channel_id: int, request: str, idea: dict[str, Any] | None = None, 
     return plan
 
 
-def create(channel_id: int, request: str = "", *, idea_id: int | None = None, fmt: str | None = None,
+USER_PRIORITY = 10          # a video someone asked for now goes ahead of scheduled, automatic and resumed work
+
+
+def create(channel_id: int, request: str = "", **kw: Any) -> dict[str, Any]:
+    """Queue a job (see _create). A video started by a person is made before queued automatic work."""
+    res = _create(channel_id, request, **kw)
+    if not str(kw.get("actor", "user")).startswith("schedule") and res.get("production_ids"):
+        ids = res["production_ids"]
+        db.ex(f"UPDATE tasks SET priority=? WHERE type='production' AND status='pending' AND production_id IN "
+              f"({','.join('?' for _ in ids)})", (USER_PRIORITY, *ids))
+    return res
+
+
+def _create(channel_id: int, request: str = "", *, idea_id: int | None = None, fmt: str | None = None,
            actor: str = "user", scheduled_for: str | None = None, no_upload: bool = False,
            ai_video: bool = False, use_cast: bool | None = None, voice_id: int | str | None = None) -> dict[str, Any]:
     """Queue a job. Returns {"production_ids": [...]} or {"task_id": n} for the NIFTY daily episode."""

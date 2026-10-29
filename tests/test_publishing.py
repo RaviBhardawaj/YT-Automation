@@ -134,6 +134,19 @@ class PublishingTests(unittest.TestCase):
         self.assertEqual(db.q1("SELECT status FROM tasks WHERE id=?", (tid,))["status"], "pending")
 
 
+    def test_a_video_someone_asks_for_goes_ahead_of_scheduled_work(self):
+        cid = channels.create({"name": "Queue order", "workflow": "factual", "niche": "space"}, 1)
+        sched = jobs.create(cid, "A 2 minute video about Mars dust storms", actor="schedule")["production_ids"][0]
+        mine = jobs.create(cid, "A 2 minute video about how rockets land", actor="user")["production_ids"][0]
+        pri = lambda pid: db.q1("SELECT priority FROM tasks WHERE production_id=? AND type='production'",  # noqa: E731
+                                (pid,))["priority"]
+        self.assertEqual(pri(mine), jobs.USER_PRIORITY)
+        self.assertEqual(pri(sched), 0)
+        nxt = db.q1("SELECT production_id FROM tasks WHERE status='pending' AND lane='media' AND production_id IN "
+                    "(?, ?) ORDER BY priority DESC, id LIMIT 1", (sched, mine))["production_id"]
+        self.assertEqual(nxt, mine)                     # queued after the scheduled one, made first
+
+
 class FinanceRuleScopeTests(unittest.TestCase):
     def test_finance_wording_rule_only_for_finance_videos(self):
         from studio import pipeline
