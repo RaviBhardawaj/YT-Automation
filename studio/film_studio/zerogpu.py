@@ -60,7 +60,9 @@ def _client() -> httpx.Client:
 
 
 def _quota_text(msg: str) -> bool:
-    return any(w in (msg or "").lower() for w in ("quota", "exceeded", "gpu task aborted", "zerogpu"))
+    # an empty error ("null") is how a Space reports a spent GPU allowance
+    return (msg or "").strip().lower() in ("null", "none", "") or \
+        any(w in (msg or "").lower() for w in ("quota", "exceeded", "gpu task aborted", "zerogpu"))
 
 
 def _record(ok: bool, error: str = "", seconds: float = 0.0) -> None:

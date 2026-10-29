@@ -270,6 +270,10 @@ def generate_cloudflare(prompt: str, fmt: str, out: Path, look: str = "real", *,
         raise net.FetchError("offline")
     if not cloudflare_ready():
         raise net.FetchError("Cloudflare Workers AI is not set up (token + account ID)")
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+    if db.q1("SELECT 1 FROM ai_usage WHERE provider='cloudflare' AND ok=0 AND error LIKE 'HTTP 429%' AND created_at>=?",
+             (day,)):                                   # Cloudflare already said no today: don't ask again until reset
+        raise AllowanceUsedUp("today's free Cloudflare image allowance is used up")
     w, h = size or ((768, 1344) if fmt == "short" else (1344, 768))
     refs = [r for r in (refs or []) if r and Path(r).exists()][:4]
     neurons = cf_neurons(w, h, len(refs))

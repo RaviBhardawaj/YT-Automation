@@ -27,9 +27,13 @@ def _cf_health() -> tuple[bool, str]:
     from ..media import visuals
     if not visuals.cloudflare_ready():
         return False, "add the Cloudflare token (Credentials) and account ID (Visuals)"
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+    if db.q1("SELECT 1 FROM ai_usage WHERE provider='cloudflare' AND ok=0 AND error LIKE 'HTTP 429%' AND created_at>=?",
+             (day,)):                                   # Cloudflare itself said today's allowance is spent
+        return False, "today's free allowance is used up — resets 05:30 IST"
     used = visuals.cloudflare_used_today()
     left = visuals.CF_FREE_NEURONS - used
-    return left > 300, f"{max(0, left):,} of {visuals.CF_FREE_NEURONS:,} free neurons left today"
+    return left > 300, f"about {max(0, left):,} of {visuals.CF_FREE_NEURONS:,} free neurons left today"
 
 
 def _hf_flux_health() -> tuple[bool, str]:
