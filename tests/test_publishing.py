@@ -109,6 +109,21 @@ class PublishingTests(unittest.TestCase):
         self.assertEqual(len(mine()), 1)                                # a new limit event shows again
 
 
+    def test_pausing_a_running_video_stops_it_before_the_next_step_and_resume_continues(self):
+        from studio import jobs, pipeline, tasks  # noqa: F401 - tasks registers the worker handlers
+        cid = channels.create({"name": "Pausable"}, 1)
+        pid = prod(cid, status="paused", stage="script", kind="general")       # paused while a step was running
+        tid = worker.enqueue("production", {"production_id": pid}, production_id=pid, max_attempts=3)
+        task = db.q1("SELECT * FROM tasks WHERE id=?", (tid,))
+        task["payload"] = {"production_id": pid}
+        with mock.patch.dict(pipeline.STAGE_FN, {"script": lambda p: self.fail("a paused video must not continue")}):
+            worker._run(task)
+        self.assertEqual(db.q1("SELECT status FROM tasks WHERE id=?", (tid,))["status"], "paused")
+        self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "paused")
+        self.assertEqual(jobs.resume(pid), 1)                                 # Resume picks it up again
+        self.assertEqual(db.q1("SELECT status FROM tasks WHERE id=?", (tid,))["status"], "pending")
+
+
 class FinanceRuleScopeTests(unittest.TestCase):
     def test_finance_wording_rule_only_for_finance_videos(self):
         from studio import pipeline

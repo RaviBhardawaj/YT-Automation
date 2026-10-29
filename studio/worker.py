@@ -106,6 +106,11 @@ def _run(task: dict[str, Any]) -> None:
         result = fn(task["payload"], task)
         _finish(task["id"], "done", result=db.dumps(result), last_error=None)
         log.info("task %s %s done in %.1fs", task["id"], task["type"], time.time() - started)
+    except pipeline.PausedByOwner as e:
+        _finish(task["id"], "paused", last_error=f"paused by user ({e})")
+        if pid:
+            pipeline.save(pid, status="paused")
+        logs.event("info", "worker", f"Paused: {e}", production_id=pid, task_id=task["id"])
     except ai.BudgetExceeded as e:
         _finish(task["id"], "paused", last_error=f"budget: {e}")
         if pid:

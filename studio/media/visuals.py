@@ -355,6 +355,16 @@ def local_flux_ready() -> bool:
     return hub.exists() and any(hub.glob("snapshots/*/*")) and not any(hub.glob("blobs/*.incomplete"))
 
 
+def _flux_env() -> dict[str, str]:
+    """Plain HTTP downloads (the Xet downloader ignores the IPv4-only fix and stalls on broken IPv6), and the owner's
+    free Hugging Face token when saved, for faster model downloads."""
+    import os
+    env = {**os.environ, "HF_HUB_DISABLE_XET": "1", "HF_HUB_DOWNLOAD_TIMEOUT": "60"}
+    if settings.has_secret("hf_token"):
+        env["HF_TOKEN"] = settings.secret("hf_token") or ""
+    return env
+
+
 def generate_local_flux(prompt: str, fmt: str, out: Path, look: str = "real", *,
                         size: tuple[int, int] | None = None) -> Candidate:
     """FLUX.2 klein 4B on this Mac — the free option that never runs out (slower: about a minute a picture)."""
@@ -370,7 +380,7 @@ def generate_local_flux(prompt: str, fmt: str, out: Path, look: str = "real", *,
         r = subprocess.run([str(local_flux_bin()), "--model", LOCAL_FLUX_MODEL, "--base-model", "flux2-klein-4b",
                             "--prompt", f"{prompt}. {LOOK_PROMPT.get(look, LOOK_PROMPT['real'])}"[:2000],
                             "--width", str(w), "--height", str(h), "--steps", "4", "--seed", str(seed),
-                            "--output", str(out)], capture_output=True, text=True, timeout=1800)
+                            "--output", str(out)], capture_output=True, text=True, timeout=1800, env=_flux_env())
     ok = r.returncode == 0 and out.exists()
     try:
         db.insert("ai_usage", {"provider": "local_flux", "model": "FLUX.2-klein-4B (4-bit, mflux)", "task": "scene_image",

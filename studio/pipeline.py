@@ -25,6 +25,10 @@ TERMINAL = ("awaiting_approval", "needs_attention", "needs_review", "failed", "r
 FINANCE_KINDS = ("nifty_pivot", "fib_lesson", "nifty_short")
 
 
+class PausedByOwner(Exception):
+    """The owner paused this video while one of its steps was running; the next step waits for Resume."""
+
+
 class NeedsAttention(Exception):
     """Stop without retrying; a human must look at this production."""
 
@@ -625,6 +629,8 @@ def _run_stages(pid: int, p: dict[str, Any]) -> dict[str, Any]:
         guard += 1
         if guard > 20:
             raise NeedsAttention("stage loop guard tripped")
+        if load(pid)["status"] == "paused":            # paused while a step ran: stop here, resume picks it up
+            raise PausedByOwner(f"paused before '{stage}'")
         if load(pid)["status"] == "rejected":          # rejected while running: stop, never overwrite the decision
             break
         save(pid, status=status[stage], stage=stage, error=None)
