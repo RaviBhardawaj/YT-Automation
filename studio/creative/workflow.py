@@ -299,7 +299,10 @@ def stage_animate(p: dict[str, Any]) -> None:
     else:
         if settings.get("visuals.story_backgrounds"):    # drawn story sets per scene, checked and auto-fixed
             from . import scene_art
-            n = scene_art.ensure(p["package"], workdir(p["id"]) / "sets")
+            ch = channels.get(p["channel_id"]) or {}
+            reuse = ch.get("status") not in (None, "hidden") and not plan_of(p).get("no_upload")
+            n = scene_art.ensure(p["package"], workdir(p["id"]) / "sets",
+                                 channel_id=ch["id"] if reuse else None, workspace_id=p.get("workspace_id"))
             pipeline.save(p["id"], package=p["package"])
             logs.event("info", "creative", f"Story backgrounds: {n} of {len(p['package']['scenes'])} scenes drawn",
                        production_id=p["id"])

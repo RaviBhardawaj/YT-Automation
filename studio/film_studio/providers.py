@@ -47,6 +47,15 @@ def _hf_flux_health() -> tuple[bool, str]:
     return True, f"ready · {who}"
 
 
+def _local_flux_health() -> tuple[bool, str]:
+    from ..media import visuals
+    if not visuals.local_flux_installed():
+        return False, "not installed — Computer & setup (free, ~4.6 GB)"
+    if not visuals.local_flux_ready():
+        return False, "installed — model downloads on first use (~4.6 GB)"
+    return True, "ready on this Mac · never runs out (about a minute a picture)"
+
+
 def _local_sd_health() -> tuple[bool, str]:
     import httpx
     url = (settings.get("visuals.local_sd_url") or "").rstrip("/")
@@ -102,13 +111,18 @@ REGISTRY: list[dict[str, Any]] = [
      "allowance": "about 10,000 neurons a day (~60–90 images), resets 00:00 UTC", "checked": CHECKED,
      "source": "Cloudflare Workers AI free plan", "licence": "Apache-2.0", "commercial": True,
      "hardware": "none (cloud)", "limits": "about 1 minute per image; 4 reference pictures max",
-     "est_cost_usd": 0.0, "fallback": ["hf_flux", "local_sd"], "health": _cf_health},
+     "est_cost_usd": 0.0, "fallback": ["hf_flux", "local_flux"], "health": _cf_health},
     {"id": "hf_flux", "name": "FLUX.1 schnell — Hugging Face ZeroGPU Space", "caps": ["image"],
      "where": "remote", "model": "black-forest-labs/FLUX.1-schnell (official Space)", "cost": "free_allowance",
      "allowance": "free ZeroGPU minutes (more with a free Hugging Face token); about 8 s per image",
      "checked": CHECKED, "source": "Black Forest Labs' public Space", "licence": "Apache-2.0", "commercial": True,
      "hardware": "none (cloud)", "limits": "no reference pictures — faces follow the written description only",
-     "est_cost_usd": 0.0, "fallback": ["local_sd"], "health": _hf_flux_health},
+     "est_cost_usd": 0.0, "fallback": ["local_flux"], "health": _hf_flux_health},
+    {"id": "local_flux", "name": "FLUX.2 klein 4B on this Mac (mflux)", "caps": ["image"], "where": "local",
+     "model": "FLUX.2-klein-4B, 4-bit (MLX)", "cost": "free_local", "last_resort": True, "checked": CHECKED,
+     "source": "Black Forest Labs weights via mflux (MIT)", "licence": "Apache-2.0", "commercial": True,
+     "hardware": "Apple Silicon, 16 GB memory", "limits": "slower: about a minute a picture; one at a time",
+     "est_cost_usd": 0.0, "fallback": [], "health": _local_flux_health},
     {"id": "local_sd", "name": "Local Stable Diffusion (A1111/Forge/Draw Things API)", "caps": ["image"],
      "where": "local", "model": "your local checkpoint", "cost": "free_local", "checked": CHECKED,
      "licence": "depends on the checkpoint you load", "commercial": None, "hardware": "Apple Silicon / GPU",
@@ -217,7 +231,7 @@ def choose(cap: str) -> dict[str, Any]:
         raise ValueError(f"unknown capability {cap!r}")
     rank = {"free_local": 0, "free_allowance": 1, "paid": 2}
     tried = []
-    for p in sorted((p for p in REGISTRY if cap in p["caps"]), key=lambda p: rank[p["cost"]]):
+    for p in sorted((p for p in REGISTRY if cap in p["caps"]), key=lambda p: rank[p["cost"]] + (1.5 if p.get("last_resort") else 0)):
         if p["cost"] == "paid" and not paid_allowed(p["id"]):
             tried.append(f"{p['name']}: paid — off at ₹{budget_inr():.0f}")
             continue
@@ -241,7 +255,7 @@ def candidates(cap: str) -> list[dict[str, Any]]:
     """Every provider that can do `cap` right now, free-first, without paid ones at ₹0 — for trying in turn."""
     rank = {"free_local": 0, "free_allowance": 1, "paid": 2}
     out = []
-    for p in sorted((p for p in REGISTRY if cap in p["caps"]), key=lambda p: rank[p["cost"]]):
+    for p in sorted((p for p in REGISTRY if cap in p["caps"]), key=lambda p: rank[p["cost"]] + (1.5 if p.get("last_resort") else 0)):
         if (p["cost"] in FREE or paid_allowed(p["id"])) and health(p["id"])["available"]:
             out.append({"provider": p["id"], "name": p["name"], "cost": p["cost"], "motion_type": _motion(cap)})
     return out

@@ -30,6 +30,12 @@ def _whisper_download(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     return system_setup.install_whisper()
 
 
+@worker.handler("local_flux_setup")
+def _local_flux_setup(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from . import system_setup
+    return system_setup.install_local_flux()
+
+
 @worker.handler("voiceclone_setup")
 def _voiceclone_setup(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     from . import system_setup

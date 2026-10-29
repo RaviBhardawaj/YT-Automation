@@ -86,6 +86,42 @@ class FixLoopTests(unittest.TestCase):
         self.assertNotIn("bg_image", pkg["scenes"][2])           # another place: keeps the built-in set
 
 
+class LibraryTests(unittest.TestCase):
+    def test_plain_scenes_reuse_the_channels_set_and_special_ones_draw_from_it(self):
+        drawn = []
+
+        def draw(want, target, ref):
+            drawn.append((want, ref))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (64, 36)).save(target)
+            return {"by": "cloudflare", "check": {"score": 8}, "attempts": 1, "prompt": want}
+        sets = lambda pkg: {0: {"text": "room", "special": False, "place": "the family living room"},
+                            1: {"text": "room with a glowing magic lamp", "special": True, "place": "living room"},
+                            2: {"text": "room", "special": False, "place": "the family living room"}}
+        scenes = lambda: {"title": "t", "scenes": [{"location": "home", "time": "day"} for _ in range(3)]}
+        with mock.patch.object(scene_art, "draw_checked", draw), mock.patch.object(scene_art, "design", sets):
+            first = scenes()
+            scene_art.ensure(first, Path(tempfile.mkdtemp()), channel_id=4242, workspace_id=1)
+            self.assertEqual(len(drawn), 2)                           # the room once + the magic-lamp scene
+            self.assertEqual(first["scenes"][0]["bg_image"], first["scenes"][2]["bg_image"])
+            self.assertEqual(str(drawn[1][1]), first["scenes"][0]["bg_image"])   # special scene drawn from the room
+            second = scenes()                                         # the next episode
+            scene_art.ensure(second, Path(tempfile.mkdtemp()), channel_id=4242, workspace_id=1)
+        self.assertEqual(len(drawn), 3)                               # only its special scene is new
+        self.assertEqual(second["scenes"][0]["bg_image"], first["scenes"][0]["bg_image"])
+        self.assertIn("set library", second["scenes"][0]["bg_by"])
+        self.assertEqual(db.q1("SELECT uses FROM set_library WHERE channel_id=4242")["uses"], 4)
+
+    def test_without_a_channel_nothing_is_kept_in_a_library(self):
+        def draw(want, target, ref):
+            Image.new("RGB", (64, 36)).save(target)
+            return {"by": "hf_flux", "check": None, "attempts": 1, "prompt": want}
+        with mock.patch.object(scene_art, "draw_checked", draw), \
+                mock.patch.object(scene_art, "design", lambda pkg: {0: {"text": "x", "special": False, "place": "p"}}):
+            scene_art.ensure({"title": "t", "scenes": [{"location": "park", "time": "day"}]}, Path(tempfile.mkdtemp()))
+        self.assertIsNone(db.q1("SELECT 1 FROM set_library WHERE location='park'"))
+
+
 class RenderTests(unittest.TestCase):
     def test_drawn_set_is_used_and_the_centre_stays_clear(self):
         f = Path(tempfile.mkdtemp()) / "bg.png"

@@ -202,6 +202,8 @@ def _gen(prompt: str, out: Path, *, refs: list[Path] | None = None, size: tuple[
                 visuals.generate_cloudflare(prompt, "long", out, look="real", refs=refs, size=size)
             elif pick["provider"] == "hf_flux":
                 visuals.generate_hf_flux(prompt, "long", out, look="real", size=size)
+            elif pick["provider"] == "local_flux":
+                visuals.generate_local_flux(prompt, "long", out, look="real", size=size)
             elif pick["provider"] == "local_sd":
                 visuals.generate_local_sd(f"{prompt}. {visuals.LOOK_PROMPT['real']}", size[0], size[1], out)
             else:

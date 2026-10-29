@@ -125,6 +125,30 @@ class FilmImageRoutingTests(unittest.TestCase):
         self.assertTrue(pv.health("hf_flux")["available"])
 
 
+    def test_local_flux_is_the_never_stop_floor_after_the_online_allowances(self):
+        with healthy("cloudflare_flux", "hf_flux", "local_flux"):
+            self.assertEqual([p["provider"] for p in pv.candidates("image")],
+                             ["cloudflare_flux", "hf_flux", "local_flux"])
+        out = Path(tempfile.mkdtemp()) / "c.png"
+        calls = []
+
+        def spent(*a, **k):
+            calls.append("spent")
+            raise visuals.AllowanceUsedUp("used up")
+
+        def local(prompt, fmt, path, look="real", **k):
+            calls.append("local")
+            path.write_bytes(b"png")
+        with healthy("cloudflare_flux", "hf_flux", "local_flux"), \
+                mock.patch.object(visuals, "generate_cloudflare", spent), \
+                mock.patch.object(visuals, "generate_hf_flux", spent), \
+                mock.patch.object(visuals, "generate_local_flux", local):
+            self.assertEqual(film._gen("x", out), out)
+        self.assertEqual(calls, ["spent", "spent", "local"])
+        order = visuals.provider_order({"visual_type": "photo"})
+        self.assertEqual(order.index("local_flux"), order.index("hf_flux") + 1)
+
+
 class SettingsPageTests(unittest.TestCase):
     def test_film_settings_tab_lists_providers(self):
         from fastapi.testclient import TestClient

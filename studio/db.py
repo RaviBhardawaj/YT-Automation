@@ -646,6 +646,26 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_trend_scans_channel ON trend_scans(channel_id, id);
     """,
+    # v19 — reusable drawn sets per channel (the family's living room, the kitchen …) so plain scenes in later
+    # episodes reuse them instead of spending the free image allowance again. Additive only.
+    """
+    CREATE TABLE set_library (
+        id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL,
+        workspace_id INTEGER NOT NULL,
+        location TEXT NOT NULL,
+        time TEXT NOT NULL DEFAULT 'day',
+        description TEXT NOT NULL DEFAULT '',
+        file_path TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT '',
+        score INTEGER,
+        uses INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'active',        -- active | retired (owner removed it)
+        created_at TEXT NOT NULL,
+        last_used_at TEXT
+    );
+    CREATE INDEX idx_set_library_channel ON set_library(channel_id, location, time, status);
+    """,
 ]
 
 

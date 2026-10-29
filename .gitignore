@@ -36,3 +36,5 @@ secrets/
 # Machine-specific online settings (written by scripts/go_public.sh)
 deploy/public.env
 .venv-voiceclone/
+
+.venv-flux/

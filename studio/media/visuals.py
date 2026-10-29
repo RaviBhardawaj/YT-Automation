@@ -332,6 +332,62 @@ def trim_bars(im: Image.Image) -> Image.Image:
     return ImageOps.fit(im.crop((left, top, right, bottom)), (w, h), Image.LANCZOS)
 
 
+# ------------------------------------------------------------------ local FLUX.2 klein (this Mac, never runs out)
+
+LOCAL_FLUX_MODEL = "Runpod/FLUX.2-klein-4B-mflux-4bit"     # Apache-2.0, ~4.6 GB, Apple Silicon (MLX via mflux, MIT)
+_local_lock = __import__("threading").Lock()                # one picture at a time: it needs most of 16 GB memory
+
+
+def local_flux_bin() -> Path:
+    return config.ROOT / ".venv-flux" / "bin" / "mflux-generate-flux2"
+
+
+def local_flux_installed() -> bool:
+    return local_flux_bin().exists()
+
+
+def local_flux_ready() -> bool:
+    """Installed and the model already downloaded (so a picture never waits for a 4.6 GB download)."""
+    if not local_flux_installed():
+        return False
+    hub = Path.home() / ".cache" / "huggingface" / "hub" / ("models--" + LOCAL_FLUX_MODEL.replace("/", "--"))
+    return any(hub.glob("snapshots/*/*")) if hub.exists() else False
+
+
+def generate_local_flux(prompt: str, fmt: str, out: Path, look: str = "real", *,
+                        size: tuple[int, int] | None = None) -> Candidate:
+    """FLUX.2 klein 4B on this Mac — the free option that never runs out (slower: about a minute a picture)."""
+    if offline():
+        raise net.FetchError("offline")
+    if not local_flux_installed():
+        raise net.FetchError("local FLUX is not installed (Computer & setup)")
+    w, h = size or ((768, 1344) if fmt == "short" else (1344, 768))
+    w, h = w // 16 * 16, h // 16 * 16
+    seed = int(hashlib.sha1(out.name.encode() + prompt.encode()).hexdigest()[:7], 16)
+    started = time.time()
+    with _local_lock:
+        r = subprocess.run([str(local_flux_bin()), "--model", LOCAL_FLUX_MODEL, "--base-model", "flux2-klein-4b",
+                            "--prompt", f"{prompt}. {LOOK_PROMPT.get(look, LOOK_PROMPT['real'])}"[:2000],
+                            "--width", str(w), "--height", str(h), "--steps", "4", "--seed", str(seed),
+                            "--output", str(out)], capture_output=True, text=True, timeout=1800)
+    ok = r.returncode == 0 and out.exists()
+    try:
+        db.insert("ai_usage", {"provider": "local_flux", "model": "FLUX.2-klein-4B (4-bit, mflux)", "task": "scene_image",
+                               "input_tokens": 0, "output_tokens": int(time.time() - started), "cost_usd": 0.0,
+                               "ok": int(ok), "error": "" if ok else (r.stderr or r.stdout)[-250:],
+                               "created_at": db.iso()})
+    except Exception:  # usage logging must never stop a video
+        pass
+    if not ok:
+        raise net.FetchError(f"local FLUX failed: {(r.stderr or r.stdout).strip()[-200:]}")
+    with Image.open(out) as im:
+        im = trim_bars(im.convert("RGB"))
+        im.save(out, "PNG")
+        iw, ih = im.size
+    return Candidate("local_flux", out.stem, "image", "", "", iw, ih, "AI-generated (FLUX.2 klein, on this computer)",
+                     "", "AI image", attribution="", extra={"synthetic": True})
+
+
 HF_FLUX_SPACE = "https://black-forest-labs-flux-1-schnell.hf.space"     # Black Forest Labs' own FLUX.1 [schnell] Space
 
 
@@ -454,8 +510,8 @@ def fetch(c: Candidate) -> Path:
 
 # ------------------------------------------------------------------ per-scene selection
 
-GENERATORS = ("cloudflare_image", "hf_flux", "local_sd", "gemini_image")
-FREE_GENERATORS = ("cloudflare_image", "hf_flux")   # free allowances, tried in this order before local/paid ones
+GENERATORS = ("cloudflare_image", "hf_flux", "local_flux", "local_sd", "gemini_image")
+FREE_GENERATORS = ("cloudflare_image", "hf_flux", "local_flux")   # free allowances, tried in this order before local/paid ones
 PHOTO_ONLY = ("pexels", "openverse", "wikimedia")       # real photos/footage only — never used for kids' cartoon style
 
 
@@ -612,6 +668,8 @@ def choose(scene: dict[str, Any], idx: int, fmt: str, used: set[str], out_dir: P
                         c = generate_cloudflare(prompt, fmt, target, look)
                     elif prov == "hf_flux":
                         c = generate_hf_flux(prompt, fmt, target, look)
+                    elif prov == "local_flux":
+                        c = generate_local_flux(prompt, fmt, target, look)
                     elif prov == "local_sd":
                         c = generate_local_sd(f"{prompt}. {LOOK_PROMPT.get(look, '')}", w, h, target)
                     else:
@@ -713,7 +771,8 @@ def credits(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for a in assets:
-        if a["provider"] in ("procedural", "local_sd", "gemini_image", "gemini_video", "cloudflare_image", "hf_flux") \
+        if a["provider"] in ("procedural", "local_sd", "gemini_image", "gemini_video", "cloudflare_image", "hf_flux",
+                             "local_flux") \
                 or not a.get("license"):
             continue
         lic = a["license"]

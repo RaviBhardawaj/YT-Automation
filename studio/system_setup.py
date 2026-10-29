@@ -96,6 +96,14 @@ def components() -> list[dict[str, Any]]:
          "how": None if py312 else _pkg_hint(m, "brew install python@3.12", "winget install Python.Python.3.12",
                                              "sudo apt install python3.12 python3.12-venv"),
          "blocked": None if m["disk_free_gb"] > 10 else f"needs ~10 GB free disk (you have {m['disk_free_gb']} GB)"},
+        {"id": "local_flux", "group": "Pictures", "name": "FLUX.2 klein on this computer (free, never runs out)",
+         "ok": _local_flux_ok(), "free": True,
+         "why": "Makes scene pictures on this Mac when the free online allowances are used up, so videos never "
+                "wait. About a minute a picture." + ("" if m.get("os") == "macOS" and m["accelerated"] else
+                                                     " Needs an Apple Silicon Mac."),
+         "install": "local_flux_setup" if (py312 and m.get("os") == "macOS") else None, "size": "≈ 5 GB",
+         "how": None if py312 else _pkg_hint(m, "brew install python@3.12", "-", "-"),
+         "blocked": None if m["disk_free_gb"] > 8 else f"needs ~8 GB free disk (you have {m['disk_free_gb']} GB)"},
         {"id": "ollama_local", "group": "AI (optional)", "name": "Ollama on this computer (free, private AI)",
          "ok": bool(shutil.which("ollama")) and _ollama_ready(), "free": True,
          "why": "Runs writing models locally at no cost. Works best on Apple Silicon or an NVIDIA/AMD GPU with 16 GB+ memory." + slow,
@@ -131,6 +139,47 @@ def summary() -> dict[str, Any]:
 
 # ------------------------------------------------------------------ installers (run as background tasks)
 
+def _local_flux_ok() -> bool:
+    from .media import visuals
+    return visuals.local_flux_ready()
+
+
+IPV4_ONLY = ("# Networks that advertise IPv6 they can't carry stall big downloads: resolve to IPv4 only.\n"
+             "import socket\n_orig = socket.getaddrinfo\n\n\n"
+             "def _ipv4_only(host, port, family=0, *args, **kwargs):\n"
+             "    return _orig(host, port, socket.AF_INET if family in (0, socket.AF_UNSPEC) else family, *args, **kwargs)\n\n\n"
+             "socket.getaddrinfo = _ipv4_only\n")
+
+
+def _ipv4_only(venv: Path) -> None:
+    """Loaded at start-up through a .pth file (a sitecustomize.py would lose to Homebrew Python's own)."""
+    for sp in venv.glob("lib/python3*/site-packages"):
+        (sp / "ipv4only.py").write_text(IPV4_ONLY)
+        (sp / "zz_ipv4only.pth").write_text("import ipv4only\n")
+
+
+def install_local_flux() -> dict[str, Any]:
+    """Separate Python 3.12 environment with mflux (MLX), then one small picture to download the 4-bit model."""
+    from .media import visuals
+    py = shutil.which("python3.12") or "/opt/homebrew/bin/python3.12"
+    venv = config.ROOT / ".venv-flux"
+    steps = []
+    if not visuals.local_flux_installed():
+        subprocess.run([py, "-m", "venv", str(venv)], check=True, timeout=600)
+        pip = str(venv / "bin" / "pip")
+        subprocess.run([pip, "install", "-q", "--upgrade", "pip"], check=True, timeout=1200)
+        subprocess.run([pip, "install", "-q", "mflux"], check=True, timeout=7200)
+        _ipv4_only(venv)
+        steps.append("software installed")
+    if not visuals.local_flux_ready():
+        import tempfile
+        visuals.generate_local_flux("a simple empty room", "long", Path(tempfile.mkdtemp()) / "warmup.png",
+                                    size=(512, 288))
+        steps.append("model downloaded")
+    logs.event("info", "setup", "Local FLUX ready: " + ", ".join(steps or ["already installed"]))
+    return {"steps": steps}
+
+
 def install_whisper() -> dict[str, Any]:
     from .editing import transcribe
     transcribe._load()
@@ -156,9 +205,10 @@ def install_voiceclone() -> dict[str, Any]:
     return {"steps": steps}
 
 
-INSTALLERS = {"whisper_download": install_whisper, "voiceclone_setup": install_voiceclone}
+INSTALLERS = {"whisper_download": install_whisper, "voiceclone_setup": install_voiceclone,
+              "local_flux_setup": install_local_flux}
 
 
 def running() -> set[str]:
     return {r["type"] for r in db.q("SELECT type FROM tasks WHERE status IN ('pending','running') AND type IN "
-                                    "('kokoro_download','whisper_download','voiceclone_setup')")}
+                                    "('kokoro_download','whisper_download','voiceclone_setup','local_flux_setup')")}
