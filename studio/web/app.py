@@ -1177,7 +1177,7 @@ async def api_channel_trends(request: Request, cid: int):
     from ..creative import trends
     ch = chmod.get(cid)
     if not trends.eligible(ch):
-        return bad("trend research is for active story channels")
+        return bad("trend research is for active channels (not the NIFTY data channel)")
     if not settings.has_secret("youtube_api_key"):
         return bad("Add a free YouTube Data API key under Settings → Credentials first.")
     tid = worker.enqueue("trend_research", {"channel_id": cid}, dedupe=True, max_attempts=2)

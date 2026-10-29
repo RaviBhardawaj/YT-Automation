@@ -500,6 +500,28 @@ def _is_finance_video(p: dict[str, Any]) -> bool:
             or any(w in niche for w in ("stock", "market", "trading", "invest", "nifty", "finance", "crypto")))
 
 
+def _viral(p: dict[str, Any], pkg: dict[str, Any], tl: dict[str, Any], result: dict[str, Any]) -> None:
+    """Viral engine for researched videos: the best of 5 scored titles (not on finance videos, whose wording is
+    held to the compliance rules), then the viral checks — warnings that never block the video."""
+    from .creative import viral
+    from . import channels
+    ch = channels.get(p.get("channel_id")) or {}
+    kids = bool(ch.get("made_for_kids"))
+    if not _is_finance_video(p) and not pkg.get("title_variants") and not p["test_mode"]:
+        summary = f"{pkg.get('hook', '')} " + " ".join(sc.get("narration", "") for sc in pkg.get("scenes", [])[:6])
+        best = viral.titles(summary, pkg.get("title") or p["title"], p.get("language") or "Hindi", kids=kids,
+                            fmt=p["format"])
+        if best["variants"] and best["title"] != pkg.get("title"):
+            pkg["title_variants"], pkg["title_original"] = best["variants"], pkg.get("title")
+            pkg["title"] = best["title"]
+            save(p["id"], package=pkg, title=best["title"])
+    first = min((float(x.get("start", 0)) for x in (tl.get("voice", {}) or {}).get("segments", [])), default=0.0)
+    result["checks"] += viral.check(kind="researched", fmt=p["format"], seconds=float(result.get("duration") or 0),
+                                    title=pkg.get("title") or p["title"] or "",
+                                    thumb_text=(pkg.get("thumbnail") or {}).get("text", "") if isinstance(
+                                        pkg.get("thumbnail"), dict) else "", opening_delay=first, kids=kids)
+
+
 def stage_qa(p: dict[str, Any]) -> str | None:
     pkg, tl = p["package"], p["timeline"]
     result = qa.run(p, pkg, tl, assets_for(p["id"]), tl.get("thumbnail"), tl.get("voice", {}),
@@ -519,6 +541,7 @@ def stage_qa(p: dict[str, Any]) -> str | None:
                                  "; ".join(f"{f['why']}: '{f['match']}'" for f in found[:5])
                                  + " — review the wording before publishing; it won't be auto-published"})
         result["auto_publish_ok"] = result["auto_publish_ok"] and not found
+    _viral(p, pkg, tl, result)
     save(p["id"], qa=result)
     from .youtube import oauth
     if p["test_mode"]:

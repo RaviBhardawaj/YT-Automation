@@ -87,12 +87,17 @@ class TrendTests(unittest.TestCase):
         self.assertEqual(len(res["created"]), 1)
         self.assertIn("MADE-FOR-KIDS", seen["focus"])
 
-    def test_only_active_story_channels(self):
-        factual = channels.create({"name": "Facts", "workflow": "factual", "niche": "science"}, 1)
-        self.assertFalse(trends.eligible(channels.get(factual)))
+    def test_every_active_channel_except_the_nifty_data_channel(self):
+        factual = channels.create({"name": "Facts", "workflow": "factual", "niche": "space science"}, 1)
+        nifty = channels.create({"name": "Levels", "workflow": "nifty_daily", "niche": "nifty"}, 1)
+        self.assertTrue(trends.eligible(channels.get(factual)))
         self.assertTrue(trends.eligible(channels.get(self.ch)))
+        self.assertFalse(trends.eligible(channels.get(nifty)))
         with self.assertRaises(ValueError):
-            trends.scan(factual)
+            trends.scan(nifty)
+        q = trends._queries(channels.get(factual))                 # its own niche, not kids' cartoon searches
+        self.assertIn("space science", q["long"])
+        self.assertNotIn("hindi cartoon kahani", q["long"])
 
 
 class TrendPageTests(unittest.TestCase):

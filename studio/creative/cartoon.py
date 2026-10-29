@@ -549,6 +549,9 @@ def _grade_mask(w: int, h: int, mood: str) -> tuple[Image.Image, Image.Image]:
     return Image.new("RGB", (w, h), (6, 10, 28)), Image.fromarray(alpha.astype("uint8"), "L")
 
 
+PUNCH = 1.5           # seconds between framing cuts in vertical Shorts
+
+
 def render_scene(scene: dict[str, Any], cast: dict[str, dict[str, Any]], lines: list[dict[str, Any]], fmt: str,
                  enc: Encoder, total: float, *, hook: str = "") -> None:
     """Animate one scene. lines: [{speaker, text, emotion, start, end, env}] with times relative to the scene."""
@@ -590,6 +593,16 @@ def render_scene(scene: dict[str, Any], cast: dict[str, dict[str, Any]], lines: 
                            {"t": t, "amp": amp, "talking": talking, "emotion": emo, "blink": blink, "look": look})
         if grade is not None:                            # whole frame, characters included; subtitles stay clear
             img = Image.composite(grade[0], img.convert("RGB"), grade[1])
+        # camera (before the subtitles, so a close framing never crops them): eases toward the speaker during each
+        # line; in vertical Shorts it also cuts between a wide and a close framing every PUNCH seconds
+        zoom, cx = 1.0, xs.get(speaker, w / 2) if speaker else w / 2
+        if cur and speaker:
+            p = min(1.0, (t - cur["start"]) / 1.2)
+            zoom = 1.0 + 0.07 * (p * p * (3 - 2 * p))
+        if portrait and int(t / PUNCH) % 2 == 1:
+            zoom = max(zoom, 1.16)
+        if zoom > 1.001:
+            img = _camera(img.convert("RGB"), zoom, cx)
         if cur:
             colour = cast.get(cur["speaker"], {}).get("colour") or (255, 214, 0)
             name = cast.get(cur["speaker"], {}).get("name", "")
@@ -600,11 +613,6 @@ def render_scene(scene: dict[str, Any], cast: dict[str, dict[str, Any]], lines: 
             top = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             top.alpha_composite(hook_layer.transform((w, h), Image.AFFINE, (1, 0, 0, 0, 1, int(h * 0.55) if portrait else int(h * 0.7))))
             img.alpha_composite(top)
-        # camera eases toward the speaker during each line
-        if cur and speaker:
-            p = min(1.0, (t - cur["start"]) / 1.2)
-            zoom = 1.0 + 0.07 * (p * p * (3 - 2 * p))
-            img = _camera(img.convert("RGB"), zoom, xs.get(speaker, w / 2))
         enc.write(img)
 
 
@@ -643,14 +651,25 @@ def thumbnail(cast: list[dict[str, Any]], title: str, scene: dict[str, Any], out
     img = backdrop(scene, w, h)
     emos = ["surprised", "laugh", "shout", "happy"]
     xs = [w * 0.68, w * 0.88, w * 0.5][: max(1, min(3, len(cast)))]
-    for i, (c, x) in enumerate(zip(cast[:3], xs)):
+    # a dark band behind the words: readable as a tiny phone thumbnail on any background
+    band = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(band).rectangle([0, 0, int(w * 0.6), h], fill=150)
+    band = band.filter(ImageFilter.GaussianBlur(60))
+    img = Image.composite(Image.new("RGB", (w, h), (10, 10, 20)), img.convert("RGB"), band)
+    for i, (c, x) in enumerate(zip(cast[:3], xs)):          # characters stay in front of the band
         draw_character(img, c["design"], x, h * 1.02, h * 0.95, {"t": 0.3 * i, "emotion": emos[i % 4], "talking": True, "amp": 0.8})
     d = ImageDraw.Draw(img)
-    f = graphics.font_for(title, "heavy", 84)
-    lines = graphics.wrap(title, f, int(w * 0.52), d)[:3]
-    y = 60
-    for ln in lines:
-        d.text((40, y), ln, font=f, fill=(255, 230, 40), stroke_width=7, stroke_fill=(0, 0, 0))
-        y += 104
-    img.save(out, "JPEG", quality=90)
+    size = 112
+    while True:
+        f = graphics.font_for(title, "heavy", size)
+        lines = graphics.wrap(title, f, int(w * 0.5), d)
+        if len(lines) <= 3 or size <= 70:
+            break
+        size -= 8
+    y = max(40, (h - len(lines[:3]) * size * 1.18) / 2 - 60)
+    for i, ln in enumerate(lines[:3]):
+        d.text((44, y), ln, font=f, fill=(255, 230, 40) if i % 2 == 0 else (255, 255, 255), stroke_width=9,
+               stroke_fill=(0, 0, 0))
+        y += size * 1.18
+    img.save(out, "JPEG", quality=92)
     return out

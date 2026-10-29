@@ -65,8 +65,13 @@ SYSTEM = ("You are a children's YouTube content strategist. You study what is po
           "titles, catchphrases or thumbnails. Output exactly one JSON object matching the schema, no commentary.")
 
 
+STORY = "animated_story"
+
+
 def eligible(ch: dict[str, Any] | None) -> bool:
-    return bool(ch) and ch["status"] == "active" and ch["workflow"] == "animated_story"
+    """Every active channel learns from what is popular in its niche — except the NIFTY channel, whose videos come
+    from verified market data only, and the hidden holder for stand-alone videos."""
+    return bool(ch) and ch["status"] == "active" and ch["workflow"] != "nifty_daily"
 
 
 def latest(channel_id: int) -> dict[str, Any] | None:
@@ -78,10 +83,16 @@ def latest(channel_id: int) -> dict[str, Any] | None:
 
 
 def _queries(ch: dict[str, Any]) -> dict[str, list[str]]:
-    q = {k: list(v) for k, v in QUERIES.get(ch["language"] or "Hindi", QUERIES["English"]).items()}
-    if ch.get("sub_niche"):
-        q["long"].append(f"{ch['sub_niche'].split(',')[0].strip()} cartoon")
-    return q
+    if ch["workflow"] == STORY and kids(ch):
+        q = {k: list(v) for k, v in QUERIES.get(ch["language"] or "Hindi", QUERIES["English"]).items()}
+        if ch.get("sub_niche"):
+            q["long"].append(f"{ch['sub_niche'].split(',')[0].strip()} cartoon")
+        return q
+    niche = (ch.get("niche") or ch["name"]).strip()
+    sub = (ch.get("sub_niche") or "").split(",")[0].strip()
+    hindi = (ch.get("language") or "Hindi") != "English"
+    long = [niche] + ([sub] if sub else []) + ([f"{niche} hindi"] if hindi else [])
+    return {"long": long[:3], "short": [f"{niche} shorts"]}
 
 
 def _search(ch: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
@@ -153,7 +164,7 @@ def scan(channel_id: int) -> dict[str, Any]:
     """One trend scan for a channel (about 500–1,000 of the 10,000 free daily YouTube API units)."""
     ch = channels.get(channel_id)
     if not eligible(ch):
-        raise ValueError("trend research is for active story channels")
+        raise ValueError("trend research is for active channels (not the NIFTY data channel)")
     if not settings.has_secret("youtube_api_key"):
         raise ValueError("Add a free YouTube Data API key under Settings → Credentials first.")
     videos, units = _search(ch)
@@ -175,9 +186,12 @@ def focus_text(scan_row: dict[str, Any]) -> str:
             f"Opening style that works: {pt.get('hook_style')}. Typical length: long about "
             f"{round((st.get('median_long_seconds') or 240) / 60)} min, Shorts about {st.get('median_short_seconds') or 40} s. "
             f"What this channel has been missing: {'; '.join(pt.get('what_we_are_missing', []))}. "
-            "Write ORIGINAL episodes with THIS channel's own recurring characters on these themes. Never reuse or "
-            "closely paraphrase any popular video's title, characters, plot, catchphrases or thumbnails. Each Short "
-            "must be a complete joke on its own (setup and payoff in under a minute), never a cut-out piece. "
+            + ("Write ORIGINAL episodes with THIS channel's own recurring characters on these themes. "
+               if scan_row.get("story", True) else "Propose ORIGINAL videos for THIS channel on these themes, with a "
+               "fresh angle and real facts. ")
+            + "Never reuse or closely paraphrase any popular video's title, characters, plot, catchphrases or "
+            "thumbnails. Each Short must be complete on its own (hook and payoff in under a minute), never a cut-out "
+            "piece. "
             "Do not put the word 'Short' in titles." + (f" {KIDS_RULES}" if scan_row.get("kids") else ""))
 
 
@@ -185,9 +199,14 @@ def ideas_from(scan_row: dict[str, Any], count: int = 6) -> dict[str, Any]:
     """Original ideas on this week's themes; any idea too close to a trending title is dropped."""
     from . import ideas
     ch = channels.get(scan_row["channel_id"])
-    scan_row = {**scan_row, "kids": kids(ch)}
+    scan_row = {**scan_row, "kids": kids(ch), "story": ch["workflow"] == STORY}
     with channels.using(ch["id"]), profile.using_language(ch["language"] or "Hindi"):
-        res = ideas.generate(ch["id"], count, channels.formats(ch), focus=focus_text(scan_row))
+        if ch["workflow"] == STORY:
+            res = ideas.generate(ch["id"], count, channels.formats(ch), focus=focus_text(scan_row))
+        else:                                    # factual channels: researched, source-checked topics on the themes
+            from ..research import engine
+            res = engine.run_ideation({"channel_id": ch["id"], "count": count, "formats": channels.formats(ch),
+                                       "focus": focus_text(scan_row)[:600]})
     trending = [(i, v["title"]) for i, v in enumerate(scan_row["videos"])]
     kept, dropped = [], []
     for tid in res["created"]:
@@ -207,11 +226,11 @@ def ideas_from(scan_row: dict[str, Any], count: int = 6) -> dict[str, Any]:
 
 
 def run_daily() -> dict[str, Any]:
-    """Scan every active story channel once a day and add original trend-based ideas to its list."""
+    """Scan every active channel once a day and add original trend-based ideas to its list."""
     if not settings.get("trends.enabled"):
         return {"skipped": "trend research switched off"}
     done = {}
-    for ch in db.q("SELECT id FROM channels WHERE status='active' AND workflow='animated_story'"):
+    for ch in db.q("SELECT id FROM channels WHERE status='active' AND workflow<>'nifty_daily'"):
         last = latest(ch["id"])
         if last and (db.utcnow() - db.parse_iso(last["created_at"])).total_seconds() < 20 * 3600:
             done[ch["id"]] = "already scanned today"

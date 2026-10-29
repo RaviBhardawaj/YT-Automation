@@ -294,8 +294,8 @@ def stage_animate(p: dict[str, Any]) -> None:
         seg = p["episode"]["segment"]
         p = {**p, "package": parent["package"], "episode": {**p["episode"], "cast": parent["episode"]["cast"]}}
         lines = {(x["scene"], x["line"]): x for x in parent["timeline"]["lines"]}
-        res = _render(p, "short", seg["scenes"], lines, workdir(p["id"]), title_card=False, end_card=True,
-                      hook=seg.get("hook", ""))
+        res = _render(p, "short", seg["scenes"], lines, workdir(p["id"]), title_card=False, end_card=False,
+                      hook=seg.get("hook", ""))                # ends on the joke, so the Short loops
     else:
         if settings.get("visuals.story_backgrounds"):    # drawn story sets per scene, checked and auto-fixed
             from . import scene_art
@@ -307,8 +307,10 @@ def stage_animate(p: dict[str, Any]) -> None:
             logs.event("info", "creative", f"Story backgrounds: {n} of {len(p['package']['scenes'])} scenes drawn",
                        production_id=p["id"])
         lines = {(x["scene"], x["line"]): x for x in tl["lines"]}
+        # cold open: straight into scene 1 with the hook words on screen — no title card before the story
         res = _render(p, p["format"], list(range(len(p["package"]["scenes"]))), lines, workdir(p["id"]),
-                      title_card=p["format"] == "long", end_card=True)
+                      title_card=False, end_card=p["format"] == "long",
+                      hook=p["package"].get("thumbnail_text") or "")
     tl = {**tl, "total_duration": res["total"], "scene_times": res["scenes"]}
     pipeline.save(p["id"], timeline=tl, video_path=res["final"], srt_path=res["srt"])
     logs.event("info", "creative", f"Rendered {res['total'] / 60:.1f} min animation", production_id=p["id"])
@@ -318,7 +320,12 @@ def stage_thumbnail(p: dict[str, Any]) -> None:
     from .. import pipeline
     pkg = p["package"] if p["kind"] == "story" else pipeline.load(p["parent_id"])["package"]
     cast = p["episode"].get("cast") or pipeline.load(p["parent_id"])["episode"]["cast"]
-    scene = pkg["scenes"][(p["episode"].get("segment") or {}).get("scenes", [0])[0]]
+    seg = (p["episode"].get("segment") or {}).get("scenes")
+    if seg:
+        scene = pkg["scenes"][seg[0]]
+    else:                                      # the most eye-catching moment: its own checked story picture
+        scene = max(pkg["scenes"], key=lambda s: ((s.get("bg_check") or {}).get("score", 0)
+                                                  if "reused" not in str(s.get("bg_by", "")) else 0))
     keys = [k for k in scene.get("characters", []) if k in cast] or list(cast)
     text = p["package"].get("thumbnail_text") or p["title"]
     out = workdir(p["id"]) / "thumbnail.jpg"
@@ -372,6 +379,15 @@ def stage_qa(p: dict[str, Any]) -> None:
     add("character consistency", speakers <= set(cast),
         f"{len(cast)} bible characters with frozen designs and voices; speakers {sorted(speakers)}")
     passed = all(c["ok"] for c in checks)
+    from . import viral                                 # viral checks inform; they never block a video
+    tl = p.get("timeline") or {}
+    first = min((x.get("start", 0) for x in tl.get("lines", []) if x.get("scene") == 0), default=LEAD)
+    ch_ = channels.get(p["channel_id"]) or {}
+    checks += viral.check(kind="story", fmt="short" if p["kind"] == "story_short" or p["format"] == "short" else "long",
+                          seconds=float(tl.get("total_duration") or 0), title=p["title"] or "",
+                          thumb_text=pkg.get("thumbnail_text") or "",
+                          opening_delay=LEAD if p["kind"] == "story_short" else min(first, LEAD),
+                          kids=bool(ch_.get("made_for_kids")))
     pipeline.save(p["id"], qa={"passed": passed, "checks": checks, "auto_publish_ok": passed})
     if not passed:
         raise pipeline.NeedsAttention("Quality checks failed: " + "; ".join(c["name"] + " — " + c["detail"]
@@ -403,6 +419,16 @@ def stage_review(p: dict[str, Any]) -> None:
     from ..youtube import oauth
     ch = channels.get(p["channel_id"])
     pkg = p["package"]
+    if p["kind"] == "story" and not pkg.get("title_variants"):     # the best of 5 scored, honest titles
+        from . import viral
+        ch_ = channels.get(p["channel_id"]) or {}
+        summary = f"{pkg.get('logline', '')} " + " ".join(s.get("summary", "") for s in pkg.get("scenes", []))
+        best = viral.titles(summary, pkg["title"], p.get("language") or "Hindi", fmt=p["format"],
+                            kids=bool(ch_.get("made_for_kids")) or plan_of(p).get("content_type") == "kids")
+        if best["variants"]:
+            pkg["title_variants"], pkg["title_original"] = best["variants"], pkg["title"]
+            pkg["title"] = best["title"]
+            pipeline.save(p["id"], title=best["title"])
     pkg["final_description"] = describe(p)
     if p["kind"] == "story":
         pkg["tags"] = pkg.get("tags", [])[:15]

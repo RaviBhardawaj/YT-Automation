@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from .. import ai, db
-from . import characters as charmod
+from . import characters as charmod, viral
 from .cartoon import LOCATIONS
 
 Emotion = Literal["neutral", "happy", "laugh", "angry", "sad", "scared", "surprised", "shout", "whisper"]
@@ -147,8 +147,10 @@ def write(plan: dict[str, Any], channel: dict[str, Any], idea: dict[str, Any] | 
     outline_prompt = (head +
         f"\nPlan an original {'YouTube Short (vertical)' if plan['format'] == 'short' else 'animated episode'} of about "
         f"{words} spoken words: exactly {n_beats} scenes (beats). Use bible characters by key where they fit; invent new "
-        "characters only when the story needs them (keys N1, N2 ... with a full visual design). Locations must be from the allowed list. Moods must fit the genre. thumbnail_text = 2-5 punchy "
-        "words. Description: 2-3 lines, no URLs. Tags: 6-12.")
+        "characters only when the story needs them (keys N1, N2 ... with a full visual design). Locations must be from the allowed list. Moods must fit the genre. thumbnail_text = 2-4 punchy "
+        "words. Description: 2-3 lines, no URLs. Tags: 6-12.\n"
+        + viral.HOOK_RULES + (" " + viral.SHORT_HOOK_RULES if plan["format"] == "short" else "")
+        + " Beat 1 must already be inside the funniest or most surprising situation of the story.")
 
     def check_outline(o: Outline) -> None:
         problems = []
@@ -192,7 +194,9 @@ def write(plan: dict[str, Any], channel: dict[str, Any], idea: dict[str, Any] | 
                               f"{', '.join(b.characters)} — {b.summary}" for i, b in enumerate(chunk))
                   + f"\nAbout {per_scene_words} spoken words per scene (that is roughly 8-14 lines per scene) — build "
                   "each scene properly: setup, escalation, reaction, button. Short punchy lines (max ~25 words). Every line: speaker key, text, emotion, a short action. Only cast keys or NARRATOR may speak. "
-                  + ("End the final scene with the punchline / payoff." if start + per_call >= len(outline.beats) else ""))
+                  + ("End the final scene with the punchline / payoff." if start + per_call >= len(outline.beats) else "")
+                  + (" " + viral.HOOK_RULES + (" " + viral.SHORT_HOOK_RULES if plan["format"] == "short" else "")
+                     if start == 0 else ""))
 
         def check_dialogue(dlg: Dialogue, chunk=chunk, strict_length: bool = True) -> None:
             problems = []
