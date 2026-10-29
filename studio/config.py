@@ -6,7 +6,7 @@ import shutil
 import sys
 from pathlib import Path
 
-APP_NAME = "YT Automation Studio"
+APP_NAME = "AI Video Studio"
 APP_VERSION = "1.0.0"
 
 ROOT = Path(__file__).resolve().parent.parent

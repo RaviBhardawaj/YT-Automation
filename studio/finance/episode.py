@@ -639,11 +639,15 @@ def draw_visual(facts: dict[str, Any], visual: str, scene: dict[str, Any], fmt: 
             t("c_next_levels", date=facts["next"]["label"]), footer, out), "image"
     if visual == "next_levels":
         nb = facts["next"]["basis"]
+        bars = marketdata.daily_bars(facts["dataset_id"])          # the recent sessions, ending on the basis day
+        end = next((i for i, b in enumerate(bars) if b["trade_date"] == facts.get("review_date")), None)
+        history = bars[max(0, end - (7 if fmt == "short" else 14)): end + 1] if end is not None else None
 
         def make_next(step: int | None, path: Path) -> Path:
             return charts.levels_chart(nb, facts["next"]["levels"], fmt, t("c_next_levels", date=facts["next"]["label"]),
                                        t("c_next_sub", date=facts["review_label"]), footer, path,
-                                       basis_label=facts["review_label"], reveal=step)
+                                       basis_label=facts["review_label"], reveal=step, history=history,
+                                       card=fmt == "short")
         charts.frames(make_next, list(range(0, len(charts.REVEAL_ORDER) + 1)), out.with_name(out.stem + "_frames"))
         return make_next(None, out), "anim"
     if visual == "formula":

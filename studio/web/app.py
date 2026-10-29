@@ -320,7 +320,7 @@ def common(request: Request | None = None) -> dict[str, Any]:
         "SELECT t.status, COUNT(*) AS n FROM tasks t LEFT JOIN productions p ON p.id=t.production_id "
         "WHERE p.workspace_id=? OR (? AND t.production_id IS NULL) GROUP BY t.status",
         (ws, int(bool(sess and sess["user"]["is_admin"]))))}
-    return {"csrf": csrf_token(request) if request else "", "app_name": config.APP_NAME, "spend": spend, "budget": budget,
+    return {"csrf": csrf_token(request) if request else "", "app_name": settings.get("site.name") or config.APP_NAME, "spend": spend, "budget": budget,
             "spend_pct": min(100, int(spend / budget * 100)) if budget else 0,
             "brand": settings.get("brand"), "interview_done": profile.complete(), "task_counts": counts,
             "awaiting": db.q1("SELECT COUNT(*) AS n FROM productions WHERE status='awaiting_approval' AND workspace_id=?",
@@ -358,7 +358,14 @@ def _static_version() -> str:
     return str(int(max(p.stat().st_mtime for p in (HERE / "static").iterdir())))
 
 
-templates.env.globals["static_v"] = _static_version()
+class _StaticVersion:
+    """Re-read on every page, so a stylesheet changed while the app runs is never served from a stale cache."""
+
+    def __str__(self) -> str:
+        return _static_version()
+
+
+templates.env.globals["static_v"] = _StaticVersion()
 
 
 # ------------------------------------------------------------------ accounts
@@ -383,7 +390,7 @@ def _login_response(token: str, next_url: str) -> RedirectResponse:
 def login_page(request: Request, next: str = "/", error: str = ""):
     if not auth.has_users():
         return RedirectResponse("/signup", status_code=303)
-    return templates.TemplateResponse(request, "login.html", {"csrf": csrf_token(request), "app_name": config.APP_NAME,
+    return templates.TemplateResponse(request, "login.html", {"csrf": csrf_token(request), "app_name": settings.get("site.name") or config.APP_NAME,
                                       "static_v": templates.env.globals["static_v"], "next": next, "error": error,
                                       "mode": "login", "allow_signup": settings.get("auth.allow_signup")})
 
@@ -393,7 +400,7 @@ def signup_page(request: Request, error: str = ""):
     first = not auth.has_users()
     if not first and not settings.get("auth.allow_signup"):
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "login.html", {"csrf": csrf_token(request), "app_name": config.APP_NAME,
+    return templates.TemplateResponse(request, "login.html", {"csrf": csrf_token(request), "app_name": settings.get("site.name") or config.APP_NAME,
                                       "static_v": templates.env.globals["static_v"], "next": "/", "error": error,
                                       "mode": "signup", "first": first, "allow_signup": True})
 

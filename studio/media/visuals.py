@@ -351,7 +351,8 @@ def local_flux_ready() -> bool:
     if not local_flux_installed():
         return False
     hub = Path.home() / ".cache" / "huggingface" / "hub" / ("models--" + LOCAL_FLUX_MODEL.replace("/", "--"))
-    return any(hub.glob("snapshots/*/*")) if hub.exists() else False
+    # complete only when files have arrived and none is still downloading (".incomplete" blobs)
+    return hub.exists() and any(hub.glob("snapshots/*/*")) and not any(hub.glob("blobs/*.incomplete"))
 
 
 def generate_local_flux(prompt: str, fmt: str, out: Path, look: str = "real", *,

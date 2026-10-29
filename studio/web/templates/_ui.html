@@ -1,0 +1,7 @@
+{# Shared UI macros. The icons themselves live in _sprite.html (included once per page). #}
+{% macro ico(name, cls='') -%}
+<svg class="icon {{ cls }}" aria-hidden="true"><use href="#i-{{ name }}"/></svg>
+{%- endmacro %}
+{% macro logo() -%}
+<div class="logo"><svg aria-hidden="true"><use href="#i-play"/></svg></div>
+{%- endmacro %}

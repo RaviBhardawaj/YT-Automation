@@ -221,7 +221,7 @@ def _spread_labels(ys: list[float], gap: float, top: float, bottom: float) -> li
 
 def _level_lines(c: Canvas, levels: dict[str, float], y, emphasise: tuple[str, ...] = ("S2", "R2"),
                  touched: tuple[str, ...] = (), x_range: tuple[float, float] | None = None,
-                 zone_labels: bool = True) -> None:
+                 zone_labels: bool = True, strong: bool = False) -> None:
     x0, top, x1, bottom = c.plot
     if x_range:
         x0, x1 = x_range
@@ -233,8 +233,11 @@ def _level_lines(c: Canvas, levels: dict[str, float], y, emphasise: tuple[str, .
             ya, yb = sorted((y(levels[a]), y(levels[b])))
             ya, yb = max(ya, top), min(yb, bottom)
             if yb - ya > 4:
-                c.translucent((x0, ya, x1, yb), colour, 38)
-                zl = _zone_label(kind)
+                c.translucent((x0, ya, x1, yb), colour, 72 if strong else 38)
+                if strong:                                 # crisp edges so the zone reads as one band
+                    for edge in (ya, yb):
+                        c.d.line([(x0, edge), (x1, edge)], fill=colour + (200,), width=max(1, int(2 * c.u)))
+                zl = _zone_label(kind) + (f"  {a}–{b}" if strong else "")
                 zs = int((20 if c.fmt == "short" else 18) * c.u)
                 if zone_labels and yb - ya > zs * 1.3:      # off on candle-dense charts: text must not cover candles
                     c.d.text((x0 + int(12 * c.u), (ya + yb) / 2), zl, font=_f(zl, "heavy", zs), fill=colour + (220,),
@@ -264,10 +267,39 @@ def _level_lines(c: Canvas, levels: dict[str, float], y, emphasise: tuple[str, .
 REVEAL_ORDER = ["P", "S1", "R1", "S2", "R2", "S3", "R3"]
 
 
+def _zone_card(c: Canvas, levels: dict[str, float]) -> None:
+    """The next session's zones as plain numbers in the lower part of a Short (below the spoken captions)."""
+    from . import i18n
+    rows = [(i18n.t("card_res", LANG), levels.get("R1"), levels.get("R2"), ZONE_RES),
+            (i18n.t("card_piv", LANG), levels.get("P"), None, PIV),
+            (i18n.t("card_sup", LANG), levels.get("S1"), levels.get("S2"), ZONE_SUP)]
+    rows = [r for r in rows if r[1] is not None]
+    if not rows:
+        return
+    x0, x1 = int(70 * c.u), int(c.w - 70 * c.u)
+    top, rh = int(c.h * 0.715), int(74 * c.u)
+    note = i18n.t("card_note", LANG)
+    c.translucent((x0, top, x1, top + rh * len(rows) + int(70 * c.u)), (20, 24, 34), 235, radius=int(24 * c.u))
+    for i, (name, a, b, col) in enumerate(rows):
+        yy = top + int(22 * c.u) + rh * i + rh // 2
+        c.translucent((x0 + int(26 * c.u), yy - int(16 * c.u), x0 + int(34 * c.u), yy + int(16 * c.u)), col, 255,
+                      radius=int(4 * c.u))
+        c.d.text((x0 + int(52 * c.u), yy), name, font=_f(name, "heavy", int(30 * c.u)), fill=TEXT, anchor="lm")
+        val = _fmt(a) if b is None else f"{_fmt(min(a, b))} – {_fmt(max(a, b))}"
+        c.d.text((x1 - int(28 * c.u), yy), val, font=_f(val, "heavy", int(32 * c.u)), fill=col, anchor="rm")
+    c.d.text(((x0 + x1) / 2, top + rh * len(rows) + int(40 * c.u)), note, font=_f(note, "body", int(22 * c.u)),
+             fill=MUTED, anchor="mm")
+
+
 def levels_chart(basis: dict[str, Any], levels: dict[str, float], fmt: str, title: str, sub: str, footer: str, out: Path,
                  review: dict[str, Any] | None = None, review_label: str = "", basis_label: str = "",
-                 touched: tuple[str, ...] = (), reveal: int | None = None) -> Path:
-    """reveal = how many levels to draw (in REVEAL_ORDER) — used for the build-up animation."""
+                 touched: tuple[str, ...] = (), reveal: int | None = None,
+                 history: list[dict[str, Any]] | None = None, card: bool = False) -> Path:
+    """reveal = how many levels to draw (in REVEAL_ORDER) — used for the build-up animation.
+    history = the recent daily bars up to the basis day: drawn as a real chart on the left, with the next session's
+    zones running on to the right. card = the zones as numbers in the lower part of a Short."""
+    if history:
+        return _next_session_chart(history, levels, fmt, title, sub, footer, out, reveal=reveal, card=card)
     c = Canvas(fmt)
     c.title(title, sub)
     x0, top, x1, bottom = c.plot
@@ -284,6 +316,36 @@ def levels_chart(basis: dict[str, Any], levels: dict[str, float], fmt: str, titl
         _candle(c, xs[1], width, review, y, outline=HL)
         c.d.text((xs[1], bottom + int(18 * c.u)), review_label, font=_f(review_label, "heavy", int(22 * c.u)), fill=HL,
                  anchor="ma")
+    c.footer(footer)
+    return c.save(out)
+
+
+def _next_session_chart(history: list[dict[str, Any]], levels: dict[str, float], fmt: str, title: str, sub: str,
+                        footer: str, out: Path, reveal: int | None = None, card: bool = False) -> Path:
+    from . import i18n
+    c = Canvas(fmt)
+    c.title(title, sub)
+    x0, top, x1, bottom = c.plot
+    vals = list(levels.values()) + [b["high"] for b in history] + [b["low"] for b in history]
+    y, lo, hi = _yscale(min(vals), max(vals), top, bottom)
+    _grid(c, y, lo, hi, labels=False)
+    split = x0 + (x1 - x0) * 0.62                        # recent sessions on the left, the next session on the right
+    c.translucent((split, top, x1, bottom), (255, 255, 255), 10)
+    for xx in range(int(top), int(bottom), int(14 * c.u)):
+        c.d.line([(split, xx), (split, min(xx + 7 * c.u, bottom))], fill=MUTED, width=max(1, int(c.u)))
+    ns = i18n.t("c_next_session", LANG)
+    c.d.text(((split + x1) / 2, top + int(10 * c.u)), ns, font=_f(ns, "heavy", int(20 * c.u)), fill=HL, anchor="ma")
+    shown = levels if reveal is None else {k: levels[k] for k in REVEAL_ORDER[:reveal] if k in levels}
+    _level_lines(c, shown, y, strong=True, x_range=(split, x1))
+    step = (split - x0) / (len(history) + 0.5)
+    for i, bar in enumerate(history):
+        _candle(c, x0 + step * (i + 0.75), step * 0.55, bar, y)
+    for i in (0, len(history) - 1):                     # first and last date under the bars
+        lab = i18n.short_date(history[i]["trade_date"], LANG)
+        c.d.text((x0 + step * (i + 0.75), bottom + int(18 * c.u)), lab, font=_f(lab, "heavy", int(20 * c.u)),
+                 fill=MUTED, anchor="ma")
+    if card and fmt == "short" and (reveal is None or reveal >= len(REVEAL_ORDER)):
+        _zone_card(c, levels)
     c.footer(footer)
     return c.save(out)
 

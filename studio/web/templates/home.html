@@ -1,7 +1,9 @@
 {% extends "public_base.html" %}
+{% from "_ui.html" import ico %}
 {% block content %}
 <section class="hero">
-  <h1>Make YouTube videos with AI —<br>from one sentence or your own footage</h1>
+  <div class="eyebrow">{{ ico('sparkles') }} Free during beta</div>
+  <h1>Make YouTube videos with AI —<br><span class="grad">from one sentence or your own footage</span></h1>
   <p class="lead">Describe a video, paste a YouTube link for inspiration, or upload a clip. {{ site_name }} writes, voices, animates, edits, adds subtitles and publishes to your channels — in Hindi, Hinglish or English.</p>
   <div class="row" style="justify-content:center">{% if me %}<a class="btn primary big" href="/">Open my studio</a>{% else %}<a class="btn primary big" href="/signup">Start free</a><a class="btn big" href="/login">Sign in</a>{% endif %}</div>
   <div class="muted small" style="margin-top:8px">Free during beta · no credit card · your Google password is never asked for</div>
@@ -9,14 +11,14 @@
 
 <section class="grid g3 feats">
   {% for icon, t, d in [
-    ('✍️','Create from a prompt','“A funny Hindi cartoon about a lazy superhero”, “Explain UPI in 2 minutes” — the right workflow is picked for you.'),
-    ('✂️','Upload & edit','Remove pauses, add subtitles with highlighted words, intro, music, and cut long videos into vertical Shorts.'),
-    ('🎞️','AI Shorts clipper','Upload a long video and get its best moments as captioned vertical clips, with titles, captions and hashtags for YouTube, Instagram and Facebook.'),
-    ('🎭','Recurring characters','Animated series keep the same characters, looks and voices in every episode.'),
-    ('🗣️','Natural Indian voices','Hindi, Hinglish and English narration and dialogue.'),
-    ('📺','Many channels','Each channel has its own niche, language, characters, schedule and YouTube login.'),
-    ('⏰','Daily automation','A new video every day at your time, published when you choose — or approve each one.')] %}
-  <div class="card"><div style="font-size:28px">{{ icon }}</div><h3>{{ t }}</h3><div class="small muted">{{ d }}</div></div>{% endfor %}
+    ('pen','Create from a prompt','“A funny Hindi cartoon about a lazy superhero”, “Explain UPI in 2 minutes” — the right workflow is picked for you.'),
+    ('scissors','Upload & edit','Remove pauses, add subtitles with highlighted words, intro, music, and cut long videos into vertical Shorts.'),
+    ('phone','AI Shorts clipper','Upload a long video and get its best moments as captioned vertical clips, with titles, captions and hashtags for YouTube, Instagram and Facebook.'),
+    ('users','Recurring characters','Animated series keep the same characters, looks and voices in every episode.'),
+    ('mic','Natural Indian voices','Hindi, Hinglish and English narration and dialogue.'),
+    ('tv','Many channels','Each channel has its own niche, language, characters, schedule and YouTube login.'),
+    ('calendar','Daily automation','A new video every day at your time, published when you choose — or approve each one.')] %}
+  <div class="card"><div class="feat-ico">{{ ico(icon, 'lg') }}</div><h3>{{ t }}</h3><div class="small muted">{{ d }}</div></div>{% endfor %}
 </section>
 
 <section id="how" class="card" style="margin-top:24px">

@@ -1,71 +1,78 @@
-<!doctype html>
+{% from "_ui.html" import ico, logo %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf" content="{{ csrf }}">
+  <meta name="theme-color" content="#e5484d">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css?v={{ static_v }}">
 </head>
 <body>
+{% include "_sprite.html" %}
 <div class="layout">
   <aside class="side">
     <div class="side-top">
-      <a class="brand" href="/" style="color:inherit;text-decoration:none"><div class="logo">▶</div><div>Video Studio<div class="muted small" style="font-weight:400">create · edit · publish</div></div></a>
-      <button class="navtoggle" type="button" aria-expanded="false" aria-controls="mainnav">☰ Menu</button>
+      <a class="brand" href="/">{{ logo() }}<div>{{ app_name }}<div class="sub">Create · edit · publish</div></div></a>
+      <button class="navtoggle sm" type="button" aria-expanded="false" aria-controls="mainnav">{{ ico('menu') }}<span>Menu</span></button>
     </div>
-    <a class="btn primary create-cta" href="/create">＋ Create video</a>
+    <a class="btn primary create-cta" href="/create">{{ ico('plus') }} Create video</a>
     {% macro item(href, icon, label, on, badge=0, warn=False) -%}
-      <a href="{{ href }}" class="{{ 'on' if on }}"><span class="ico" aria-hidden="true">{{ icon }}</span><span class="lbl">{{ label }}</span>{% if badge %}<span class="badge {{ 'warnb' if warn }}">{{ badge }}</span>{% endif %}</a>
+      <a href="{{ href }}" class="{{ 'on' if on }}"{% if on %} aria-current="page"{% endif %}><span class="ico">{{ ico(icon) }}</span><span class="lbl">{{ label }}</span>{% if badge %}<span class="badge {{ 'warnb' if warn }}">{{ badge }}</span>{% endif %}</a>
     {%- endmacro %}
-    <nav class="nav" id="mainnav">
-      {{ item('/', '🏠', 'Home', page == 'dashboard') }}
+    <nav class="nav" id="mainnav" aria-label="Main">
+      {{ item('/', 'home', 'Home', page == 'dashboard') }}
       <div class="nav-group">Create</div>
-      {{ item('/create', '✍️', 'Create video', page == 'create' and mode == 'create') }}
-      {{ item('/edit', '✂️', 'Upload & edit', page == 'create' and mode == 'edit') }}
-      {{ item('/shorts', '🎞️', 'AI Shorts clipper', page in ('shorts', 'shorts_job')) }}
-      {{ item('/ideas', '💡', 'Ideas', page in ('ideas', 'idea')) }}
-      {% if film_studio_on %}{{ item('/film-studio', '🎞️', 'Film Studio', page in ('film_studio', 'film_studio_film', 'film_cast')) }}{% endif %}
-      {{ item('/voices', '🎙️', 'My voice', page == 'voices') }}
+      {{ item('/create', 'pen', 'Create video', page == 'create' and mode == 'create') }}
+      {{ item('/edit', 'scissors', 'Upload & edit', page == 'create' and mode == 'edit') }}
+      {{ item('/shorts', 'phone', 'AI Shorts clipper', page in ('shorts', 'shorts_job')) }}
+      {{ item('/ideas', 'bulb', 'Ideas', page in ('ideas', 'idea')) }}
+      {% if film_studio_on %}{{ item('/film-studio', 'clapper', 'Film Studio', page in ('film_studio', 'film_studio_film', 'film_cast')) }}{% endif %}
+      {{ item('/voices', 'mic', 'My voice', page == 'voices') }}
       <div class="nav-group">My videos</div>
-      {{ item('/projects', '⏳', 'In progress', page == 'projects') }}
-      {{ item('/productions', '🎬', 'Video library', page in ('productions', 'production', 'uploads'), awaiting) }}
-      {{ item('/publishing', '📤', 'Publishing', page == 'publishing') }}
+      {{ item('/projects', 'loader', 'In progress', page == 'projects') }}
+      {{ item('/productions', 'library', 'Video library', page in ('productions', 'production', 'uploads'), awaiting) }}
+      {{ item('/publishing', 'send', 'Publishing', page == 'publishing') }}
       <div class="nav-group">Channels</div>
-      {{ item('/channels', '📺', 'My channels', page in ('channels', 'channel', 'channel_setup')) }}
-      {{ item('/analytics', '📈', 'Analytics', page == 'analytics') }}
-      {{ item('/schedule', '⏰', 'Daily automation', page == 'schedule') }}
+      {{ item('/channels', 'tv', 'My channels', page in ('channels', 'channel', 'channel_setup')) }}
+      {{ item('/analytics', 'chart', 'Analytics', page == 'analytics') }}
+      {{ item('/schedule', 'clock', 'Daily automation', page == 'schedule') }}
       <div class="nav-group">Account</div>
-      {{ item('/billing', '💳', 'Plan & usage', page == 'billing') }}
-      {{ item('/storage', '🗄️', 'Storage', page == 'storage') }}
-      {{ item('/tools', '🧰', 'AI tools', page == 'tools') }}
-      {{ item('/queue', '📜', 'Activity log', page == 'queue', task_counts.get('failed'), True) }}
+      {{ item('/billing', 'card', 'Plan & usage', page == 'billing') }}
+      {{ item('/storage', 'db', 'Storage', page == 'storage') }}
+      {{ item('/tools', 'sparkles', 'AI tools', page == 'tools') }}
+      {{ item('/queue', 'list', 'Activity log', page == 'queue', task_counts.get('failed'), True) }}
       {% if is_admin %}
       <div class="nav-group">Admin</div>
-      {{ item('/admin', '🛡️', 'Users & website', page == 'admin') }}
-      {{ item('/system', '🖥️', 'Computer & setup', page == 'system') }}
-      {{ item('/settings', '⚙️', 'Settings', page == 'settings') }}
-      {{ item('/compliance', '⚖️', 'Compliance', page == 'compliance') }}
-      {{ item('/niches', '🔎', 'Niche research', page == 'niches') }}
+      {{ item('/admin', 'shield', 'Users & website', page == 'admin') }}
+      {{ item('/system', 'monitor', 'Computer & setup', page == 'system') }}
+      {{ item('/settings', 'sliders', 'Settings', page == 'settings') }}
+      {{ item('/compliance', 'scale', 'Compliance', page == 'compliance') }}
+      {{ item('/niches', 'search', 'Niche research', page == 'niches') }}
       {% endif %}
     </nav>
-    {% if me %}<div class="spend" style="margin-top:14px"><b style="color:var(--text)">{{ workspace.name }}</b><br>{{ me.email }} · {{ role }}
-      <div style="margin-top:6px"><button class="sm" data-post="/api/auth/logout" data-done="Signed out">Sign out</button></div></div>{% endif %}
-    {% if is_admin %}
-    <div class="spend">Platform AI spend this month<br><b style="color:var(--text)">${{ '%.2f' % spend }}</b> of ${{ '%.2f' % budget }} limit
-      <div class="bar {{ 'hot' if spend_pct >= 80 }}"><i style="width:{{ spend_pct }}%"></i></div>
-      <div style="margin-top:8px">{{ task_counts.get('running', 0) }} running · {{ task_counts.get('pending', 0) }} queued</div>
+    <div class="side-foot">
+      {% if is_admin %}
+      <div class="spend">AI spend this month <b>${{ '%.2f' % spend }}</b> <span class="muted">of ${{ '%.2f' % budget }}</span>
+        <div class="bar {{ 'hot' if spend_pct >= 80 }}"><i style="width:{{ spend_pct }}%"></i></div>
+        <div style="margin-top:7px">{{ task_counts.get('running', 0) }} running · {{ task_counts.get('pending', 0) }} queued</div>
+      </div>
+      {% elif my_usage %}
+      <div class="spend">This month <b>{{ my_usage.videos }}</b> <span class="muted">of {{ my_usage.limit }} videos</span>
+        <div class="bar {{ 'hot' if my_usage.pct >= 80 }}"><i style="width:{{ my_usage.pct }}%"></i></div>
+        <div style="margin-top:7px">{{ task_counts.get('running', 0) }} running · {{ task_counts.get('pending', 0) }} queued</div>
+      </div>{% endif %}
+      {% if me %}<div class="account">
+        <div class="avatar" aria-hidden="true">{{ ((me.name or me.email or '?')[:1])|upper }}</div>
+        <div class="who"><b title="{{ workspace.name }}">{{ workspace.name }}</b><span title="{{ me.email }}">{{ me.email }} · {{ role }}</span></div>
+        <button type="button" title="Sign out" aria-label="Sign out" data-post="/api/auth/logout" data-done="Signed out">{{ ico('logout') }}</button>
+      </div>{% endif %}
     </div>
-    {% elif my_usage %}
-    <div class="spend">This month: <b style="color:var(--text)">{{ my_usage.videos }}</b> of {{ my_usage.limit }} videos
-      <div class="bar {{ 'hot' if my_usage.pct >= 80 }}"><i style="width:{{ my_usage.pct }}%"></i></div>
-      <div style="margin-top:8px">{{ task_counts.get('running', 0) }} running · {{ task_counts.get('pending', 0) }} queued</div>
-    </div>{% endif %}
   </aside>
   <main>
-    {% if is_admin and not sarvam.ok %}<div class="note warn helpbox" data-help="sarvam-{{ sarvam.since }}"><button class="x" type="button" title="Close this warning">✕</button><b>Sarvam voice is unavailable</b> since {{ sarvam.since|dt }} — new videos are being voiced with the free Kokoro voice so they still get made.
-      Reason: {{ sarvam.error }}. Top up or check your key at dashboard.sarvam.ai; the studio retries Sarvam every 30 minutes and this warning clears by itself.</div>{% endif %}
-    {% if page_help %}<div class="helpbox" data-help="{{ page }}"><button class="x" type="button" title="Hide this tip">✕</button>💡 {{ page_help|safe }}</div>{% endif %}
+    {% if is_admin and not sarvam.ok %}<div class="note warn helpbox" data-help="sarvam-{{ sarvam.since }}"><button class="x" type="button" title="Close this warning" aria-label="Close">✕</button><div><b>Sarvam voice is unavailable</b> since {{ sarvam.since|dt }} — new videos are being voiced with the free Kokoro voice so they still get made.
+      Reason: {{ sarvam.error }}. Top up or check your key at dashboard.sarvam.ai; the studio retries Sarvam every 30 minutes and this warning clears by itself.</div></div>{% endif %}
+    {% if page_help %}<div class="helpbox" data-help="{{ page }}">{{ ico('bulb') }}<div>{{ page_help|safe }}</div><button class="x" type="button" title="Hide this tip" aria-label="Hide this tip">✕</button></div>{% endif %}
     {% block content %}{% endblock %}
     {% if show_ads and page in ('dashboard', 'productions') %}<div class="adslot">{{ ads_html|safe }}</div>{% endif %}
   </main>

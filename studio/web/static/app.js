@@ -388,5 +388,6 @@ document.querySelector(".navtoggle")?.addEventListener("click", e => {
   const side = e.currentTarget.closest(".side");
   const open = side.classList.toggle("open");
   e.currentTarget.setAttribute("aria-expanded", String(open));
-  e.currentTarget.textContent = open ? "✕ Close" : "☰ Menu";
+  const label = e.currentTarget.querySelector("span");
+  if (label) label.textContent = open ? "Close" : "Menu";
 });

@@ -1,28 +1,46 @@
-<!doctype html>
+{% from "_ui.html" import ico, logo %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf" content="{{ csrf }}">
+  <meta name="theme-color" content="#e5484d">
   <title>{{ 'Sign in' if mode == 'login' else 'Create account' }} · {{ app_name }}</title>
   <link rel="stylesheet" href="/static/app.css?v={{ static_v }}">
 </head>
 <body>
-<div style="max-width:420px;margin:8vh auto;padding:0 16px">
-  <a class="brand" href="/home" style="padding:0 0 18px;color:inherit;text-decoration:none"><div class="logo">▶</div><div>{{ app_name }}<div class="muted small" style="font-weight:400">Create, edit and publish videos for any niche</div></div></a>
-  <form class="card" data-form="/api/auth/{{ mode }}" data-done="{{ 'Signed in' if mode == 'login' else 'Account created' }}">
-    <h2>{% if mode == 'login' %}Sign in{% elif first %}Create the owner account{% else %}Create your studio{% endif %}</h2>
-    {% if mode == 'signup' and first %}<div class="note small">This first account becomes the platform admin and owns the studio's existing channels and videos.</div>{% endif %}
-    {% if error %}<div class="note err">{{ error }}</div>{% endif %}
-    {% if mode == 'signup' %}<label class="f"><span>Your name</span><input name="name" autocomplete="name"></label>
-    {% if not first %}<label class="f"><span>Studio / workspace name</span><input name="workspace" placeholder="e.g. Raat Ki Kahaniyan"></label>{% endif %}{% endif %}
-    <label class="f"><span>Email</span><input name="email" type="email" required autocomplete="email"></label>
-    <label class="f"><span>Password{% if mode == 'signup' %} (10+ characters){% endif %}</span><input name="password" type="password" required minlength="{{ 10 if mode == 'signup' else 1 }}" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}"></label>
-    <input type="hidden" name="next" value="{{ next }}">
-    {% if mode == 'signup' %}<div class="small muted" style="margin-bottom:8px">By creating an account you agree to the <a href="/terms" target="_blank">Terms of use</a> and <a href="/privacy" target="_blank">Privacy policy</a>.{% if not first %} New accounts are approved by the team.{% endif %}</div>{% endif %}
-    <button class="primary" type="submit" style="width:100%">{{ 'Sign in' if mode == 'login' else 'Create account' }}</button>
-    <div class="small muted" style="margin-top:10px;text-align:center">
-      {% if mode == 'login' and allow_signup %}New here? <a href="/signup">Create an account</a>{% elif mode == 'signup' and not first %}Have an account? <a href="/login">Sign in</a>{% endif %}</div>
-  </form>
+{% include "_sprite.html" %}
+<div class="auth">
+  <aside class="auth-side">
+    <a class="brand" href="/home">{{ logo() }}<div>{{ app_name }}</div></a>
+    <div>
+      <h2>Ideas in. Finished, publish-ready videos out.</h2>
+      <ul>
+        <li>{{ ico('pen') }}<span>Write a sentence or paste your script — scenes, voices, pictures and subtitles are made for you.</span></li>
+        <li>{{ ico('globe') }}<span>Hindi, Hinglish and English, with a distinct voice for every character.</span></li>
+        <li>{{ ico('calendar') }}<span>Publish to YouTube, Facebook and Instagram on your schedule — or just download.</span></li>
+        <li>{{ ico('lock') }}<span>Official Google sign-in for YouTube. Your password is never asked for.</span></li>
+      </ul>
+    </div>
+    <div class="foot">© {{ app_name }}</div>
+  </aside>
+  <div class="auth-main">
+    <form class="card" data-form="/api/auth/{{ mode }}" data-done="{{ 'Signed in' if mode == 'login' else 'Account created' }}">
+      <a class="brand" href="/home" style="padding:0 0 20px">{{ logo() }}<div>{{ app_name }}</div></a>
+      <h2>{% if mode == 'login' %}Welcome back{% elif first %}Create the owner account{% else %}Create your studio{% endif %}</h2>
+      <div class="muted small" style="margin-bottom:18px">{% if mode == 'login' %}Sign in to your studio.{% else %}Free during beta — no credit card.{% endif %}</div>
+      {% if mode == 'signup' and first %}<div class="note small">This first account becomes the platform admin and owns the studio's existing channels and videos.</div>{% endif %}
+      {% if error %}<div class="note err">{{ error }}</div>{% endif %}
+      {% if mode == 'signup' %}<label class="f"><span>Your name</span><input name="name" autocomplete="name"></label>
+      {% if not first %}<label class="f"><span>Studio / workspace name</span><input name="workspace" placeholder="e.g. Raat Ki Kahaniyan"></label>{% endif %}{% endif %}
+      <label class="f"><span>Email</span><input name="email" type="email" required autocomplete="email" placeholder="you@example.com"></label>
+      <label class="f"><span>Password{% if mode == 'signup' %} (10+ characters){% endif %}</span><input name="password" type="password" required minlength="{{ 10 if mode == 'signup' else 1 }}" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}"></label>
+      <input type="hidden" name="next" value="{{ next }}">
+      {% if mode == 'signup' %}<div class="small muted" style="margin-bottom:12px">By creating an account you agree to the <a href="/terms" target="_blank">Terms of use</a> and <a href="/privacy" target="_blank">Privacy policy</a>.{% if not first %} New accounts are approved by the team.{% endif %}</div>{% endif %}
+      <button class="primary" type="submit" style="width:100%;padding:10px">{{ 'Sign in' if mode == 'login' else 'Create account' }}</button>
+      <div class="small muted" style="margin-top:14px;text-align:center">
+        {% if mode == 'login' and allow_signup %}New here? <a href="/signup">Create an account</a>{% elif mode == 'signup' and not first %}Have an account? <a href="/login">Sign in</a>{% endif %}</div>
+    </form>
+  </div>
 </div>
 <script src="/static/app.js?v={{ static_v }}"></script>
 </body>
