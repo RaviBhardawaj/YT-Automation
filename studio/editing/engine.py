@@ -197,7 +197,8 @@ def cut_clip(src: dict[str, Any], start: float, end: float, w: int, h: int, refr
                  f"crop={w // 4}:{h // 4},boxblur=8:2,scale={w}:{h}[bg];"
                  f"[b]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];"
                  f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1")
-        graph = f"{v},fps={FPS}{vf_speed},format=yuv420p[v]"
+        from ..media.render import film_grade
+        graph = f"{v},{film_grade('real')}fps={FPS}{vf_speed},format=yuv420p[v]"
         if src.get("has_audio"):
             graph += f";[0:a]{af}[a]"
         else:

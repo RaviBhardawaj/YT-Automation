@@ -441,9 +441,8 @@ def _publishing_problems(ws: int) -> list[dict[str, Any]]:
                   "t.type='upload' AND t.status='pending' AND t.last_error LIKE '%upload limit%' GROUP BY c.id",
                   (ws,)):
         out.append({"text": f"YouTube's daily upload limit for “{t['name']}” was reached — {t['n']} video(s) retry "
-                            f"automatically after {str(t['run_after'])[:16].replace('T', ' ')} UTC. New channels get "
-                            "a higher limit after phone verification.",
-                    "href": "https://www.youtube.com/verify", "label": "Verify channel", "external": True})
+                            f"automatically after {str(t['run_after'])[:16].replace('T', ' ')} UTC.",
+                    "key": f"upload_limit:{t['cid']}:{t['run_after']}"})
     for s in db.q("SELECT s.id, c.name, c.id AS cid FROM schedules s JOIN channels c ON c.id=s.channel_id WHERE "
                   "c.workspace_id=? AND s.enabled=1 AND s.task_type='channel_daily'", (ws,)):
         last = db.q1("SELECT result FROM tasks WHERE type='channel_daily' AND payload LIKE ? AND status='done' AND "
@@ -453,8 +452,29 @@ def _publishing_problems(ws: int) -> list[dict[str, Any]]:
                               "NOT IN ('rejected','failed')", tuple(pids)):
             out.append({"text": f"Today's scheduled video for “{s['name']}” was deleted, cancelled or failed — "
                                 "nothing will be published today unless you make it again.",
-                        "post": f"/api/schedules/{s['id']}", "body": '{"run_now": true}', "label": "Make it again"})
-    return out
+                        "post": f"/api/schedules/{s['id']}", "body": '{"run_now": true}', "label": "Make it again",
+                        "key": f"daily_missing:{s['id']}:{','.join(map(str, pids))}"})
+    for x in out:                                      # every notice can be closed; a new occurrence shows again
+        x.setdefault("key", f"{x.get('post') or x.get('href')}:{x['text'][:80]}")
+    closed = set(_dismissed(ws))
+    return [x for x in out if x["key"] not in closed]
+
+
+def _dismissed(ws: int) -> list[str]:
+    return (settings.get("ui.dismissed_notices") or {}).get(str(ws), [])
+
+
+@app.post("/api/notices/dismiss")
+async def api_dismiss_notice(request: Request):
+    """Close one 'Publishing needs you' notice for this account (kept on the server, so on every device)."""
+    key = str((await body(request)).get("key") or "")[:300]
+    if not key:
+        return bad("missing key")
+    ws = ws_id(request)
+    allk = settings.get("ui.dismissed_notices") or {}
+    allk[str(ws)] = ([k for k in allk.get(str(ws), []) if k != key] + [key])[-200:]
+    settings.set("ui.dismissed_notices", allk)
+    return ok(detail="Closed")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -558,7 +578,7 @@ def ideas_page(request: Request, channel: str = "", niche: str = "", format: str
         ids = db.loads(r["evidence_ids"], []) or []
         r["evidence"] = engine.load_evidence(f"id IN ({','.join('?' for _ in ids)})", tuple(ids)) if ids else []
     all_ch = chmod.all_channels(ws_id(request))
-    running = [t for t in db.q("SELECT id, type, payload FROM tasks WHERE type IN ('channel_ideas','ideation') "
+    running = [t for t in db.q("SELECT id, type, payload FROM tasks WHERE type IN ('channel_ideas','ideation','trend_research') "
                                "AND status IN ('pending','running')")
                if (db.loads(t["payload"], {}) or {}).get("channel_id") in {c["id"] for c in all_ch}
                or (t["type"] == "ideation" and int((db.loads(t["payload"], {}) or {}).get("workspace_id") or 1) == ws_id(request))]
@@ -568,7 +588,11 @@ def ideas_page(request: Request, channel: str = "", niche: str = "", format: str
                "kind": kind, "fresh": fresh, "status": status, "sort": sort, "q": q}
     from urllib.parse import urlencode
     qs = urlencode({k: v for k, v in filters.items() if v})
-    resp = page(request, "ideas.html", topics=rows, running=bool(running), channels=all_ch, ch=chmod.get(cid),
+    from ..creative import trends
+    ch_row = chmod.get(cid)
+    trend = trends.latest(cid) if trends.eligible(ch_row) else None
+    resp = page(request, "ideas.html", topics=rows, running=bool(running), channels=all_ch, ch=ch_row, trend=trend,
+                trends_on=trends.eligible(ch_row), yt_key=settings.has_secret("youtube_api_key"),
                 filters=filters, total=total, pages=pages, page_no=page_no, qs=qs, researched=researched,
                 niche_row=next((r for r in researched if r["id"] == nid_i), None), my_voices=_my_voices(ws_id(request)),
                 niches=sorted({c["niche"] for c in all_ch if c["niche"]}),
@@ -1137,6 +1161,20 @@ async def api_channel_ideas(request: Request, cid: int):
                                            "formats": fmts, "focus": str(data.get("focus") or "")[:300]},
                          dedupe=True, max_attempts=2)
     return ok(task_id=tid, detail=f"Generating ideas for {ch['name']}…")
+
+
+@app.post("/api/channels/{cid}/trends")
+async def api_channel_trends(request: Request, cid: int):
+    """Scan what is popular in this story channel's niche now and add original ideas made from it."""
+    from .. import channels as chmod
+    from ..creative import trends
+    ch = chmod.get(cid)
+    if not trends.eligible(ch):
+        return bad("trend research is for active story channels")
+    if not settings.has_secret("youtube_api_key"):
+        return bad("Add a free YouTube Data API key under Settings → Credentials first.")
+    tid = worker.enqueue("trend_research", {"channel_id": cid}, dedupe=True, max_attempts=2)
+    return ok(task_id=tid, detail=f"Looking at what's popular for {ch['name']}…")
 
 
 @app.post("/api/topics/{tid}/{action}")

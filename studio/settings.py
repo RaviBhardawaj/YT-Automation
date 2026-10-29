@@ -75,6 +75,8 @@ DEFAULTS: dict[str, Any] = {
     "research.contact": "",
     "research.max_page_fetch": 4,
     "research.youtube_daily_unit_budget": 3000,
+    "visuals.story_backgrounds": True,           # animated episodes: free AI-drawn, vision-checked set per scene
+    "trends.enabled": True,                      # daily trend research for story channels (original ideas only)
     "voice": {"engine": "kokoro", "voice_id": "hf_alpha", "speed": 1.0, "kokoro_model": "int8"},
     # Every video is Hindi unless it targets an international audience.
     "channel.audience_languages": {"india": "Hindi", "international": "English"},

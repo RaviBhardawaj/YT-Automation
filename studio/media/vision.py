@@ -62,7 +62,11 @@ def _parse(text: str) -> dict[str, Any] | None:
         return None
     try:
         j = json.loads(text[a:b + 1])
-        return {"score": max(0, min(10, int(round(float(j.get("score", 0)))))), "shows": str(j.get("shows", ""))[:120]}
+        out = {"score": max(0, min(10, int(round(float(j.get("score", 0)))))), "shows": str(j.get("shows", ""))[:120]}
+        if "people" in j:                                # background-art checks also say what to fix
+            out["people"] = j["people"] in (True, "true", "yes", 1)
+            out["fix"] = str(j.get("fix") or "")[:200]
+        return out
     except (ValueError, TypeError):
         return None
 
@@ -197,6 +201,38 @@ def _ollama(jpeg: bytes | list[bytes], prompt: str) -> Any:
     _usage("ollama_cloud", model, res is not None, "" if res else "unreadable reply",
            int(data.get("prompt_eval_count") or 0), int(data.get("eval_count") or 0))
     return res
+
+
+ART = ("You check a background picture for a children's cartoon episode. Wanted: {want}\n\n"
+       "Reply with JSON only: {{\"shows\": \"<what the picture really shows, max 15 words>\", \"score\": <0-10>, "
+       "\"people\": <true|false>, \"fix\": \"<what to change in the prompt, max 25 words, or empty>\"}}.\n"
+       "score = how clearly it shows the wanted place, props and effects as clean, bright 2D cartoon art a child "
+       "understands at a glance (0-2 for photo-realism, text, watermark, clutter or a broken picture; at most 5 when "
+       "big furniture or objects fill the left or right floor area where characters will stand). people = true "
+       "if ANY person, character, face, hand or animal is visible. fix: when score < 7 or people is true, say exactly "
+       "what to add, remove or change.")
+
+
+def check_art(raw: bytes, *, want: str) -> dict[str, Any] | None:
+    """{"score", "shows", "people", "fix", "by"} for a cartoon background, or None when no vision model could look."""
+    try:
+        jpeg = _small_jpeg(raw)
+    except Exception:
+        return {"score": 0, "shows": "unreadable image", "people": False, "fix": "", "by": "local"}
+    prompt = ART.format(want=want[:500])
+    for name, fn, has in (("gemini", _gemini, settings.has_secret("gemini_api_key")),
+                          ("ollama", _ollama, settings.has_secret("ollama_api_key"))):
+        if not has or time.time() - _down.get(name, 0) < 600:
+            continue
+        try:
+            res = fn(jpeg, prompt)
+        except (httpx.HTTPError, ValueError) as e:
+            log.info("art check via %s failed: %s", name, e)
+            _down[name] = time.time()
+            continue
+        if res:
+            return {"people": False, "fix": "", **res, "by": name}
+    return None
 
 
 def judge(raw: bytes, *, topic: str, narration: str, want: str, key: str = "") -> dict[str, Any] | None:

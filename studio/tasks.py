@@ -205,6 +205,16 @@ def _channel_ideas(payload: dict[str, Any], task: dict[str, Any]) -> Any:
                                     "focus": payload.get("focus")})
 
 
+@worker.handler("trend_research")
+def _trend_research(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    """What is popular in each story channel's niche (official API, metadata only) → original episode ideas."""
+    from .creative import trends
+    if payload.get("channel_id"):
+        row = trends.scan(int(payload["channel_id"]))
+        return trends.ideas_from(row) if row["videos"] else {"skipped": "no popular videos found"}
+    return trends.run_daily()
+
+
 @worker.handler("channel_stats")
 def _channel_stats(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     from .youtube import growth

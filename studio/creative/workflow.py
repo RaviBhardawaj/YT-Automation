@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from pydantic import BaseModel, Field
 
 from .. import channels, config, db, logs, settings
 from ..media import tts
@@ -227,7 +228,7 @@ def _draw_and_mix(p, fmt, scene_ids, audio_lines, out_dir, enc, silent, *, title
     if title_card:
         d = 2.6
         cartoon.render_card([(pkg["title"], 58, (255, 230, 40)), (ch["name"], 30, (255, 255, 255))], fmt, d, enc,
-                            cast=cast_list, mood=pkg["scenes"][0].get("mood", "funny"))
+                            cast=cast_list, mood=pkg["scenes"][0].get("mood", "funny"), scene=pkg["scenes"][0])
         pad(d)
         t0 += d
     for si in scene_ids:
@@ -296,6 +297,12 @@ def stage_animate(p: dict[str, Any]) -> None:
         res = _render(p, "short", seg["scenes"], lines, workdir(p["id"]), title_card=False, end_card=True,
                       hook=seg.get("hook", ""))
     else:
+        if settings.get("visuals.story_backgrounds"):    # drawn story sets per scene, checked and auto-fixed
+            from . import scene_art
+            n = scene_art.ensure(p["package"], workdir(p["id"]) / "sets")
+            pipeline.save(p["id"], package=p["package"])
+            logs.event("info", "creative", f"Story backgrounds: {n} of {len(p['package']['scenes'])} scenes drawn",
+                       production_id=p["id"])
         lines = {(x["scene"], x["line"]): x for x in tl["lines"]}
         res = _render(p, p["format"], list(range(len(p["package"]["scenes"]))), lines, workdir(p["id"]),
                       title_card=p["format"] == "long", end_card=True)
@@ -420,23 +427,70 @@ STAGE_FN = {"script": stage_script, "characters": stage_characters, "voice": sta
 STRONG = {"laugh": 3, "shout": 2, "surprised": 2, "scared": 3, "angry": 1}
 
 
+MIN_SHORT, MAX_SHORT = 15.0, 55.0
+
+
 def pick_moments(p: dict[str, Any], limit: int) -> list[dict[str, Any]]:
-    """Self-contained scenes with the most punch (laughs, shocks, payoffs) that fit a Short."""
+    """Complete jokes that stand on their own as Shorts: one or two consecutive scenes (15–55 s) with a setup and a
+    payoff — they must END on a laugh, shock or reveal, not stop in the middle. Best punch first, never overlapping."""
     pkg, tl = p["package"], p["timeline"]
     durs: dict[int, float] = {}
     for x in tl["lines"]:
         durs[x["scene"]] = durs.get(x["scene"], LEAD + TAIL) + x["duration"] + GAP
+    last = len(pkg["scenes"]) - 1
     scored = []
-    for si, sc in enumerate(pkg["scenes"]):
-        if durs.get(si, 99) > 55:
-            continue
-        score = sum(STRONG.get(ln["emotion"], 0) for ln in sc["lines"]) + (3 if si == len(pkg["scenes"]) - 1 else 0)
-        best = max(sc["lines"], key=lambda ln: STRONG.get(ln["emotion"], 0))
-        hook = screenplay.clean_text(best["text"])
-        scored.append({"scenes": [si], "score": score, "seconds": round(durs[si], 1),
-                       "hook": (hook[:60] + "…") if len(hook) > 60 else hook})
+    for si in range(len(pkg["scenes"])):
+        for span in (1, 2):
+            ids = list(range(si, min(si + span, last + 1)))
+            if len(ids) < span:
+                continue
+            secs = sum(durs.get(i, 99) for i in ids)
+            lines = [ln for i in ids for ln in pkg["scenes"][i]["lines"]]
+            if not MIN_SHORT <= secs <= MAX_SHORT or len(lines) < 3:
+                continue
+            ending = max((STRONG.get(ln["emotion"], 0) for ln in lines[-2:]), default=0)
+            if not ending:
+                continue                                   # no payoff at the end: not a complete joke
+            punch = sum(STRONG.get(ln["emotion"], 0) for ln in lines)
+            score = punch + 3 * ending + (3 if ids[-1] == last else 0) - (2 if span == 2 else 0)
+            best = max(lines, key=lambda ln: STRONG.get(ln["emotion"], 0))
+            hook = screenplay.clean_text(best["text"])
+            scored.append({"scenes": ids, "score": score, "seconds": round(secs, 1),
+                           "hook": (hook[:60] + "…") if len(hook) > 60 else hook})
     scored.sort(key=lambda x: -x["score"])
-    return scored[:limit]
+    chosen: list[dict[str, Any]] = []
+    for m in scored:
+        if all(not set(m["scenes"]) & set(c["scenes"]) for c in chosen):
+            chosen.append(m)
+        if len(chosen) == limit:
+            break
+    return chosen
+
+
+class ShortTitle(BaseModel):
+    title: str = Field(description="a YouTube Shorts title, max 60 characters, in the channel language: says the "
+                                   "funny situation and its promise (e.g. who does what crazy thing) — never a quoted "
+                                   "dialogue line, never the episode name")
+    on_screen: str = Field(description="2–5 words shown on screen in the first seconds that set up the joke")
+
+
+def short_title(p: dict[str, Any], m: dict[str, Any]) -> tuple[str, str]:
+    """A real title for a Short (what happens and why it's funny), not a line of dialogue cut out of the episode."""
+    from .. import ai
+    lines = "\n".join(f"{ln['speaker']}: {screenplay.clean_text(ln['text'])}" for i in m["scenes"]
+                      for ln in p["package"]["scenes"][i]["lines"])
+    lang = p.get("language") or "Hindi"
+    try:
+        out, _ = ai.generate("ideation", "You write YouTube Shorts titles for an original kids' cartoon channel. "
+                             "Output exactly one JSON object matching the schema.",
+                             f"LANGUAGE: {lang}\nTHE SHORT (complete scene):\n{lines}\n\nWrite the title and the "
+                             f"on-screen setup text in {lang}.", ShortTitle, max_tokens=400)
+        title, setup = out.title.strip().strip('"')[:60], out.on_screen.strip()[:30]
+        if title:
+            return title, setup or m["hook"][:30]
+    except Exception as e:  # a title must never stop the Short
+        logs.event("warning", "creative", f"Short title fallback: {e}"[:200], production_id=p["id"])
+    return f"{p['package']['title']}"[:60], m["hook"][:30]
 
 
 def make_shorts(parent_id: int) -> list[int]:
@@ -446,9 +500,11 @@ def make_shorts(parent_id: int) -> list[int]:
     existing = db.q1("SELECT COUNT(*) AS n FROM productions WHERE parent_id=? AND status<>'rejected'", (parent_id,))["n"]
     made = []
     for i, m in enumerate(pick_moments(p, max(0, int(ch.get("shorts_per_episode", 4)) - existing)), 1):
-        title = f"{m['hook'][:55]} | {p['package']['title']}"[:92] + " #Shorts"
+        name, setup = short_title(p, m)
+        m = {**m, "hook": setup}
+        title = f"{name} #Shorts"
         pkg = {"title": title, "description": p["package"].get("description", ""), "tags": p["package"].get("tags", []),
-               "thumbnail_text": m["hook"][:30]}
+               "thumbnail_text": setup}
         sid = db.insert("productions", {
             "topic_id": p.get("topic_id"), "format": "short", "title": title, "status": "queued", "stage": "animate",
             "kind": "story_short", "parent_id": parent_id, "channel_id": p["channel_id"],

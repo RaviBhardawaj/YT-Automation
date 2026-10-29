@@ -25,6 +25,7 @@
     <span class="row" style="flex-shrink:0">
       {% if x.post %}<button class="sm primary" data-post="{{ x.post }}"{% if x.body %} data-body='{{ x.body }}'{% endif %}>{{ x.label }}</button>{% endif %}
       {% if x.href %}<a class="btn sm" href="{{ x.href }}"{% if x.external %} target="_blank" rel="noopener"{% endif %}>{{ x.label if not x.post else 'Open' }}</a>{% endif %}
+      {% if x.key %}<button class="sm" title="Close this notice" aria-label="Close this notice" data-post="/api/notices/dismiss" data-body='{{ {"key": x.key}|tojson|forceescape }}'>✕</button>{% endif %}
     </span></div>{% endfor %}
 </div>{% endif %}
 {% if awaiting %}

@@ -82,6 +82,12 @@ GRADES = {
 }
 
 
+def film_grade(look: str) -> str:
+    """The film look as an FFmpeg filter prefix (ending in a comma, or empty when switched off) — for renderers
+    outside the scene pipeline, so every video gets the same treatment: kids' cartoons, stories, edits and clips."""
+    return _grade(look, "video")
+
+
 def _grade(look: str, kind: str) -> str:
     if settings.get("render.film_look") == "off" or kind == "anim":
         return ""                                            # charts/data animations stay exact

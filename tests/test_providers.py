@@ -18,6 +18,7 @@ db.migrate()
 from studio import auth, channels, pipeline, settings  # noqa: E402
 from studio.creative import film  # noqa: E402
 from studio.film_studio import providers as pv  # noqa: E402
+from studio.media import visuals  # noqa: E402
 
 auth.ensure_default_workspace()
 channels.ensure_default()
@@ -88,17 +89,40 @@ class RoutingTests(unittest.TestCase):
 class FilmImageRoutingTests(unittest.TestCase):
     def test_film_images_go_through_the_manager(self):
         out = Path(tempfile.mkdtemp()) / "a.png"
-        with healthy(), mock.patch("studio.media.visuals.cloudflare_ready", lambda: False):
-            with self.assertRaises(pipeline.NeedsAttention):
-                film._gen("x", out)                          # nothing free set up: stop with the reason
-        with healthy(), mock.patch("studio.media.visuals.cloudflare_ready", lambda: True):
-            with self.assertRaises(film.WaitForAllowance):
-                film._gen("x", out)                          # set up but spent today: wait for the reset
+        with healthy():
+            with self.assertRaises(film.WaitForAllowance) as w:
+                film._gen("x", out)                          # every free allowance spent: wait, never fail
+        self.assertLessEqual(w.exception.retry_after, 3600)  # and look again within the hour
         called = {}
         with healthy("cloudflare_flux"), mock.patch("studio.media.visuals.generate_cloudflare",
                                                     lambda *a, **k: called.setdefault("cf", True)):
             film._gen("x", out, refs=[out])
         self.assertTrue(called.get("cf"))
+
+
+    def test_spent_cloudflare_moves_on_to_the_free_flux_space(self):
+        out = Path(tempfile.mkdtemp()) / "b.png"
+        calls = []
+
+        def spent(*a, **k):
+            calls.append("cf")
+            raise visuals.AllowanceUsedUp("used up")
+
+        def flux(prompt, fmt, path, look="real", **k):
+            calls.append(("hf", k.get("refs")))
+            path.write_bytes(b"png")
+        with healthy("cloudflare_flux", "hf_flux"), mock.patch.object(visuals, "generate_cloudflare", spent), \
+                mock.patch.object(visuals, "generate_hf_flux", flux):
+            self.assertEqual(film._gen("x", out, refs=[out]), out)   # a cast shot still gets made
+        self.assertEqual(calls, ["cf", ("hf", None)])
+
+    def test_flux_space_rests_an_hour_after_a_quota_answer(self):
+        db.insert("ai_usage", {"provider": "hf_flux", "model": "m", "task": "t", "input_tokens": 0, "output_tokens": 0,
+                               "cost_usd": 0.0, "ok": 0, "error": "ZeroGPU quota exceeded", "created_at": db.iso()})
+        self.assertFalse(pv.health("hf_flux")["available"])
+        db.insert("ai_usage", {"provider": "hf_flux", "model": "m", "task": "t", "input_tokens": 0, "output_tokens": 1,
+                               "cost_usd": 0.0, "ok": 1, "error": "", "created_at": db.iso()})
+        self.assertTrue(pv.health("hf_flux")["available"])
 
 
 class SettingsPageTests(unittest.TestCase):

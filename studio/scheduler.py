@@ -22,6 +22,8 @@ DEFAULT_SCHEDULES = [
      "time_of_day": "06:00"},
     {"name": "Learn from results (better content every day)", "task_type": "learning_review", "kind": "daily",
      "time_of_day": "06:30"},
+    {"name": "Trend research for story channels (original ideas, never copies)", "task_type": "trend_research",
+     "kind": "daily", "time_of_day": "07:00"},
     # 7-part 'फिबोनाची पिवट सीखें' series: one lesson generated per day; switches itself off after part 7.
     {"name": "Fibonacci lesson series (daily 4 PM, 7 parts)", "task_type": "fib_lesson_daily", "kind": "daily",
      "time_of_day": "16:00"},

@@ -630,6 +630,22 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_film_takes_shot ON film_takes(shot_id, take_no);
     """,
+    # v18 — daily trend research for story channels: what is popular (official API metadata only) and the
+    # original ideas made from it. Additive only.
+    """
+    CREATE TABLE trend_scans (
+        id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL,
+        workspace_id INTEGER NOT NULL,
+        videos TEXT NOT NULL DEFAULT '[]',            -- [{title, url, channel, views, views_per_day, seconds, format}]
+        stats TEXT NOT NULL DEFAULT '{}',
+        patterns TEXT NOT NULL DEFAULT '{}',          -- themes, title/hook style, what the channel is missing
+        ideas TEXT NOT NULL DEFAULT '[]',             -- topic ids created from this scan
+        units INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_trend_scans_channel ON trend_scans(channel_id, id);
+    """,
 ]
 
 

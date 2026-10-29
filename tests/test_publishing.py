@@ -15,7 +15,7 @@ from studio import config, db  # noqa: E402
 
 config.ensure_dirs()
 db.migrate()
-from studio import auth, channels, jobs, worker  # noqa: E402
+from studio import auth, channels, jobs, settings, worker  # noqa: E402
 from studio.youtube.upload import UploadError  # noqa: E402
 
 auth.ensure_default_workspace()
@@ -88,6 +88,25 @@ class PublishingTests(unittest.TestCase):
         self.assertTrue(any("Paused one" in t for t in texts))
         self.assertTrue(any("scheduled video for “Dash”" in t for t in texts))
         self.assertTrue(any(x.get("post") == f"/api/schedules/{sid}" for x in webapp._publishing_problems(1)))
+
+
+    def test_upload_limit_notice_can_be_closed_and_comes_back_for_a_new_limit(self):
+        from studio.web import app as webapp
+        cid = channels.create({"name": "Closable"}, 1)
+        pid = prod(cid)
+        tid = worker.enqueue("upload", {"production_id": pid}, production_id=pid, max_attempts=2)
+        db.ex("UPDATE tasks SET last_error=?, run_after=? WHERE id=?",
+              ("UploadError: YouTube daily upload limit reached for this channel", "2026-10-29T17:41:27Z", tid))
+        mine = lambda: [x for x in webapp._publishing_problems(1) if "Closable" in x["text"]]
+        self.assertEqual(len(mine()), 1)
+        self.assertNotIn("verification", mine()[0]["text"])            # the channel is verified: no nagging
+        key = mine()[0]["key"]
+        allk = settings.get("ui.dismissed_notices") or {}
+        allk["1"] = allk.get("1", []) + [key]
+        settings.set("ui.dismissed_notices", allk)                      # what the ✕ button saves
+        self.assertEqual(mine(), [])
+        db.ex("UPDATE tasks SET run_after=? WHERE id=?", ("2026-10-30T17:41:27Z", tid))
+        self.assertEqual(len(mine()), 1)                                # a new limit event shows again
 
 
 class FinanceRuleScopeTests(unittest.TestCase):

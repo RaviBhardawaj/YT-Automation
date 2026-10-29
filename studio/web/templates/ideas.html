@@ -38,6 +38,29 @@
     <button class="primary" data-post="/api/channels/{{ ch.id }}/ideas" data-collect="#gen" data-done="Idea generation started">Generate ideas</button>
   </div>
 </form>
+{% if trends_on %}
+<div class="card" style="margin-bottom:14px">
+  <div class="spread"><div><h2 style="margin:0">Popular this week</h2>
+    <div class="muted small">Every morning the app looks at the most-viewed recent videos in this niche (official YouTube API — titles and numbers only, nothing is downloaded), finds what they have in common, and writes <b>original</b> episodes with your own characters on those themes. Ideas too close to a popular video's title are dropped.</div></div>
+    {% if yt_key %}<button class="sm" data-post="/api/channels/{{ ch.id }}/trends" data-reload="no" data-done="Looking at what's popular…">Scan now</button>{% endif %}</div>
+  {% if not yt_key %}<div class="note small" style="margin-top:8px">Add a free YouTube Data API key under <a href="/settings?tab=credentials">Settings → Credentials</a> to switch this on.</div>{% endif %}
+  {% if not trend %}{% if yt_key %}<div class="muted small" style="margin-top:8px">No scan yet — the next one runs at 07:00, or press “Scan now”.</div>{% endif %}
+  {% else %}
+  <div class="muted small" style="margin:6px 0">Scanned {{ trend.created_at|dt }} · {{ trend.stats.videos }} videos from {{ trend.stats.channels }} channels{% if trend.stats.median_long_seconds %} · typical long video {{ (trend.stats.median_long_seconds / 60)|round(1) }} min{% endif %}{% if trend.stats.median_short_seconds %} · typical Short {{ trend.stats.median_short_seconds }} s{% endif %} · {{ trend.ideas|length }} original ideas added</div>
+  {% if trend.patterns.themes %}<div class="grid g2">
+    <div><b class="small">Themes that work</b>
+      {% for t in trend.patterns.themes %}<div class="small" style="margin-top:4px"><b>{{ t.theme }}</b> <span class="muted">· {{ t.videos }} videos — {{ t.why_it_works }}</span></div>{% endfor %}
+      <div class="small" style="margin-top:6px"><b>Titles:</b> <span class="muted">{{ trend.patterns.title_style }}</span></div>
+      <div class="small"><b>Openings:</b> <span class="muted">{{ trend.patterns.hook_style }}</span></div></div>
+    <div><b class="small">What this channel is missing</b>
+      {% for m in trend.patterns.what_we_are_missing %}<div class="small" style="margin-top:4px">• {{ m }}</div>{% endfor %}</div>
+  </div>{% endif %}
+  <details style="margin-top:8px"><summary class="small">The popular videos ({{ trend.videos|length }})</summary>
+    <table class="small">{% for v in trend.videos[:20] %}<tr><td><a href="{{ v.url }}" target="_blank" rel="noopener">{{ v.title[:80] }}</a> <span class="muted">· {{ v.channel }}</span></td>
+      <td>{{ '{:,}'.format(v.views_per_day) }}/day</td><td>{{ v.seconds // 60 }}:{{ '%02d' % (v.seconds % 60) }}</td></tr>{% endfor %}</table></details>
+  {% endif %}
+</div>
+{% endif %}
 {% else %}
 <div class="note">To get idea suggestions for a channel's niche, pick the channel in the filter below. For something new that isn't about your channels, research it on <a href="/niches">Niches</a>{% if researched %} or pick a researched niche below{% endif %}.</div>
 {% endif %}

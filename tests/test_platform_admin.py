@@ -105,7 +105,7 @@ class PermissionTests(unittest.TestCase):
         if not db.q1("SELECT is_admin FROM users WHERE email='first-admin@test.local'")["is_admin"]:
             self.skipTest("another test module created the first account")
         r = client(admin_tok).post(f"/api/admin/workspaces/{ws}/features",
-                                   json={"create": True, "upload_edit": True, "publish": True, "schedules": False,
+                                   json={"create": True, "upload_edit": True, "publish": True, "schedules": False, "film_studio": True,
                                          "ai_video": False})
         self.assertTrue(r.json()["ok"], r.text)
         self.assertEqual(db.loads(plans.workspace(ws)["permissions"] if False else

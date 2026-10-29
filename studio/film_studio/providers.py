@@ -32,6 +32,17 @@ def _cf_health() -> tuple[bool, str]:
     return left > 300, f"{max(0, left):,} of {visuals.CF_FREE_NEURONS:,} free neurons left today"
 
 
+def _hf_flux_health() -> tuple[bool, str]:
+    """Free without a key; after a quota answer it rests for an hour (ZeroGPU minutes come back over the day)."""
+    last = db.q1("SELECT ok, error, created_at FROM ai_usage WHERE provider='hf_flux' ORDER BY id DESC LIMIT 1")
+    if last and not last["ok"] and "quota" in (last["error"] or "").lower():
+        when = db.parse_iso(last["created_at"])
+        if when and (db.utcnow() - when).total_seconds() < 3600:
+            return False, "free GPU minutes used up — tried again within the hour"
+    who = "your free Hugging Face token" if settings.has_secret("hf_token") else "no key (a Hugging Face token gives more)"
+    return True, f"ready · {who}"
+
+
 def _local_sd_health() -> tuple[bool, str]:
     import httpx
     url = (settings.get("visuals.local_sd_url") or "").rstrip("/")
@@ -87,7 +98,13 @@ REGISTRY: list[dict[str, Any]] = [
      "allowance": "about 10,000 neurons a day (~60–90 images), resets 00:00 UTC", "checked": CHECKED,
      "source": "Cloudflare Workers AI free plan", "licence": "Apache-2.0", "commercial": True,
      "hardware": "none (cloud)", "limits": "about 1 minute per image; 4 reference pictures max",
-     "est_cost_usd": 0.0, "fallback": ["local_sd"], "health": _cf_health},
+     "est_cost_usd": 0.0, "fallback": ["hf_flux", "local_sd"], "health": _cf_health},
+    {"id": "hf_flux", "name": "FLUX.1 schnell — Hugging Face ZeroGPU Space", "caps": ["image"],
+     "where": "remote", "model": "black-forest-labs/FLUX.1-schnell (official Space)", "cost": "free_allowance",
+     "allowance": "free ZeroGPU minutes (more with a free Hugging Face token); about 8 s per image",
+     "checked": CHECKED, "source": "Black Forest Labs' public Space", "licence": "Apache-2.0", "commercial": True,
+     "hardware": "none (cloud)", "limits": "no reference pictures — faces follow the written description only",
+     "est_cost_usd": 0.0, "fallback": ["local_sd"], "health": _hf_flux_health},
     {"id": "local_sd", "name": "Local Stable Diffusion (A1111/Forge/Draw Things API)", "caps": ["image"],
      "where": "local", "model": "your local checkpoint", "cost": "free_local", "checked": CHECKED,
      "licence": "depends on the checkpoint you load", "commercial": None, "hardware": "Apple Silicon / GPU",
@@ -214,6 +231,16 @@ def choose(cap: str) -> dict[str, Any]:
                                   "camera move — labelled as such, not as video. Options: set up a free Hugging Face "
                                   "token (ZeroGPU), install Wan 2.2 locally, or allow a paid provider."}
     raise NoFreeProvider(f"No free provider can do '{cap}' right now. Tried: " + "; ".join(tried))
+
+
+def candidates(cap: str) -> list[dict[str, Any]]:
+    """Every provider that can do `cap` right now, free-first, without paid ones at ₹0 — for trying in turn."""
+    rank = {"free_local": 0, "free_allowance": 1, "paid": 2}
+    out = []
+    for p in sorted((p for p in REGISTRY if cap in p["caps"]), key=lambda p: rank[p["cost"]]):
+        if (p["cost"] in FREE or paid_allowed(p["id"])) and health(p["id"])["available"]:
+            out.append({"provider": p["id"], "name": p["name"], "cost": p["cost"], "motion_type": _motion(cap)})
+    return out
 
 
 def _motion(cap: str) -> str:

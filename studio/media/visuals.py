@@ -236,6 +236,12 @@ LOOK_PROMPT = {
 }
 
 
+def offline() -> bool:
+    """STUDIO_OFFLINE=1 (the test suite): never call the free image services."""
+    import os
+    return os.environ.get("STUDIO_OFFLINE") == "1"
+
+
 def cloudflare_ready() -> bool:
     return bool((settings.get("visuals.cloudflare_account_id") or "").strip()) and \
         settings.has_secret("cloudflare_api_token")
@@ -260,6 +266,8 @@ def generate_cloudflare(prompt: str, fmt: str, out: Path, look: str = "real", *,
     """Free FLUX.2 klein image on Cloudflare Workers AI, styled for the channel (photo-real or kids' cartoon).
     refs: up to 4 reference pictures the model keeps faces/places consistent with.
     Stays inside the free daily allowance: when it is used up, the next option is tried instead of paying."""
+    if offline():
+        raise net.FetchError("offline")
     if not cloudflare_ready():
         raise net.FetchError("Cloudflare Workers AI is not set up (token + account ID)")
     w, h = size or ((768, 1344) if fmt == "short" else (1344, 768))
@@ -301,6 +309,78 @@ def generate_cloudflare(prompt: str, fmt: str, out: Path, look: str = "real", *,
     with Image.open(out) as im:
         iw, ih = im.size
     return Candidate("cloudflare_image", out.stem, "image", "", "", iw, ih, "AI-generated (FLUX.2 klein, Cloudflare)",
+                     "", "AI image", attribution="", extra={"synthetic": True})
+
+
+def trim_bars(im: Image.Image) -> Image.Image:
+    """Remove black letterbox/pillarbox bars an image model sometimes paints in for a "cinematic" prompt, then
+    restore the original size (centre crop), so the frame stays full."""
+    w, h = im.size
+    g = im.convert("L")
+    dark = lambda box: max(g.crop(box).getextrema()[1], 0) < 24
+    top = next((y for y in range(0, h // 4) if not dark((0, y, w, y + 1))), 0)
+    bottom = next((y for y in range(h - 1, h - h // 4, -1) if not dark((0, y, w, y + 1))), h - 1) + 1
+    left = next((x for x in range(0, w // 4) if not dark((x, 0, x + 1, h))), 0)
+    right = next((x for x in range(w - 1, w - w // 4, -1) if not dark((x, 0, x + 1, h))), w - 1) + 1
+    if (top, bottom, left, right) == (0, h, 0, w):
+        return im
+    from PIL import ImageOps
+    return ImageOps.fit(im.crop((left, top, right, bottom)), (w, h), Image.LANCZOS)
+
+
+HF_FLUX_SPACE = "https://black-forest-labs-flux-1-schnell.hf.space"     # Black Forest Labs' own FLUX.1 [schnell] Space
+
+
+def generate_hf_flux(prompt: str, fmt: str, out: Path, look: str = "real", *,
+                     size: tuple[int, int] | None = None) -> Candidate:
+    """Free FLUX.1 [schnell] (Apache-2.0) image from Black Forest Labs' Hugging Face ZeroGPU Space — the next free
+    tier once Cloudflare's daily allowance is spent. Uses the owner's free Hugging Face token when saved (their own
+    daily ZeroGPU minutes), otherwise the smaller anonymous allowance. Quota exhaustion raises AllowanceUsedUp."""
+    if offline():
+        raise net.FetchError("offline")
+    w, h = size or ((768, 1344) if fmt == "short" else (1344, 768))
+    seed = int(hashlib.sha1(out.name.encode() + prompt.encode()).hexdigest()[:7], 16)
+    headers = {"Authorization": f"Bearer {settings.secret('hf_token')}"} if settings.has_secret("hf_token") else {}
+    data = [f"{prompt}. {LOOK_PROMPT.get(look, LOOK_PROMPT['real'])}"[:1800], seed, False, w, h, 4]
+    result, error = None, None
+    with httpx.Client(transport=httpx.HTTPTransport(local_address="0.0.0.0", retries=1), headers=headers,
+                      timeout=httpx.Timeout(240, connect=20)) as c:
+        r = c.post(f"{HF_FLUX_SPACE}/gradio_api/call/infer", json={"data": data})
+        r.raise_for_status()
+        with c.stream("GET", f"{HF_FLUX_SPACE}/gradio_api/call/infer/{r.json()['event_id']}") as s:
+            kind = ""
+            for line in s.iter_lines():
+                if line.startswith("event:"):
+                    kind = line.split(":", 1)[1].strip()
+                elif line.startswith("data:") and kind in ("complete", "error"):
+                    payload = line.split(":", 1)[1].strip()
+                    result, error = (json.loads(payload), None) if kind == "complete" else (None, payload)
+                    break
+        ok = bool(result) and error is None
+        try:
+            db.insert("ai_usage", {"provider": "hf_flux", "model": "FLUX.1-schnell", "task": "scene_image",
+                                   "input_tokens": 0, "output_tokens": 1 if ok else 0, "cost_usd": 0.0, "ok": int(ok),
+                                   "error": "" if ok else ("quota (no detail)" if (error or "null").strip().lower()
+                                                           in ("null", "none", "") else error)[:250],
+                                   "created_at": db.iso()})
+        except Exception:  # usage logging must never stop a video
+            pass
+        if not ok:
+            msg = error or "no result from the Space"
+            # an empty error ("null") is how the Space reports a spent anonymous GPU allowance
+            if msg.strip().lower() in ("null", "none", "") or \
+                    any(k in msg.lower() for k in ("quota", "exceeded", "gpu task aborted", "zerogpu")):
+                raise AllowanceUsedUp("today's free Hugging Face GPU minutes are used up")
+            raise net.FetchError(f"FLUX Space error: {msg[:200]}")
+        img = result[0] if isinstance(result, list) else result
+        url = (img or {}).get("url") or f"{HF_FLUX_SPACE}/gradio_api/file={(img or {}).get('path')}"
+        dl = c.get(url)
+        dl.raise_for_status()
+    with Image.open(io.BytesIO(dl.content)) as im:
+        im = trim_bars(im.convert("RGB"))
+        im.save(out, "PNG")
+        iw, ih = im.size
+    return Candidate("hf_flux", out.stem, "image", "", "", iw, ih, "AI-generated (FLUX.1 schnell, Apache-2.0)",
                      "", "AI image", attribution="", extra={"synthetic": True})
 
 
@@ -370,17 +450,19 @@ def fetch(c: Candidate) -> Path:
 
 # ------------------------------------------------------------------ per-scene selection
 
-GENERATORS = ("cloudflare_image", "local_sd", "gemini_image")
+GENERATORS = ("cloudflare_image", "hf_flux", "local_sd", "gemini_image")
+FREE_GENERATORS = ("cloudflare_image", "hf_flux")   # free allowances, tried in this order before local/paid ones
 PHOTO_ONLY = ("pexels", "openverse", "wikimedia")       # real photos/footage only — never used for kids' cartoon style
 
 
 def provider_order(scene: dict[str, Any]) -> list[str]:
     enabled = settings.get("visuals.enabled") or {}
     order = list(settings.get("visuals.order") or [])
-    if "cloudflare_image" not in order:            # free generator: before the local/paid ones (older saved orders)
-        at = next((i for i, p in enumerate(order) if p in ("local_sd", "gemini_image", "procedural")), len(order))
-        order.insert(at, "cloudflare_image")
-    order = [p for p in order if enabled.get(p, p == "cloudflare_image")]
+    for gen in FREE_GENERATORS:                    # free generators: before the local/paid ones (older saved orders)
+        if gen not in order:
+            at = next((i for i, p in enumerate(order) if p in ("local_sd", "gemini_image", "procedural")), len(order))
+            order.insert(at, gen)
+    order = [p for p in order if enabled.get(p, p in FREE_GENERATORS)]
     if scene["visual_type"] == "illustration":
         gens = [p for p in order if p in GENERATORS]
         order = gens + [p for p in order if p not in gens]
@@ -517,13 +599,15 @@ def choose(scene: dict[str, Any], idx: int, fmt: str, used: set[str], out_dir: P
                 continue
             try:
                 if prov in GENERATORS:
-                    if near and prov != "cloudflare_image":   # free on-topic stock before a paid/local image
+                    if near and prov not in FREE_GENERATORS:  # free on-topic stock before a paid/local image
                         return take_near()
                     target = out_dir / f"gen_{idx:03d}.png"
                     prompt = (f"{scene['visual_description']} ({scene['visual_query']}). For a video about: {topic}"
                               if topic else f"{scene['visual_description']} ({scene['visual_query']})")
                     if prov == "cloudflare_image":
                         c = generate_cloudflare(prompt, fmt, target, look)
+                    elif prov == "hf_flux":
+                        c = generate_hf_flux(prompt, fmt, target, look)
                     elif prov == "local_sd":
                         c = generate_local_sd(f"{prompt}. {LOOK_PROMPT.get(look, '')}", w, h, target)
                     else:
@@ -625,7 +709,8 @@ def credits(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for a in assets:
-        if a["provider"] in ("procedural", "local_sd", "gemini_image", "gemini_video") or not a.get("license"):
+        if a["provider"] in ("procedural", "local_sd", "gemini_image", "gemini_video", "cloudflare_image", "hf_flux") \
+                or not a.get("license"):
             continue
         lic = a["license"]
         required = bool(_REQUIRES_ATTRIBUTION.search(lic)) and "CC0" not in lic.upper()

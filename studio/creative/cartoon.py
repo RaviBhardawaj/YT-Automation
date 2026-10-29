@@ -195,6 +195,27 @@ def background(location: str, time: str, mood: str, w: int, h: int) -> Image.Ima
 
 # ------------------------------------------------------------------ characters
 
+def backdrop(scene: dict[str, Any], w: int, h: int) -> Image.Image:
+    """The scene's drawn story background (scene_art) when it has one, else the built-in drawn set."""
+    art = scene.get("bg_image")
+    if art and Path(art).exists():
+        from PIL import ImageOps
+        with Image.open(art) as im:
+            return ImageOps.fit(im.convert("RGB"), (w, h), Image.LANCZOS, centering=(0.5, 0.6))
+    return background(scene.get("location", "home"), scene.get("time", "day"), scene.get("mood", "funny"), w, h)
+
+
+def shadows(bg: Image.Image, xs: list[float], ground: float, char_h: float) -> Image.Image:
+    """Soft contact shadows so the characters stand on the drawn floor instead of floating over it."""
+    layer = Image.new("L", bg.size, 0)
+    d = ImageDraw.Draw(layer)
+    rx, ry = char_h * 0.2, char_h * 0.035
+    for x in xs:
+        d.ellipse([x - rx, ground - ry, x + rx, ground + ry], fill=120)
+    layer = layer.filter(ImageFilter.GaussianBlur(max(2, int(char_h * 0.02))))
+    return Image.composite(Image.new("RGB", bg.size, (20, 16, 24)), bg.convert("RGB"), layer)
+
+
 def draw_character(img: Image.Image, design: dict[str, Any], x: float, ground: float, height: float,
                    state: dict[str, Any]) -> None:
     """Draw one character. state: t, amp (0-1 mouth from audio), emotion, talking, blink, look (-1..1)."""
@@ -468,9 +489,10 @@ class Encoder:
     def __init__(self, out: Path, fmt: str):
         self.w, self.h = SIZES[fmt]
         ow, oh = OUT[fmt]
+        from ..media.render import film_grade
         self.p = subprocess.Popen(
             [config.FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
-             "-s", f"{self.w}x{self.h}", "-r", str(FPS), "-i", "-", "-vf", f"scale={ow}:{oh}:flags=lanczos",
+             "-s", f"{self.w}x{self.h}", "-r", str(FPS), "-i", "-", "-vf", f"{film_grade('cartoon')}scale={ow}:{oh}:flags=lanczos",
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p", str(out)],
             stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         self.frames = 0
@@ -509,6 +531,15 @@ def positions(n: int, w: int) -> list[float]:
     return [w * (i + 1) / (n + 1) for i in range(n)]
 
 
+STAGE = {1: [0.3], 2: [0.24, 0.76], 3: [0.16, 0.34, 0.8], 4: [0.13, 0.3, 0.7, 0.87]}
+
+
+def stage_positions(n: int, w: int) -> list[float]:
+    """On a drawn story set the centre belongs to the story's object (the diya, the phone…): characters stand to
+    its left and right so it stays in view."""
+    return [w * x for x in STAGE.get(n, [(i + 1) / (n + 1) for i in range(n)])]
+
+
 def _grade_mask(w: int, h: int, mood: str) -> tuple[Image.Image, Image.Image]:
     """Horror grade: cold dark colour blended in, strongest at the edges (vignette)."""
     strength = 0.78 if mood == "scary" else 0.55
@@ -523,15 +554,17 @@ def render_scene(scene: dict[str, Any], cast: dict[str, dict[str, Any]], lines: 
     """Animate one scene. lines: [{speaker, text, emotion, start, end, env}] with times relative to the scene."""
     w, h = SIZES[fmt]
     portrait = fmt == "short"
-    bg = background(scene.get("location", "home"), scene.get("time", "day"), scene.get("mood", "funny"), w, h)
+    bg = backdrop(scene, w, h)
     keys = [k for k in scene.get("characters", []) if k in cast]
     for ln in lines:
         if ln["speaker"] in cast and ln["speaker"] not in keys:
             keys.append(ln["speaker"])
     keys = keys[:4]
-    xs = dict(zip(keys, positions(len(keys), w)))
+    xs = dict(zip(keys, (stage_positions if scene.get("bg_image") and not portrait else positions)(len(keys), w)))
     ground = h * (0.64 if portrait else 0.80)            # feet stay above the subtitle box
     char_h = h * (0.34 if portrait else 0.56) * (0.92 if len(keys) >= 4 else 1.0)
+    if scene.get("bg_image"):
+        bg = shadows(bg, list(xs.values()), ground, char_h)
     frames = max(1, int(round(total * FPS)))
     hook_layer = _subtitle("", hook, w, h, (255, 214, 0), portrait) if hook else None
     grade = _grade_mask(w, h, scene.get("mood")) if scene.get("mood") in ("scary", "tense") else None
@@ -577,11 +610,11 @@ def render_scene(scene: dict[str, Any], cast: dict[str, dict[str, Any]], lines: 
 
 def render_card(lines_text: list[tuple[str, int, tuple[int, int, int]]], fmt: str, seconds: float, enc: Encoder,
                 location: str = "city", time: str = "evening", mood: str = "funny",
-                cast: list[dict[str, Any]] | None = None) -> None:
-    """Title / end card: background, characters waving and big text that pops in."""
+                cast: list[dict[str, Any]] | None = None, scene: dict[str, Any] | None = None) -> None:
+    """Title / end card: background (the episode's own drawn set when given), characters waving, big text."""
     w, h = SIZES[fmt]
     portrait = fmt == "short"
-    bg = background(location, time, mood, w, h)
+    bg = backdrop(scene, w, h) if scene and scene.get("bg_image") else background(location, time, mood, w, h)
     bg = Image.blend(bg, Image.new("RGB", (w, h), (10, 10, 25)), 0.45)
     frames = int(seconds * FPS)
     cast = (cast or [])[:3]
@@ -607,7 +640,7 @@ def render_card(lines_text: list[tuple[str, int, tuple[int, int, int]]], fmt: st
 
 def thumbnail(cast: list[dict[str, Any]], title: str, scene: dict[str, Any], out: Path) -> Path:
     w, h = 1280, 720
-    img = background(scene.get("location", "home"), scene.get("time", "day"), scene.get("mood", "funny"), w, h)
+    img = backdrop(scene, w, h)
     emos = ["surprised", "laugh", "shout", "happy"]
     xs = [w * 0.68, w * 0.88, w * 0.5][: max(1, min(3, len(cast)))]
     for i, (c, x) in enumerate(zip(cast[:3], xs)):

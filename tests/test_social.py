@@ -12,6 +12,7 @@ from unittest import mock
 
 os.environ.setdefault("STUDIO_DATA_DIR", tempfile.mkdtemp(prefix="studio-test-"))
 os.environ.setdefault("STUDIO_KEYRING_SERVICE", "yt-automation-studio-tests")  # never the real Keychain logins
+os.environ.setdefault("STUDIO_OFFLINE", "1")              # never call the free image services
 
 from studio import config, db, settings  # noqa: E402
 

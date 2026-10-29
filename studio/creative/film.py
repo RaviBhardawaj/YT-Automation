@@ -52,9 +52,10 @@ class WaitForAllowance(Exception):
     def __init__(self) -> None:
         now = datetime.now(timezone.utc)
         reset = (now + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
-        self.retry_after = int((reset - now).total_seconds())
-        super().__init__("Today's free image allowance is used up — filming continues automatically after it "
-                         "resets (05:35 IST).")
+        # check again within the hour: the free GPU minutes on Hugging Face come back during the day
+        self.retry_after = min(int((reset - now).total_seconds()), 3600)
+        super().__init__("All free image allowances are used up for now — filming continues by itself as soon as "
+                         "one is back (checked every hour; Cloudflare resets at 05:30 IST).")
 
 
 class NetworkHiccup(Exception):
@@ -185,32 +186,43 @@ def stage_plan(p: dict[str, Any]) -> None:
 # ------------------------------------------------------------------ cast (portraits + location)
 
 def _gen(prompt: str, out: Path, *, refs: list[Path] | None = None, size: tuple[int, int] = SHOT) -> Path:
-    """One free image, chosen by the Film Studio provider manager (never a paid provider at ₹0)."""
+    """One free image. Every free provider is tried in turn (Cloudflare with the cast pictures, then the free
+    FLUX Space, then a local Stable Diffusion server); filming only waits when all of them are used up."""
     if out.exists():
         return out
-    from .. import pipeline
     from ..film_studio import providers
-    try:
-        pick = providers.choose("image_ref" if refs else "image")
-    except providers.NoFreeProvider as e:
-        if visuals.cloudflare_ready():                # set up but today's allowance is spent: wait, don't fail
-            raise WaitForAllowance() from e
-        raise pipeline.NeedsAttention(str(e)) from e
-    providers.guard(pick["provider"])
-    try:
-        if pick["provider"] == "cloudflare_flux":
-            visuals.generate_cloudflare(prompt, "long", out, look="real", refs=refs, size=size)
-        elif pick["provider"] == "local_sd":
-            visuals.generate_local_sd(f"{prompt}. {visuals.LOOK_PROMPT['real']}", size[0], size[1], out)
-        else:
-            raise pipeline.NeedsAttention(f"{pick['name']} can't make this picture here")
-    except visuals.AllowanceUsedUp as e:
-        raise WaitForAllowance() from e
-    except (httpx.TransportError, httpx.HTTPStatusError) as e:
-        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
-            raise
-        raise NetworkHiccup(f"image service didn't answer ({type(e).__name__}) — retrying in a few minutes") from e
-    return out
+    picks, tried = providers.candidates("image_ref" if refs else "image"), []
+    if refs:                                      # no reference-capable provider left: describe the cast instead
+        picks += [p for p in providers.candidates("image") if p["provider"] not in {q["provider"] for q in picks}]
+    hiccup = None
+    for pick in picks:
+        providers.guard(pick["provider"])
+        try:
+            if pick["provider"] == "cloudflare_flux":
+                visuals.generate_cloudflare(prompt, "long", out, look="real", refs=refs, size=size)
+            elif pick["provider"] == "hf_flux":
+                visuals.generate_hf_flux(prompt, "long", out, look="real", size=size)
+            elif pick["provider"] == "local_sd":
+                visuals.generate_local_sd(f"{prompt}. {visuals.LOOK_PROMPT['real']}", size[0], size[1], out)
+            else:
+                continue
+        except visuals.AllowanceUsedUp:
+            tried.append(f"{pick['name']}: used up")
+            continue
+        except (httpx.TransportError, httpx.HTTPStatusError, visuals.net.FetchError) as e:
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500 and \
+                    e.response.status_code != 429:
+                raise
+            hiccup = e
+            tried.append(f"{pick['name']}: {type(e).__name__}")
+            continue
+        if refs and "image_ref" not in providers.BY_ID[pick["provider"]]["caps"]:
+            logs.event("info", "film", f"{out.name}: made by {pick['name']} without the cast pictures (the reference "
+                                       "allowance is used up) — retry the shot later to match faces exactly")
+        return out
+    if hiccup is not None and not any(t.endswith("used up") for t in tried):
+        raise NetworkHiccup(f"image services didn't answer ({type(hiccup).__name__}) — retrying in a few minutes")
+    raise WaitForAllowance()
 
 
 def _location_text(film: dict[str, Any]) -> str:

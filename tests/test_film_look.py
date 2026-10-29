@@ -68,6 +68,25 @@ class LookTests(unittest.TestCase):
         finally:
             settings.set("render.film_look", "auto")
 
+    def test_every_renderer_gets_the_film_look(self):
+        seen = []
+        with mock.patch("studio.editing.engine.ff", lambda args: seen.append(" ".join(args))):
+            from studio.editing import engine
+            engine.cut_clip({"kind": "video", "path": "in.mp4", "has_audio": True}, 0, 2, 1920, 1080, "crop", 1.0,
+                            Path("out.mp4"))
+        self.assertIn("vignette", seen[0])                  # uploaded/edited videos and clips: cinematic
+        from studio.creative import cartoon
+        with mock.patch("subprocess.Popen") as popen:
+            cartoon.Encoder(Path("o.mp4"), "long")
+        self.assertIn("saturation=1.10", " ".join(popen.call_args[0][0]))   # kids' cartoons: bright and clean
+
+    def test_bars_painted_in_by_the_model_are_trimmed(self):
+        im = Image.new("RGB", (400, 200), (0, 0, 0))
+        im.paste(Image.new("RGB", (400, 160), (200, 150, 90)), (0, 20))
+        out = visuals.trim_bars(im)
+        self.assertEqual(out.size, (400, 200))
+        self.assertGreater(min(out.getpixel((200, 2))), 60)       # no black bar left at the top
+
 
 class HolderTests(unittest.TestCase):
     def test_holder_is_hidden_download_only_and_not_counted(self):
@@ -113,6 +132,11 @@ class DecideLaterTests(unittest.TestCase):
 
 
 class FluxTests(unittest.TestCase):
+    def setUp(self):                                   # these tests fake the network call themselves
+        patcher = mock.patch.dict(os.environ, {"STUDIO_OFFLINE": "0"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_free_generator_uses_channel_style_and_respects_daily_allowance(self):
         settings.set("visuals.cloudflare_account_id", "acct")
         sent = {}
@@ -149,6 +173,7 @@ class FluxTests(unittest.TestCase):
         if "gemini_image" in order:
             self.assertLess(order.index("cloudflare_image"), order.index("gemini_image"))
         self.assertIn("cloudflare_image", order)
+        self.assertEqual(order.index("hf_flux"), order.index("cloudflare_image") + 1)   # next free tier
 
 
 if __name__ == "__main__":
