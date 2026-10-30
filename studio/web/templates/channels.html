@@ -26,6 +26,7 @@
     {% if c.uploads_enabled %}<button class="sm" data-post="/api/channels/{{ c.id }}" data-body='{"uploads_enabled": false}' data-confirm="Switch off YouTube uploads for {{ c.name }}? Videos will still be made and kept for download.">Uploads ON — switch off</button>
     {% else %}<button class="sm primary" data-post="/api/channels/{{ c.id }}" data-body='{"uploads_enabled": true}'>Uploads OFF — switch on</button>{% endif %}
     {% if not c.connected %}<a class="btn sm" href="/channels/{{ c.id }}?tab=youtube">Connect YouTube</a>{% endif %}
+    <button class="sm danger" data-post="/api/channels/{{ c.id }}/delete" data-confirm="Delete the studio channel '{{ c.name }}'?{{ ' Its daily NIFTY automation stops.' if c.workflow == 'nifty_daily' }} Its videos are kept in your library and nothing is deleted on YouTube.">Delete</button>
   </div>
   {% endfor %}
 </div>

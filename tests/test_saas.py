@@ -207,6 +207,23 @@ class DownloadAndPublishTests(unittest.TestCase):
         self.assertIn("isn't connected", r.json()["error"])
         self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "awaiting_approval")
 
+    def test_connect_youtube_can_be_clicked_again(self):
+        """A second Connect (another channel, or a retry) used to crash while the first login was still pending."""
+        from studio.youtube import oauth
+        with mock.patch.object(oauth, "configured", lambda: True):
+            first = oauth.auth_url(1)
+            second = oauth.auth_url(2)
+        self.assertIn("state=", first)
+        self.assertNotEqual(first, second)
+
+    def test_channel_can_be_deleted_from_the_list(self):
+        ws, tok = account("del@test.local")
+        cid = channels.create({"name": "Broken add"}, ws)
+        self.assertIn(f"/api/channels/{cid}/delete", client(tok).get("/channels").text)
+        r = client(tok).post(f"/api/channels/{cid}/delete")
+        self.assertTrue(r.json()["ok"])
+        self.assertIsNone(channels.get(cid))
+
     def test_disconnected_channel_does_not_affect_others(self):
         from studio.youtube import oauth
         ws, _ = account("multi@test.local")

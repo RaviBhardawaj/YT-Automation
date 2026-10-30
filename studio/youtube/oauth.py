@@ -84,7 +84,7 @@ def auth_url(channel_id: int | None = None) -> str:
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     now = time.time()
     with _lock:
-        for k in [k for k, (_, t) in _pending.items() if now - t > 900]:
+        for k in [k for k, v in _pending.items() if now - v[1] > 900]:
             _pending.pop(k, None)
         _pending[state] = (verifier, now, _cid(channel_id))
     scopes = SCOPES + ([SCOPE_CAPTIONS] if settings.get("youtube.upload_captions") else [])
