@@ -721,6 +721,14 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
             logs.event("info", "pipeline", msg, production_id=pid)
             return
         raise NeedsAttention(msg + " Switch uploads on for that channel first.")
+    if by.startswith("auto") and ch and privacy != "private":
+        # Every workflow's automatic approval passes the same gate (channel opt-in, active, first N uploads
+        # approved by the owner, clean QA) — not only the ones that checked it themselves before calling here.
+        why = ops.auto_publish_block(ch, bool((p.get("qa") or {}).get("auto_publish_ok")))
+        if why:
+            save(pid, status="awaiting_approval", error=f"Waiting for your approval: {why}.")
+            logs.event("info", "pipeline", f"Not published automatically — {why}", production_id=pid)
+            return
     from . import plans
     if not plans.can(p.get("workspace_id") or 1, "publish"):
         msg = "Publishing to YouTube isn't enabled for this account — the video is kept here for download."

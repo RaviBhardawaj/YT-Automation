@@ -100,6 +100,29 @@ class GateTests(unittest.TestCase):
         self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "awaiting_approval")
 
 
+class EveryWorkflowTests(unittest.TestCase):
+    def test_a_workflow_calling_approve_directly_still_meets_the_gate(self):
+        ch = channel("Story channel", approve_first_n=3)          # auto-publish on, no uploads yet
+        pid = prod(channel_id=ch["id"], kind="story", qa=json.dumps({"passed": True, "auto_publish_ok": True}))
+        pipeline.approve(pid, privacy="public", publish_at=None, by="auto (channel auto-publish)")
+        row = db.q1("SELECT status, error FROM productions WHERE id=?", (pid,))
+        self.assertEqual(row["status"], "awaiting_approval")
+        self.assertIn("first 3", row["error"])
+        self.assertIsNone(db.q1("SELECT 1 FROM tasks WHERE production_id=? AND type='upload'", (pid,)))
+
+    def test_a_private_automatic_upload_is_not_publishing(self):
+        ch = channel("Private review", approve_first_n=3)
+        pid = prod(channel_id=ch["id"], qa=json.dumps({"passed": True, "auto_publish_ok": False}))
+        pipeline.approve(pid, privacy="private", publish_at=None, by="auto (private upload)")
+        self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "approved")
+
+    def test_the_owner_can_still_approve_by_hand(self):
+        ch = channel("Manual", approve_first_n=3)
+        pid = prod(channel_id=ch["id"])
+        pipeline.approve(pid, privacy="public", publish_at=None, by="owner@test")
+        self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "approved")
+
+
 class RepeatTests(unittest.TestCase):
     def test_the_same_story_on_another_channel_is_flagged(self):
         scenes = [{"narration": "The central bank raised interest rates by half a percent on Thursday and markets "

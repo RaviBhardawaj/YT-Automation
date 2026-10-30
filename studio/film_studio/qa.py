@@ -56,11 +56,14 @@ def motion_stats(path: str | Path, fps: int = 6) -> dict[str, Any]:
             "seconds": round(n / fps, 2)}
 
 
+FACE_ONLY = "sadtalker_local"
+
+
 def clip_checks(p: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Per-film counts of what every shot really is, plus a check of each real-video take's file and motion."""
     ws, pid = p["workspace_id"], p["id"]
-    counts = {"shots": 0, "video": 0, "camera_move": 0, "static": 0, "failed": 0, "waiting": 0, "needs_review": 0,
-              "missing": 0}
+    counts = {"shots": 0, "video": 0, "talking_face": 0, "camera_move": 0, "static": 0, "failed": 0, "waiting": 0,
+              "needs_review": 0, "missing": 0}
     bad, still_like, short = [], [], []
     for sh in store.shots(pid, ws):
         counts["shots"] += 1
@@ -70,17 +73,18 @@ def clip_checks(p: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, int]
             counts["missing"] += 1
             continue
         mt = sh["motion_type"]
-        counts["video" if mt in ("video", "dialogue_video", "lipsync_verified") else
+        take = next((t for t in store.takes(sh["id"], ws) if t["id"] == sh["current_take"]), None)
+        face_only = (take or {}).get("provider") == FACE_ONLY          # an animated photo: only the face moves
+        counts["talking_face" if face_only else "video" if mt in ("video", "dialogue_video", "lipsync_verified") else
                "camera_move" if mt == "camera_move" else "static"] += 1
         if mt not in ("video", "dialogue_video", "lipsync_verified"):
             continue
-        take = next((t for t in store.takes(sh["id"], ws) if t["id"] == sh["current_take"]), None)
         f = (take or {}).get("file_path") or ""
         if not f or not Path(f).exists() or Path(f).stat().st_size < 1024:
             bad.append(f"{sh['scene_no']}.{sh['shot_no']}")
             continue
         m = (json.loads((take or {}).get("settings") or "{}").get("motion_check") or {}) or motion_stats(f)
-        if m.get("static"):
+        if m.get("static") and not face_only:          # a talking face barely changes the frame — expected
             still_like.append(f"{sh['scene_no']}.{sh['shot_no']}")
         if m.get("checked") and m.get("seconds", 9) < 1.2:
             short.append(f"{sh['scene_no']}.{sh['shot_no']}")
@@ -92,7 +96,8 @@ def clip_checks(p: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, int]
         _check("real-video clip length", not short, "no unexpectedly short clips" if not short else
                f"very short: {', '.join(short[:8])}", severity="warn"),
         _check("what the film contains", True,
-               f"{counts['video']} real video · {counts['camera_move']} still + camera move · {counts['static']} still"
+               f"{counts['video']} real video · {counts['talking_face']} talking face on a still (SadTalker) · "
+               f"{counts['camera_move']} still + camera move · {counts['static']} still"
                f" · {counts['failed']} failed · {counts['waiting']} waiting · {counts['needs_review']} need review",
                kind="creative", severity="info"),
     ]
@@ -128,7 +133,11 @@ def technical(video: str, srt: str | None, expected: float, shots_missing: list[
     ]
     black = _ff(["-i", video, "-an", "-vf", "blackdetect=d=0.6:pix_th=0.08", "-f", "null", "-"])
     black_s = sum(float(x) for x in re.findall(r"black_duration:([\d.]+)", black))
-    checks.append(_check("no unintended black", black_s <= max(2.0, dur * 0.02), f"{black_s:.1f} s black", severity="warn"))
+    from .edit import END_SEC, TITLE_SEC                        # the dark title and end cards are intended
+    unintended = max(0.0, black_s - TITLE_SEC - END_SEC)
+    checks.append(_check("no unintended black", unintended <= max(2.0, dur * 0.02),
+                         f"{black_s:.1f} s dark, of which {TITLE_SEC + END_SEC:.1f} s are the title/end cards",
+                         severity="warn"))
     from ..media import qa as media_qa
     fr = media_qa.freeze_check(Path(video), dur)                  # on the final film, not the key pictures
     checks.append(_check("no frozen picture", fr["ok"], fr["detail"], severity="warn"))
@@ -160,14 +169,20 @@ def creative(p: dict[str, Any], limit: int = 12) -> tuple[list[dict[str, Any]], 
     by_motion: dict[str, int] = {}
     for sh in shots:
         by_motion[sh["motion_type"]] = by_motion.get(sh["motion_type"], 0) + 1
-    real = sum(v for k, v in by_motion.items() if k in ("video", "dialogue_video", "lipsync_verified"))
-    checks.append(_check("real motion", True, f"{real} of {len(shots)} shots are real video; the rest are stills with "
-                                              "camera moves (labelled)", kind="creative", severity="info"))
+    faces = 0
+    for sh in shots:
+        cur = next((t for t in store.takes(sh["id"], ws) if t["id"] == sh.get("current_take")), None)
+        faces += int((cur or {}).get("provider") == FACE_ONLY)
+    real = sum(v for k, v in by_motion.items() if k in ("video", "dialogue_video", "lipsync_verified")) - faces
+    checks.append(_check("real motion", True, f"{real} of {len(shots)} shots are real video; {faces} are a talking "
+                                              "face on a still picture (SadTalker — only the face moves); the rest are "
+                                              "stills with camera moves (labelled)", kind="creative", severity="info"))
     talking = by_motion.get("dialogue_video", 0)
     checks.append(_check("lip-sync", None,                 # a limitation to report, never a pass and never a block
-                         (f"{talking} dialogue shot(s) lip-synced from their own voice line by LTX-2 (not measured); "
-                          if talking else "") +
-                         ("unverified on the other AI video shots; " if real - talking else "") +
+                         (f"{talking - faces} dialogue shot(s) lip-synced by LTX-2 (not measured); "
+                          if talking - faces else "") +
+                         (f"{faces} by SadTalker on this Mac (face only, not measured); " if faces else "") +
+                         ("unverified on the other AI video shots; " if real - (talking - faces) > 0 else "") +
                          "not supported on stills with camera moves — dialogue plays over the speaker's shot",
                          kind="creative"))
     warn = [w for w in (film.get("audio_sync") or {}).get("warnings", [])]

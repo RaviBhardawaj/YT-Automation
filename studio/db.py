@@ -707,6 +707,10 @@ MIGRATIONS: list[str] = [
         model TEXT NOT NULL DEFAULT ''
     );
     """,
+    # v22 — an approved niche can be handed to a channel (several niches approved at once, one per channel).
+    """
+    ALTER TABLE niches ADD COLUMN channel_id INTEGER;
+    """,
 ]
 
 

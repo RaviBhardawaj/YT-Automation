@@ -1,8 +1,8 @@
 # YT Automation Studio
 
-A local web app that researches a niche, finds and ranks topics with evidence, writes original scripts, voices them with a local TTS engine, renders Shorts (9:16) and long-form (16:9) videos with FFmpeg, makes thumbnails, runs a quality gate, and uploads to your YouTube channel — on a schedule, with your approval.
+A local, multi-channel YouTube studio: each channel has its own niche, language, voice, schedule and YouTube login. It researches topics with evidence, writes original scripts and screenplays, makes pictures, talking presenters and short films, voices them, renders long videos and Shorts with FFmpeg, runs a quality gate on the final render, and uploads on a schedule — only through your approval or a channel's explicit auto-publish opt-in. Afterwards it reads analytics, retention per scene and comments, and learns from them.
 
-Everything runs on your own Mac or Windows PC. External services are optional and only used when you add their key.
+Everything runs on your own Mac or Windows PC with free providers first (budget ₹0 by default). Paid services stay off unless you switch them on.
 
 ## Install and start
 
@@ -21,10 +21,13 @@ Then open http://127.0.0.1:8765. Full guide, including moving to another compute
 
 | Purpose | Default | Optional |
 |---|---|---|
-| Text AI | Ollama local (install separately), Ollama Cloud (your Ollama key) | Claude API (billed per token, separate from Claude Pro/Max), Gemini |
-| Research | Google News RSS, Wikipedia + pageviews, Ollama web search | YouTube Data API key, Hacker News, your RSS feeds |
-| Voice | Kokoro (Apache-2.0) — Hindi + English | Piper voices (check each licence) |
-| Visuals | Original procedural art | Pexels, Pixabay, Openverse, Wikimedia Commons, local Stable Diffusion API, Gemini images |
+| Text AI | Ollama local/Cloud, Gemini (rotates 7 free models), Cloudflare Llama 3.3 70B — free, tried in turn, then wait | Claude API (paid, off unless chosen) |
+| Research | Google Trends/News RSS, Wikipedia + pageviews, Ollama web search | YouTube Data API key, Hacker News, your RSS feeds |
+| Voice | Kokoro (Apache-2.0) — Hindi + English | Piper, Chatterbox clone (consent), Indic Parler, Sarvam (paid) |
+| Pictures | stock (Pixabay, Openverse, Wikimedia) with a vision check; Cloudflare / Hugging Face / local FLUX | Pexels, local Stable Diffusion, Gemini images (paid) |
+| Motion & talking | free ZeroGPU Wan 2.2 and LTX-2 (few a day); SadTalker talking face on the Mac (no limit) | — |
+
+Live status of every provider: dashboard → **AI providers**. Fallback order: [docs/architecture/PROVIDER_FALLBACK_MATRIX.md](docs/architecture/PROVIDER_FALLBACK_MATRIX.md).
 
 A monthly AI spending limit (Settings › AI) blocks any paid call that could cross it. When the limit is reached, paid calls stop and the app either continues with Ollama or pauses the task until next month.
 
@@ -33,7 +36,8 @@ A monthly AI spending limit (Settings › AI) blocks any paid call that could cr
 - **YouTube audit:** uploads from Google Cloud projects that haven't passed the YouTube API audit are locked **private** by YouTube. The app uploads as private until you tick "audit passed" in Settings › YouTube.
 - **Voice licences:** all three Hindi Piper voices were trained on non-commercial datasets. Use Kokoro for a monetized channel. QA warns when a non-commercial voice is used.
 - **No fabricated data:** the models see only collected evidence and cite it by id. Claims without support are downgraded or flagged, and descriptions list the sources.
-- **Cinematic AI video** isn't generated locally (this Mac doesn't have the GPU memory for it). Motion comes from stock clips, camera moves, transitions and kinetic captions.
+- **AI video** is limited by free quotas: real motion and the most realistic talking clips come from free Hugging Face GPU minutes (a few clips a day). Otherwise shots are stills with camera moves or a SadTalker talking face — always labelled as such, never called video.
+- **Monetization:** progress is shown from YouTube's own numbers with the official rules and their check date; eligibility is not acceptance, and no date or income is promised.
 
 ## Safety design
 
@@ -41,6 +45,15 @@ A monthly AI spending limit (Settings › AI) blocks any paid call that could cr
 - Keys live in the macOS Keychain or Windows Credential Manager (service `yt-automation-studio`). Logs redact credentials.
 - Model output is validated with Pydantic and is never executed or put on a command line. FFmpeg filter graphs contain only app-computed numbers, and all on-screen text is rasterised by Pillow first.
 - Outbound fetches refuse private/loopback addresses, cap sizes, and honour robots.txt for web pages.
+
+## Operations
+
+- **Emergency stop** (Activity log) halts all new work and publishing; channels can be paused one by one.
+- **Backups**: the database is copied and checked every night (Storage page; `python -m studio.backup`), with a weekly restore drill.
+- **Audit trail** of approvals, uploads, channel switches and stops (Activity log).
+- **Storage page**: live memory/disk use and uninstall buttons for optional AI tools.
+
+Docs: [RUNBOOK](docs/RUNBOOK.md) · [Disaster recovery](docs/operations/DISASTER_RECOVERY_PLAN.md) · [Backup & restore](docs/operations/BACKUP_AND_RESTORE.md) · [Provider failures](docs/operations/PROVIDER_FAILURE_RUNBOOK.md) · [Offline](docs/operations/OFFLINE_CAPABILITIES.md) · [Continuity checklist](docs/operations/BUSINESS_CONTINUITY_CHECKLIST.md) · [Production readiness](docs/operations/PRODUCTION_READINESS_REPORT.md) · [Architecture audit](docs/ARCHITECTURE_AUDIT.md) · [Repository independence](docs/architecture/REPOSITORY_INDEPENDENCE.md) · [Licences](docs/architecture/OPEN_SOURCE_LICENSE_AUDIT.md) · [Monetization](docs/CHANNEL_AUTOMATION_AND_MONETIZATION.md)
 
 ## Files
 
@@ -50,12 +63,21 @@ studio/            application package (see module docstrings)
   research/        evidence sources, niche research, ideation, dedup
   content/         script/storyboard/metadata generation + validation
   media/           TTS, captions, visuals, graphics, render, thumbnail, QA
-  youtube/         OAuth (PKCE), resumable upload, analytics
+  creative/        news, animated stories, photo-real films, characters, music
+  film_studio/     Film Studio: casting, shot list, takes, talking clips, edit, QA
+  finance/         NIFTY channel: verified data, compliance gate, audit chain
+  editing/         Upload & Edit, AI Shorts clipper
+  youtube/         OAuth (PKCE), resumable upload, analytics, retention per scene, comments, growth
+  ops.py           emergency stop, publishing gate, audit trail, repeat check
+  backup.py        checked database backups, restore drill, restore
   web/             FastAPI app, templates, static assets
   pipeline.py      production state machine
   worker.py        persistent task queue (2 lanes, retries, recovery)
   scheduler.py     persistent schedules
 data/              database, logs, voices, renders (created at runtime)
+install/           installers; install/vendor/sadtalker = patched SadTalker (no GitHub needed)
+scripts/           model_vault.sh (offline copy of all models), benchmarks
+docs/              runbook, audits, architecture/ and operations/ documents
 tests/             python -m unittest discover -s tests
 ```
 

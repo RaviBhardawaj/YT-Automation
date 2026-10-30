@@ -21,13 +21,33 @@
   <div class="spread">
     <div><h2 style="margin:0">{{ n.name }} {% if n.status == 'approved' %}<span class="chip ok">approved</span>{% elif n.status == 'rejected' %}<span class="chip err">rejected</span>{% else %}<span class="chip">candidate</span>{% endif %}
       <span class="chip">{{ 'your niche' if n.source == 'user' else 'AI-proposed' }}</span></h2>
-      <div class="muted">{{ n.description }}</div></div>
+      <div class="muted">{{ n.description }}</div>
+      {% if n.channel_name %}<div class="small" style="margin-top:4px">Handled by <a href="/channels/{{ n.channel_id }}">{{ n.channel_name }}</a></div>{% endif %}</div>
     <div class="row">
-      {% if n.status != 'approved' %}<button class="primary" data-post="/api/niches/{{ n.id }}/approve" data-confirm="Approve '{{ n.name }}'? Video ideas for this niche are researched now — they aren't tied to your channels; you choose a channel (or none) per video.">Approve &amp; get ideas</button>{% else %}<button class="primary" data-post="/api/niches/{{ n.id }}/ideas">Get more ideas</button>{% endif %}
+      {% if n.status == 'approved' %}<button class="primary" data-post="/api/niches/{{ n.id }}/ideas">Get more ideas</button>{% endif %}
       <a class="btn" href="/ideas?channel=all&nid={{ n.id }}">See its ideas</a>
       {% if n.status == 'candidate' %}<button data-post="/api/niches/{{ n.id }}/reject">Reject</button>{% endif %}
     </div>
   </div>
+  <details class="card tight" style="margin-top:12px" {{ 'open' if n.status == 'candidate' }}>
+    <summary><b>{{ 'Approve and give this niche to a channel' if n.status != 'approved' else 'Change which channel handles this niche' }}</b></summary>
+    <form data-form="/api/niches/{{ n.id }}/assign" data-done="Saved" style="margin-top:10px">
+      <label class="f"><span>Which channel handles “{{ n.name }}”?</span>
+        <select name="channel">
+          {% for c in channels %}<option value="{{ c.id }}" {{ 'selected' if n.channel_id == c.id }}>{{ c.name }}{% if c.niche %} — now: {{ c.niche[:50] }}{% endif %}</option>{% endfor %}
+          <option value="new" {{ 'selected' if not channels }}>+ A new channel for this niche</option>
+          <option value="">No channel — just research ideas</option>
+        </select></label>
+      <label class="small" style="display:block;margin:8px 0"><input type="checkbox" name="daily" checked> <b>Publish a new video every day</b> — each morning the channel finds what is getting the most views in this niche right now, and the day's video is an original one on that theme (never a copy)</label>
+      <div class="grid g3">
+        <label class="f"><span>Daily time</span><input name="time" value="18:00" style="width:100px"></label>
+        <label class="f"><span>Format</span><select name="formats"><option value="both">Long + Shorts</option><option value="long">Long videos</option><option value="short">Shorts only</option></select></label>
+        <label class="f"><span>Language (new channel)</span><select name="language">{% for l in ['Hindi','Hinglish','English'] %}<option>{{ l }}</option>{% endfor %}</select></label>
+      </div>
+      <button class="primary" type="submit">{{ 'Approve & set up' if n.status != 'approved' else 'Save' }}</button>
+      <div class="muted small" style="margin-top:6px">Publishing still follows the channel's rules: you approve its first uploads, and a new channel needs “Connect YouTube” first. No number of views can be guaranteed.</div>
+    </form>
+  </details>
   {% if a.error %}<div class="note err">AI assessment unavailable: {{ a.error }}</div>{% endif %}
   {% if m %}
   <div class="grid g4" style="margin-top:14px">

@@ -546,7 +546,13 @@ def niches_page(request: Request):
         r["queries"] = db.loads(r["search_queries"], [])
         r["evidence"] = engine.load_evidence("niche_id=?", (r["id"],))[:40]
     running = db.q1("SELECT id FROM tasks WHERE type='niche_research' AND status IN ('pending','running')")
-    return page(request, "niches.html", niches=rows, running=bool(running), answers=profile.answers())
+    from .. import channels as chmod
+    chans = chmod.all_channels(ws_id(request))
+    names = {c["id"]: c["name"] for c in chans}
+    for r in rows:
+        r["channel_name"] = names.get(r.get("channel_id"))
+    return page(request, "niches.html", niches=rows, running=bool(running), answers=profile.answers(),
+                channels=chans)
 
 
 IDEA_STATUS = {"open": "t.status IN ('idea','approved')", "saved": "t.saved=1 AND t.status NOT IN ('rejected')",
@@ -1189,6 +1195,50 @@ async def api_niche_research(request: Request):
         cands = [str(c).strip()[:120] for c in raw if str(c).strip()][:6]
     tid = worker.enqueue("niche_research", {"candidates": cands}, dedupe=True, max_attempts=2)
     return ok(task_id=tid)
+
+
+@app.post("/api/niches/{nid}/assign")
+async def api_niche_assign(request: Request, nid: int):
+    """Approve a niche AND hand it to a channel (an existing one, or a new one made for it), optionally with a new
+    video every day: each morning the channel's trend scan finds what is getting the most views in this niche and
+    the day's video is an original one on that theme."""
+    from .. import channels as chmod, ops, scheduler
+    n = db.q1("SELECT * FROM niches WHERE id=?", (nid,))
+    if not n:
+        return bad("not found", 404)
+    data = await body(request)
+    ws = ws_id(request)
+    target = str(data.get("channel") or "")
+    daily = bool(data.get("daily"))
+    try:
+        if target == "new":
+            cid = chmod.create({"name": n["name"][:80], "niche": n["name"], "sub_niche": (n["description"] or "")[:300],
+                                "workflow": "auto", "language": data.get("language") or "Hindi",
+                                "formats": data.get("formats") or "both", "auto_publish": False}, ws)
+        elif target.isdigit() and auth.owns(ws, "channels", int(target)):
+            cid = int(target)
+            chmod.update(cid, {"niche": n["name"], "sub_niche": (n["description"] or "")[:300]}, actor=actor(request))
+        elif target == "":
+            cid = None
+        else:
+            return bad("Choose one of your channels.")
+        if cid and daily:
+            chmod.update(cid, {"schedule_enabled": True, "schedule_time": data.get("time") or "18:00",
+                               "formats": data.get("formats") or "both", "status": "active"}, actor=actor(request))
+    except (ValueError, TypeError) as e:
+        return bad(str(e))
+    db.update("niches", nid, {"status": "approved", "approved_at": db.iso(), "channel_id": cid})
+    ops.audit(actor(request), "niche_assigned", channel_id=cid, detail={"niche": n["name"], "daily": daily})
+    logs.event("info", "research", f"Niche approved: {n['name']}" + (f" → channel #{cid}" if cid else ""))
+    if cid:
+        scheduler.sync_channels()
+        worker.enqueue("trend_research", {"channel_id": cid}, dedupe=True, max_attempts=2)   # today's viral themes
+        worker.enqueue("channel_ideas", {"channel_id": cid, "count": 8}, dedupe=True, max_attempts=2)
+        return ok(next=f"/channels/{cid}", detail=f"“{n['name']}” is now this channel's niche"
+                  + (f" — a new video every day at {data.get('time') or '18:00'}" if daily else "")
+                  + ". Finding what is popular in it now…")
+    worker.enqueue("ideation", {"niche_id": nid, "count": 10, "workspace_id": ws}, dedupe=True, max_attempts=2)
+    return ok(next=f"/ideas?channel=all&nid={nid}", detail=f"Researching ideas for “{n['name']}”…")
 
 
 @app.post("/api/niches/{nid}/{action}")

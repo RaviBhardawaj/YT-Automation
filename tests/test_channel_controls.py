@@ -208,8 +208,10 @@ class ChannelManagementTests(unittest.TestCase):
 
 class SetupAndPublishTimeTests(unittest.TestCase):
     def test_auto_publish_is_scheduled_at_channel_time(self):
-        cid = channels.create({"name": "Evening", "publish_time": "18:00"}, 1)
-        pid = prod(channel_id=cid)
+        # an opted-in channel past its first manual uploads, with a clean QA (the gate itself: test_ops)
+        cid = channels.create({"name": "Evening", "publish_time": "18:00", "auto_publish": True,
+                               "approve_first_n": 0}, 1)
+        pid = prod(channel_id=cid, qa=json.dumps({"passed": True, "auto_publish_ok": True}))
         pipeline.approve(pid, privacy="public", publish_at=None, by="auto (channel auto-publish)")
         row = db.q1("SELECT status, privacy, publish_at FROM productions WHERE id=?", (pid,))
         self.assertEqual((row["status"], row["privacy"]), ("approved", "scheduled"))

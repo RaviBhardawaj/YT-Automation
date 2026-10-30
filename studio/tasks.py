@@ -280,8 +280,11 @@ def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
         res = jobs.create(ch["id"], "", idea_id=news.create_topic(ch, story), actor="schedule", scheduled_for=day)
         logs.event("info", "news", f"'{ch['name']}' news video started on “{story['keyword']}”: {res.get('production_ids')}")
         return {**res, "story": story["keyword"]}
+    # what you approved first; then an idea from the last two days' trend scan (themes getting the most views in
+    # this niche right now — original ideas, never copies); then saved and best-scored ideas
     idea = db.q1("SELECT id FROM topics WHERE channel_id=? AND status IN ('approved','idea') "
-                 "ORDER BY (status='approved') DESC, saved DESC, score DESC, id DESC LIMIT 1", (ch["id"],))
+                 "ORDER BY (status='approved') DESC, (why_now LIKE 'this week''s popular theme%' AND created_at>=?) DESC, "
+                 "saved DESC, score DESC, id DESC LIMIT 1", (ch["id"], db.iso_in(-2 * 86400)))
     if idea:
         res = jobs.create(ch["id"], "", idea_id=idea["id"], actor="schedule", scheduled_for=day)
     else:
