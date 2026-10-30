@@ -65,10 +65,14 @@ def upload(production: dict[str, Any], pkg: dict[str, Any], assets: list[dict[st
     total = video.stat().st_size
     lang = profile.tts_language()
     priv = privacy_for(production)
+    from .. import channels
+    from ..creative import news
+    category = "25" if news.is_news(channels.get(production.get("channel_id"))) else \
+        str(settings.get("youtube.category_id"))                          # 25 = News & Politics
     body = {
         "snippet": {
             "title": pkg["title"][:100], "description": (pkg.get("final_description") or pkg["description"])[:4900],
-            "tags": pkg.get("tags", []), "categoryId": str(settings.get("youtube.category_id")),
+            "tags": pkg.get("tags", []), "categoryId": category,
             "defaultLanguage": lang, "defaultAudioLanguage": lang,
         },
         "status": {**priv["status"], "selfDeclaredMadeForKids": _made_for_kids(production),

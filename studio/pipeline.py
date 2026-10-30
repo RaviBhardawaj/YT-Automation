@@ -62,7 +62,7 @@ def save(pid: int, **fields: Any) -> None:
 def assets_for(pid: int) -> list[dict[str, Any]]:
     rows = db.q("SELECT * FROM assets WHERE production_id=? ORDER BY scene_index", (pid,))
     for r in rows:
-        r["synthetic"] = r["provider"] in ("gemini_image", "gemini_video")
+        r["synthetic"] = r["provider"] in ("gemini_image", "gemini_video", "ai_presenter")   # realistic AI person
         r["is_card"] = (r["provider_id"] or "").endswith("#card")
     return rows
 
@@ -189,8 +189,13 @@ def stage_assets(p: dict[str, Any]) -> str | None:
     seed = f"p{p['id']}"
     failures: dict[str, int] = {}
     ai_left = _ai_clip_budget(p, have)
+    from .creative import news
     for idx, scene in enumerate(pkg["scenes"]):
         if idx in have:
+            continue
+        anchor = news.presenter_asset(p, idx, work)      # news channel: its presenter opens and closes the video
+        if anchor:
+            db.insert("assets", {**anchor, "production_id": p["id"], "created_at": db.iso()})
             continue
         if ai_left and scene.get("visual_type") in ("video", "illustration"):
             rec = _ai_clip(p, scene, idx, work)

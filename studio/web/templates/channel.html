@@ -84,7 +84,7 @@
   {% else %}
   <div class="row">
     <label class="small"><input type="checkbox" name="schedule_enabled" {{ 'checked' if ch.schedule_enabled }}> Make one video every scheduled day</label>
-    <label class="small">at <input name="schedule_time" value="{{ ch.schedule_time or '10:00' }}" style="width:80px"></label>
+    <label class="small">at <input name="schedule_time" value="{{ ch.schedule_time or '10:00' }}" style="width:130px" placeholder="09:00, 18:00" title="One time per video — e.g. 09:00, 18:00 makes two videos a day"></label>
     <label class="small">days (0=Mon … 6=Sun) <input name="schedule_days" data-type="list" value="{{ ch.schedule_days|join(',') }}" style="width:140px" placeholder="0,1,2,3,4,5,6"></label>
   </div>
   <div class="muted small">The schedule uses the channel's best saved or approved idea, generates new ideas when the list runs low, and never makes two scheduled videos for the same day.</div>

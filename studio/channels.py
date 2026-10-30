@@ -37,6 +37,11 @@ def _row(r: dict[str, Any] | None) -> dict[str, Any] | None:
     return r
 
 
+def schedule_times(ch: dict[str, Any]) -> list[str]:
+    """The channel's daily video times — one video per time."""
+    return [t.strip() for t in str(ch.get("schedule_time") or "10:00").split(",") if t.strip()] or ["10:00"]
+
+
 def get(channel_id: int | None) -> dict[str, Any] | None:
     return _row(db.q1("SELECT * FROM channels WHERE id=?", (channel_id,))) if channel_id else None
 
@@ -118,9 +123,11 @@ def clean(data: dict[str, Any], partial: bool = False) -> dict[str, Any]:
             v = max(0, min(8, int(v)))
         elif k in ("research_required", "schedule_enabled", "auto_publish", "uploads_enabled", "made_for_kids"):
             v = 1 if v in (True, 1, "1", "true", "on", "yes") else 0
-        elif k == "schedule_time":
-            if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(v)):
-                raise ValueError("schedule time must be HH:MM")
+        elif k == "schedule_time":                     # one time, or several ("09:00, 18:00") = that many videos
+            times = [t.strip() for t in str(v).split(",") if t.strip()]
+            if not times or len(times) > 4 or not all(re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", t) for t in times):
+                raise ValueError("schedule time must be HH:MM, or up to 4 times separated by commas")
+            v = ", ".join(sorted(set(times)))
         elif k == "schedule_days":
             if isinstance(v, dict):                       # checkboxes: {"0": true, ...}
                 v = [d for d, on in v.items() if on]

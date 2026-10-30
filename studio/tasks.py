@@ -240,11 +240,21 @@ def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     if not plans.can(ch["workspace_id"], "schedules"):
         return {"skipped": "automatic daily videos aren't enabled for this account"}
     from datetime import datetime
-    day = datetime.now().astimezone().date().isoformat()
+    slot = int(payload.get("slot") or 0)
+    day = datetime.now().astimezone().date().isoformat() + (f"#{slot + 1}" if slot else "")   # one video per slot
     done = db.q1("SELECT id FROM productions WHERE channel_id=? AND json_extract(request, '$.scheduled_for')=? "
                  "AND status<>'rejected'", (ch["id"], day))
     if done:
         return {"skipped": f"today's video already exists (#{done['id']})"}
+    from .creative import news
+    if news.is_news(ch):                     # news: today's trending story — never an idea saved days ago
+        story = news.pick(ch)
+        if not story:
+            logs.event("warning", "news", f"'{ch['name']}': no new trending story reported by 2+ outlets right now")
+            return {"skipped": "no new trending story right now"}
+        res = jobs.create(ch["id"], "", idea_id=news.create_topic(ch, story), actor="schedule", scheduled_for=day)
+        logs.event("info", "news", f"'{ch['name']}' news video started on “{story['keyword']}”: {res.get('production_ids')}")
+        return {**res, "story": story["keyword"]}
     idea = db.q1("SELECT id FROM topics WHERE channel_id=? AND status IN ('approved','idea') "
                  "ORDER BY (status='approved') DESC, saved DESC, score DESC, id DESC LIMIT 1", (ch["id"],))
     if idea:

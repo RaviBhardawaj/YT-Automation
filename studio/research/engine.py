@@ -110,7 +110,8 @@ def load_evidence(where: str, params: tuple) -> list[dict[str, Any]]:
 
 
 def collect(queries: list[str], *, purpose: str, run_id: int, niche_id: int | None = None,
-            topic_id: int | None = None, fmt: str | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            topic_id: int | None = None, fmt: str | None = None,
+            news_days: int | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Query every enabled source. Failures are recorded, never fatal."""
     enabled = settings.get("research.sources")
     language, region = profile.language(), settings.get("research.region")
@@ -133,7 +134,7 @@ def collect(queries: list[str], *, purpose: str, run_id: int, niche_id: int | No
 
     queries = [q.strip() for q in queries if q and q.strip()][:3]
     for i, query in enumerate(queries):
-        attempt("google_news", sources.google_news, query, language, region, days=7 if purpose != "topic" else 30)
+        attempt("google_news", sources.google_news, query, language, region, days=news_days or (7 if purpose != "topic" else 30))
         attempt("ollama_web", sources.ollama_web_search, query, 6 if purpose == "topic" else 5)
         if i == 0 or purpose == "niche":
             attempt("wikipedia", sources.wikipedia, query, language, 2, with_text=(purpose == "topic"))
@@ -473,7 +474,8 @@ def research_topic(topic: dict[str, Any]) -> list[dict[str, Any]]:
     queries = [topic.get("search_query") or topic["title"]]
     if topic.get("search_query") and topic["title"] != topic["search_query"]:
         queries.append(topic["title"])
-    _, used = collect(queries, purpose="topic", run_id=run_id, topic_id=topic["id"])
+    _, used = collect(queries, purpose="topic", run_id=run_id, topic_id=topic["id"],
+                      news_days=2 if topic.get("idea_kind") == "news" else None)   # today's news: today's reports
     finish_run(run_id, "topic research", used)
     original = db.loads(topic.get("evidence_ids"), []) or []
     linked = load_evidence("topic_id=?", (topic["id"],))

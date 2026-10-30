@@ -60,27 +60,34 @@ def ensure_defaults() -> None:
 
 
 def sync_channels() -> None:
-    """One daily slot per studio channel (the NIFTY channel keeps its own data-driven 3:40 PM schedule)."""
+    """One daily slot per video time of each studio channel ("09:00, 18:00" = two videos a day); the NIFTY channel
+    keeps its own data-driven 3:40 PM schedule."""
     from . import channels
     for ch in channels.all_channels():
         if ch["workflow"] == "nifty_daily":
             continue
-        row = {"name": f"{ch['name']}: daily video", "task_type": "channel_daily",
-               "payload": db.dumps({"channel_id": ch["id"]}), "kind": "daily",
-               "time_of_day": ch.get("schedule_time") or "10:00",
-               "days": db.dumps(ch.get("schedule_days")) if ch.get("schedule_days") else None,
-               "enabled": int(bool(ch.get("schedule_enabled")) and ch.get("status") == "active"),
-               "channel_id": ch["id"]}
-        row["next_run_at"] = next_run(row)
-        cur = db.q1("SELECT id, time_of_day, days, next_run_at, enabled FROM schedules "
-                    "WHERE task_type='channel_daily' AND channel_id=?", (ch["id"],))
-        if not cur:
-            db.insert("schedules", {**row, "created_at": db.iso()})
-        elif (cur["time_of_day"], cur["days"], cur["enabled"]) != (row["time_of_day"], row["days"], row["enabled"]) \
-                or not cur["next_run_at"]:
-            db.update("schedules", cur["id"], row)
-        else:
-            db.update("schedules", cur["id"], {"name": row["name"]})
+        times = channels.schedule_times(ch)
+        rows = {(db.loads(r["payload"], {}) or {}).get("slot", 0): r for r in db.q(
+            "SELECT id, payload, time_of_day, days, next_run_at, enabled FROM schedules "
+            "WHERE task_type='channel_daily' AND channel_id=? ORDER BY id", (ch["id"],))}
+        for slot, at in enumerate(times):
+            payload = {"channel_id": ch["id"], **({"slot": slot} if slot else {})}
+            row = {"name": f"{ch['name']}: daily video" + (f" {slot + 1}" if len(times) > 1 else ""),
+                   "task_type": "channel_daily", "payload": db.dumps(payload), "kind": "daily", "time_of_day": at,
+                   "days": db.dumps(ch.get("schedule_days")) if ch.get("schedule_days") else None,
+                   "enabled": int(bool(ch.get("schedule_enabled")) and ch.get("status") == "active"),
+                   "channel_id": ch["id"]}
+            row["next_run_at"] = next_run(row)
+            cur = rows.pop(slot, None)
+            if not cur:
+                db.insert("schedules", {**row, "created_at": db.iso()})
+            elif (cur["time_of_day"], cur["days"], cur["enabled"]) != (row["time_of_day"], row["days"], row["enabled"]) \
+                    or not cur["next_run_at"]:
+                db.update("schedules", cur["id"], row)
+            else:
+                db.update("schedules", cur["id"], {"name": row["name"]})
+        for extra in rows.values():                        # fewer times than before: drop the extra slots
+            db.ex("DELETE FROM schedules WHERE id=?", (extra["id"],))
 
 
 def tick() -> int:
