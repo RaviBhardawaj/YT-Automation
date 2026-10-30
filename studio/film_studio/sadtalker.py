@@ -76,7 +76,10 @@ def talk(image: Path, audio: Path, out: Path, *, size: tuple[int, int], hold: fl
     started = time.time()
     tmp = Path(tempfile.mkdtemp(prefix="sadtalker-"))
     try:
-        env = {**os.environ, "PYTORCH_ENABLE_MPS_FALLBACK": "1", "PYTHONUNBUFFERED": "1"}
+        # SadTalker runs `ffmpeg` by name; the background service's PATH doesn't include Homebrew, so add the
+        # folder of the ffmpeg this app uses
+        path = os.pathsep.join([str(Path(config.FFMPEG).parent), os.environ.get("PATH", "/usr/bin:/bin")])
+        env = {**os.environ, "PATH": path, "PYTORCH_ENABLE_MPS_FALLBACK": "1", "PYTHONUNBUFFERED": "1"}
         r = subprocess.run([str(python()), "inference.py", "--driven_audio", str(audio), "--source_image", str(image),
                             "--result_dir", str(tmp), "--still", "--preprocess", "full", "--size", "256"],
                            cwd=home(), env=env, capture_output=True, text=True, timeout=TIMEOUT)
