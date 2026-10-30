@@ -848,7 +848,8 @@ def reset_to_stage(pid: int, stage: str) -> None:
     if p.get("kind") in FINANCE_KINDS:
         from .finance import audit
         audit.record("episode_rerun_requested", {"from_stage": stage}, production_id=pid, actor="user")
-    worker.enqueue("production", {"production_id": pid}, production_id=pid, max_attempts=4)
+    worker.enqueue("production", {"production_id": pid}, production_id=pid, max_attempts=4,
+                   dedupe=True)                  # clicking Retry again doesn't queue the same video twice
 
 
 # ------------------------------------------------------------------ built-in self-test package

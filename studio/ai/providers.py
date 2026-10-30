@@ -81,6 +81,11 @@ class OllamaProvider(Provider):
     def _base(self) -> str:
         return OLLAMA_CLOUD if self.cloud else settings.get("ai.ollama_host").rstrip("/")
 
+    def _timeout(self) -> httpx.Timeout:
+        """Cloud answers in a minute or two; a 5-minute silence is a stalled connection, not a slow model.
+        A local model on this Mac can genuinely need longer."""
+        return httpx.Timeout(300 if self.cloud else 1200, connect=10)
+
     def _headers(self) -> dict[str, str]:
         if self.cloud:
             key = settings.secret("ollama_api_key")
@@ -120,7 +125,7 @@ class OllamaProvider(Provider):
             body["think"] = False   # keep local generations fast; structure is enforced by `format`
         try:
             r = httpx.post(self._base() + "/api/chat", json=body, headers=self._headers(),
-                           timeout=httpx.Timeout(1200, connect=10))
+                           timeout=self._timeout())
         except httpx.ConnectError as e:
             raise ProviderError(f"cannot reach {self.label}: {e}", skip_provider=True) from e
         except httpx.HTTPError as e:
@@ -131,7 +136,7 @@ class OllamaProvider(Provider):
             raise ProviderError(f"{self.label}: usage limit reached ({r.text[:200]})", skip_provider=True)
         if r.status_code == 400 and "think" in r.text and "think" in body:
             body.pop("think")
-            r = httpx.post(self._base() + "/api/chat", json=body, headers=self._headers(), timeout=1200)
+            r = httpx.post(self._base() + "/api/chat", json=body, headers=self._headers(), timeout=self._timeout())
         if r.status_code >= 500:
             raise ProviderError(f"{self.label}: server error {r.status_code}", retryable=True)
         if r.status_code >= 400:

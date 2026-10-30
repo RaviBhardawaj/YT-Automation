@@ -46,14 +46,15 @@ def _ipv4_first(host, port, family=0, type=0, proto=0, flags=0):  # noqa: A002 -
 def configure_ip_preference() -> bool:
     """Python's HTTP stack tries IPv6 first and waits a full connect timeout when the
     network advertises IPv6 but cannot route it (curl/browsers race both instead).
-    If IPv6 is unusable here, prefer IPv4 addresses process-wide. Returns True if IPv6 works."""
+    IPv4 is always preferred process-wide (IPv6 stays the fallback): on this phone-hotspot network IPv6 sometimes
+    connects and then stalls mid-transfer, so a passing quick test proves nothing. Returns True if IPv6 connects."""
+    socket.getaddrinfo = _ipv4_first
     s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     s.settimeout(1.5)
     try:
         s.connect(("2001:4860:4860::8888", 443))
         return True
     except OSError:
-        socket.getaddrinfo = _ipv4_first
         log.info("IPv6 unreachable — preferring IPv4 for outbound connections")
         return False
     finally:

@@ -125,8 +125,10 @@ def targets(fmt: str) -> dict[str, int]:
         secs = int(settings.get("production.short_seconds", 50))
         return {"seconds": secs, "words": int(secs * wps), "min_words": 60, "max_words": int(170 * wps),
                 "min_scenes": 5, "max_scenes": 14, "scene_max_words": 45}
-    minutes = int(settings.get("production.long_minutes", 8))
-    return {"seconds": minutes * 60, "words": int(minutes * 60 * wps), "min_words": int(minutes * 60 * wps * 0.6),
+    from .. import channels
+    own = (channels.current() or {}).get("long_minutes")      # the channel's own length (news: short and fresh)
+    minutes = float(own or settings.get("production.long_minutes", 8))
+    return {"seconds": int(minutes * 60), "words": int(minutes * 60 * wps), "min_words": int(minutes * 60 * wps * 0.6),
             "max_words": int(minutes * 60 * wps * 1.5), "min_scenes": 12, "max_scenes": 90, "scene_max_words": 80}
 
 
