@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import math
-import shutil
 from datetime import datetime
 from typing import Any
 
-from . import config, db, logs, pipeline, profile, settings, worker
+from . import db, logs, pipeline, profile, settings, worker
 from .media import tts
 from .research import engine
 from .youtube import analytics

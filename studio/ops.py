@@ -35,10 +35,6 @@ def set_stop(on: bool, actor: str, reason: str = "") -> None:
                else "Emergency stop switched off — work continues")
 
 
-def task_allowed(task_type: str) -> bool:
-    return not stopped() or task_type in SAFE_DURING_STOP
-
-
 def audit(actor: str, action: str, *, channel_id: int | None = None, production_id: int | None = None,
           detail: dict[str, Any] | None = None) -> None:
     """Append one critical action to the studio's hash-chained audit log (editing or deleting an entry later breaks
@@ -87,14 +83,23 @@ REPEAT_TITLE = 0.80       # title similarity that counts as the same video
 REPEAT_SCRIPT = 0.35      # share of 7-word phrases shared with an earlier upload's script
 
 
+def spoken_text(pkg: dict[str, Any]) -> str:
+    """Everything said in a video, whatever its kind: narration scenes, or story/film scenes made of dialogue lines."""
+    out = []
+    for s in (pkg or {}).get("scenes") or []:
+        if s.get("narration"):
+            out.append(s["narration"])
+        out += [ln.get("text", "") for ln in s.get("lines") or [] if isinstance(ln, dict)]
+    return "\n".join(t for t in out if t)
+
+
 def repeat_check(p: dict[str, Any], days: int = 180) -> dict[str, Any]:
     """Is this video (nearly) the same as one already uploaded — on ANY channel of the studio? Compares the title
     and the spoken script with uploads of the last `days` days. A repeat needs a human look (never auto-published):
     near-duplicate uploads count against YouTube's reused / repetitious content rules."""
-    from .content import package as content
     from .research import dedup
     pkg = p.get("package") or {}
-    title, script = pkg.get("title") or p.get("title") or "", content.script_text(pkg) if pkg.get("scenes") else ""
+    title, script = pkg.get("title") or p.get("title") or "", spoken_text(pkg)
     rows = db.q("SELECT id, channel_id, title, package FROM productions WHERE youtube_video_id IS NOT NULL AND id<>? "
                 "AND uploaded_at>=? AND (parent_id IS NULL OR parent_id<>?)",
                 (p["id"], db.iso_in(-days * 86400), p["id"]))
@@ -104,7 +109,8 @@ def repeat_check(p: dict[str, Any], days: int = 180) -> dict[str, Any]:
             continue                                   # a Short cut from its own episode is not a repeat
         other = db.loads(r["package"], {}) or {}
         t = dedup.similarity(title, other.get("title") or r["title"] or "")
-        sc = dedup.overlap_ratio(script, [content.script_text(other)]) if script and other.get("scenes") else 0.0
+        theirs = spoken_text(other)
+        sc = dedup.overlap_ratio(script, [theirs]) if script and theirs else 0.0
         if max(t, sc) > max(worst.get("title", 0), worst.get("script", 0)):
             worst = {"id": r["id"], "channel_id": r["channel_id"], "title": round(t, 2), "script": round(sc, 2)}
     bad = bool(worst) and (worst["title"] >= REPEAT_TITLE or worst["script"] >= REPEAT_SCRIPT)

@@ -170,7 +170,7 @@ def scan(channel_id: int) -> dict[str, Any]:
     videos, units = _search(ch)
     stats = _stats(videos)
     patterns = analyse(ch, videos, stats).model_dump() if videos else {}
-    sid = db.insert("trend_scans", {"channel_id": ch["id"], "workspace_id": ch["workspace_id"],
+    db.insert("trend_scans", {"channel_id": ch["id"], "workspace_id": ch["workspace_id"],
                                     "videos": db.dumps(videos), "stats": db.dumps(stats),
                                     "patterns": db.dumps(patterns), "ideas": "[]", "units": units,
                                     "created_at": db.iso()})

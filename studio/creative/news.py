@@ -206,7 +206,13 @@ def presenter_asset(p: dict[str, Any], idx: int, work: Path) -> dict[str, Any] |
         return None
     pic = presenter_pictures(ch["id"]).get("short" if p["format"] == "short" else "long")
     if not pic:
-        return None
+        try:                                     # a new news channel: create its presenter once, then use it
+            ensure_presenter(ch["id"])
+            pic = presenter_pictures(ch["id"]).get("short" if p["format"] == "short" else "long")
+        except Exception as e:  # noqa: BLE001 - no free picture service right now: this video has no presenter
+            logs.event("info", "news", f"No presenter yet for '{ch['name']}': {str(e)[:160]}", production_id=p.get("id"))
+        if not pic:
+            return None
     from PIL import Image
     with Image.open(pic) as im:
         w, h = im.size

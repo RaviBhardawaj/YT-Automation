@@ -354,13 +354,5 @@ def ist_now() -> datetime:
     return datetime.now(IST)
 
 
-def days_between(a: str, b: str) -> int:
-    return (date.fromisoformat(b) - date.fromisoformat(a)).days
-
-
-def to_date(s: str) -> date:
-    return date.fromisoformat(s)
-
-
 def add_days(s: str, n: int) -> str:
     return (date.fromisoformat(s) + timedelta(days=n)).isoformat()

@@ -254,6 +254,8 @@ def _parler_proc():
     import subprocess
     p = _parler.get("proc")
     if p is None or p.poll() is not None:
+        from .. import resources
+        resources.ensure(3.0, "The Indic Parler voice")             # starting a model: only with room for it
         p = subprocess.Popen([str(PARLER_PY), "-I", str(Path(__file__).with_name("parler_worker.py"))],
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                              env={"HF_HUB_OFFLINE": "1", "PATH": "/usr/bin:/bin", "HOME": str(Path.home()),
@@ -370,6 +372,103 @@ def spoken_numbers(text: str) -> str:
     return _THOUSANDS.sub("", text)
 
 
+# ------------------------------------------------------------------ numbers spoken in English on Hindi voices
+# Indian viewers say numbers in English ("five hundred", "two percent", "twenty-four thousand") even in Hindi
+# speech. A Hindi voice reads digits as Hindi words, so before synthesis each number becomes English number words
+# written in Devanagari, which the Hindi voice pronounces naturally. Captions keep the digits.
+_EN_DEV = {
+    "zero": "ज़ीरो", "one": "वन", "two": "टू", "three": "थ्री", "four": "फोर", "five": "फाइव", "six": "सिक्स",
+    "seven": "सेवन", "eight": "एट", "nine": "नाइन", "ten": "टेन", "eleven": "इलेवन", "twelve": "ट्वेल्व",
+    "thirteen": "थर्टीन", "fourteen": "फोर्टीन", "fifteen": "फिफ्टीन", "sixteen": "सिक्सटीन",
+    "seventeen": "सेवनटीन", "eighteen": "एटीन", "nineteen": "नाइनटीन", "twenty": "ट्वेंटी", "thirty": "थर्टी",
+    "forty": "फोर्टी", "fifty": "फिफ्टी", "sixty": "सिक्सटी", "seventy": "सेवनटी", "eighty": "एटी",
+    "ninety": "नाइंटी", "hundred": "हंड्रेड", "thousand": "थाउज़ेंड", "lakh": "लाख", "crore": "करोड़",
+    "point": "पॉइंट", "percent": "परसेंट", "rupees": "रुपये", "dollars": "डॉलर"}
+_ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+         "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+_DEV_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
+_SCALES = ("हज़ार", "हजार", "लाख", "करोड़", "मिलियन", "बिलियन", "ट्रिलियन", "million", "billion", "trillion",
+           "lakh", "crore")
+_NUMBER = re.compile(r"(?P<cur>[₹$])?\s?(?P<num>\d+(?:,\d{2,3})*(?:\.\d+)?)(?P<ord>st|nd|rd|th)?\b\s?(?P<pct>%)?"
+                     r"(?:\s?(?P<scale>" + "|".join(_SCALES) + r"))?")
+_ORDINALS = ["", "फर्स्ट", "सेकंड", "थर्ड", "फोर्थ", "फिफ्थ", "सिक्स्थ", "सेवंथ", "एटथ", "नाइंथ", "टेंथ"]
+
+
+def _below_100(n: int) -> list[str]:
+    return [_ONES[n]] if n < 20 else [_TENS[n // 10]] + ([_ONES[n % 10]] if n % 10 else [])
+
+
+def _below_1000(n: int) -> list[str]:
+    words = ([_ONES[n // 100], "hundred"] if n >= 100 else [])
+    return words + (_below_100(n % 100) if n % 100 or not words else [])
+
+
+def english_number_words(n: int) -> list[str]:
+    """Indian English: 2,50,000 = 'two lakh fifty thousand'; 1,20,00,000 = 'one crore twenty lakh'."""
+    if n == 0:
+        return ["zero"]
+    words = []
+    for size, name in ((10_000_000, "crore"), (100_000, "lakh"), (1000, "thousand")):
+        if n >= size:
+            words += (english_number_words(n // size) if n // size >= 1000 else _below_1000(n // size)) + [name]
+            n %= size
+    return words + (_below_1000(n) if n else [])
+
+
+def _year_words(n: int) -> list[str]:
+    if 2010 <= n <= 2099:                       # 'twenty twenty-six', the way years are said
+        return ["twenty"] + _below_100(n % 100)
+    return english_number_words(n)
+
+
+def numbers_in_english(text: str) -> str:
+    """Every number in a Hindi sentence → English number words in Devanagari ('500' → 'फाइव हंड्रेड',
+    '2.5%' → 'टू पॉइंट फाइव परसेंट', '₹1,200' → 'वन थाउज़ेंड टू हंड्रेड रुपये'). Text in other scripts is
+    unchanged; Latin-script sentences are left to the English voice."""
+    def say(m: re.Match) -> str:
+        raw = m.group("num").replace(",", "")
+        whole, _, frac = raw.partition(".")
+        if len(whole) > 15:
+            return m.group(0)
+        n = int(whole)
+        lead = " " if m.start() > 0 and not m.string[m.start() - 1].isspace() else ""
+        if m.group("ord"):                                    # 1st, 2nd … 10th; larger ordinals keep their digits
+            return lead + (_ORDINALS[n] if 0 < n <= 10 and not frac else m.group(0)) + " "
+        words = _year_words(n) if (len(whole) == 4 and not frac and not m.group("cur") and not m.group("pct")
+                                   and 2010 <= n <= 2099) else english_number_words(n)
+        if frac:
+            words += ["point"] + [_ONES[int(d)] for d in frac]
+        if m.group("pct"):
+            words.append("percent")
+        spoken = " ".join(_EN_DEV[w] for w in words)
+        if m.group("scale"):                                  # '$10 बिलियन' → 'टेन बिलियन डॉलर'
+            spoken += " " + m.group("scale")
+        if m.group("cur"):
+            spoken += " " + _EN_DEV["rupees" if m.group("cur") == "₹" else "dollars"]
+        return lead + spoken + " "
+    return re.sub(r"\s{2,}", " ", _NUMBER.sub(say, text.translate(_DEV_DIGITS))).strip()
+
+
+_HINDI_NUMBER_WORDS = [(re.compile(r"(?<![ऀ-ॿ])(?:एक\s+)?चौथाई(?![ऀ-ॿ])"), "वन फोर्थ"),
+                       (re.compile(r"(?<![ऀ-ॿ])तीन\s+चौथाई(?![ऀ-ॿ])"), "थ्री फोर्थ"),
+                       (re.compile(r"(?<![ऀ-ॿ])(?:प्रतिशत|फ़ीसदी|फीसदी)(?![ऀ-ॿ])"), "परसेंट"),
+                       (re.compile(r"(?<![ऀ-ॿ])दशमलव(?![ऀ-ॿ])"), "पॉइंट")]
+
+
+def say_numbers(text: str, lang: str) -> str:
+    """Numbers as the channel's audience says them: English words on Hindi voices (setting voice.numbers =
+    'english', the default), or left to the voice ('native')."""
+    letters = [c for c in text if c.isalpha()]
+    hindi_text = bool(letters) and sum(1 for c in letters if "ऀ" <= c <= "ॿ") / len(letters) >= 0.2
+    if lang.startswith("hi") and hindi_text and (settings.get("voice") or {}).get("numbers", "english") == "english":
+        text = text.replace("&", " एंड ")
+        for rx, en in _HINDI_NUMBER_WORDS:                    # 'प्रतिशत' → 'परसेंट', 'एक चौथाई' → 'वन फोर्थ'
+            text = rx.sub(en, text)
+        return numbers_in_english(text)                       # an English sentence keeps its digits
+    return spoken_numbers(text)
+
+
 def split_sentences(text: str) -> list[str]:
     parts = [p.strip() for p in SENTENCE_SPLIT.split(text.strip()) if p.strip()]
     return parts or [text.strip()]
@@ -440,7 +539,7 @@ def track_engines():
 
 def _synth_sentence(text: str, engine: str, voice_id: str, lang: str, speed: float,
                     allow_fallback: bool = True) -> tuple[np.ndarray, int]:
-    text = spoken_numbers(text)
+    text = say_numbers(text, lang or "")
     if engine == "sarvam":                     # network call: no espeak state, so no global lock
         used = getattr(_track, "engines", None)
         if not allow_fallback:

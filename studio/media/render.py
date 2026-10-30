@@ -41,8 +41,9 @@ def ffmpeg(args: list[str], *, timeout: int = 3600) -> str:
 
 
 def _encode_args() -> list[str]:
+    from .. import resources
     return ["-c:v", "libx264", "-preset", settings.get("render.preset"), "-crf", str(settings.get("render.crf")),
-            "-pix_fmt", "yuv420p", "-r", str(config.FPS)]
+            "-pix_fmt", "yuv420p", "-r", str(config.FPS), "-threads", resources.ffmpeg_threads()]
 
 
 def prepare_still(src: Path, w: int, h: int, out: Path) -> Path:

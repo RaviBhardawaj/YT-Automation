@@ -717,7 +717,8 @@ class SarvamTests(unittest.TestCase):
         self.assertEqual(kwargs["headers"], {"api-subscription-key": "test-key"})
         body = kwargs["json"]
         self.assertEqual((body["language_code"], body["speaker"], body["model"]), ("hi-IN", "shubh", "bulbul:v3"))
-        self.assertIn("23382.48", body["text"])                    # thousands comma removed before speech
+        # numbers are said in English on Hindi voices (what viewers say), not as Hindi number words
+        self.assertIn("ट्वेंटी थ्री थाउज़ेंड थ्री हंड्रेड एटी टू पॉइंट फोर एट", body["text"])
         self.assertNotIn("test-key", str(body))
         with mock.patch.object(settings, "secret", return_value="test-key"), \
                 mock.patch("httpx.post", return_value=resp) as post:

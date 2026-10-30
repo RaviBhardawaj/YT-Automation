@@ -94,7 +94,8 @@ def _lang_rules(language: str) -> str:
     if language in ("Hindi", "Hinglish"):
         return ("LANGUAGE: everyday spoken Hindi/Hinglish the way Indian families and friends talk — write ALL dialogue "
                 "in DEVANAGARI script (English words transliterated, e.g. 'बिजली का बिल', 'सुपरहीरो', 'मोबाइल') so the Hindi "
-                "voices pronounce it. Title, description and tags may mix Devanagari and Roman Hinglish.")
+                "voices pronounce it. Numbers are written as digits (5, 100, 2.5) — the voices say them in English. "
+                "Title, description and tags may mix Devanagari and Roman Hinglish.")
     return f"LANGUAGE: natural, conversational {language} for all dialogue and metadata."
 
 
@@ -137,7 +138,7 @@ def write(plan: dict[str, Any], channel: dict[str, Any], idea: dict[str, Any] | 
            f"but the genre, mood, music and ending must be {plan['content_type']}.\n"
            if plan.get("decided_by") == "request" and plan["content_type"] not in (channel.get("styles") or [])
            and plan["content_type"] != "story" else "")
-        + f"This is ENTERTAINMENT, not a lesson: no explanations, tutorials or 'today we will learn'. Show, don't teach.\n"
+        + "This is ENTERTAINMENT, not a lesson: no explanations, tutorials or 'today we will learn'. Show, don't teach.\n"
         + ("CHARACTERS: this is a stand-alone video. Do NOT use the channel's recurring characters; create fresh, "
            "original characters that fit the request (keys N1, N2 …).\n" if fresh else
            f"CHARACTER BIBLE (recurring characters — keep their names, personalities and catchphrases exactly):\n"

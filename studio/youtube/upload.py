@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 import uuid
 from pathlib import Path
@@ -171,14 +170,3 @@ def _upload_captions(video_id: str, srt: Path) -> str:
                       params={"part": "snippet", "uploadType": "multipart"}, content=body,
                       headers={"Content-Type": f"multipart/related; boundary={boundary}"})
     return "captions uploaded" if r.status_code in (200, 201) else f"captions not uploaded ({_reason(r)})"
-
-
-def video_status(video_id: str) -> dict[str, Any]:
-    r = oauth.request("GET", "https://www.googleapis.com/youtube/v3/videos",
-                      params={"part": "status,processingDetails", "id": video_id})
-    items = r.json().get("items", []) if r.status_code == 200 else []
-    return items[0] if items else {}
-
-
-def safe_tag(t: str) -> str:
-    return re.sub(r"[<>]", "", t)[:30]

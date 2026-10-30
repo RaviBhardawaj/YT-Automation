@@ -110,6 +110,14 @@ def script_text(pkg: dict[str, Any]) -> str:
     return "\n".join(s["narration"] for s in pkg["scenes"])
 
 
+# letters that are neither Latin nor Devanagari (Arabic, Cyrillic, Bengali, CJK …) — a model glitch in a Hindi script
+OTHER_SCRIPT = re.compile(r"[\u0370-\u03ff\u0400-\u04ff\u0590-\u08ff\u0980-\u0dff\u0e00-\u0eff\u3040-\u9fff\uac00-\ud7af]+")
+
+
+# number words the voice would read in Hindi; viewers say these numbers in English, so the writer uses digits
+HINDI_NUMBER_WORDS = re.compile(r"(?<![ऀ-ॿ])(?:चौथाई|प्रतिशत|फ़ीसदी|फीसदी|दशमलव)(?![ऀ-ॿ])")
+
+
 def _ratio(pattern: re.Pattern, text: str) -> float:
     letters = [c for c in text if c.isalpha()]
     return sum(1 for c in letters if pattern.match(c)) / len(letters) if letters else 0.0
@@ -160,6 +168,13 @@ def validate_scenes(scenes: list[Scene], fmt: str, *, check_totals: bool = True)
             problems.append(f"scene {i}: narration must be written in Devanagari script")
         if lang == "Hinglish" and (not s.caption_text.strip() or _ratio(LATIN, s.caption_text) < 0.6):
             problems.append(f"scene {i}: caption_text must be the same sentence in Roman-script Hinglish")
+        if lang in ("Hindi", "Hinglish", "English") and OTHER_SCRIPT.search(s.narration + s.caption_text):
+            problems.append(f"scene {i}: contains letters from another script "
+                            f"('{OTHER_SCRIPT.search(s.narration + s.caption_text).group(0)}') — use only "
+                            "Devanagari and Latin letters")
+        if lang in ("Hindi", "Hinglish") and HINDI_NUMBER_WORDS.search(s.narration):
+            problems.append(f"scene {i}: write numbers as digits, not Hindi number words "
+                            f"('{HINDI_NUMBER_WORDS.search(s.narration).group(0)}' → e.g. 25%, 2.5%)")
         if lang == "English" and _ratio(LATIN, s.narration) < 0.8:
             problems.append(f"scene {i}: narration must be English")
         if len(s.on_screen_text.split()) > 7:
@@ -450,6 +465,7 @@ def review(pkg: dict[str, Any], topic: dict[str, Any], evidence: list[dict[str, 
 class SceneFix(BaseModel):
     scene: int = Field(..., ge=1, description="1-based scene index being rewritten")
     narration: str = Field(..., min_length=3, max_length=700)
+    caption_text: str = Field("", max_length=700, description="Subtitle for this scene (see LANGUAGE); empty = same as narration")
     on_screen_text: str = Field(..., max_length=60, description="Headline overlay (max 6 words) or empty string")
 
 
@@ -470,6 +486,7 @@ def fix_scenes(pkg: dict[str, Any], issues: list[dict[str, Any]], topic: dict[st
     prompt = (f"CHANNEL PROFILE: {profile.summary_text()}\nTOPIC: {topic['title']}\n\n"
               f"{prompts.evidence_block(evidence, max_chars=12000, content_chars=1000)}\n\n"
               f"SCENES TO FIX:\n{lines}\n\nEDITOR'S PROBLEMS:\n{notes}\n\n"
+              f"{profile.language_rules()}\n"
               "Rewrite only these scenes so every problem is gone. Keep the same language, script, tone and about "
               "the same length. Use only facts, numbers and outlet names that appear in the EVIDENCE; when unsure, "
               "say it more generally instead of adding a detail. Return one fix per scene listed.")
@@ -477,12 +494,22 @@ def fix_scenes(pkg: dict[str, Any], issues: list[dict[str, Any]], topic: dict[st
     def check(r: SceneFixes) -> None:
         if {f.scene for f in r.fixes} != set(flagged):
             raise ValueError(f"return exactly one fix for each of scenes {flagged}")
+        lang, problems = profile.language(), []
+        for f in r.fixes:                       # same language checks as a full script (validate_scenes)
+            if lang in ("Hindi", "Hinglish") and _ratio(DEVANAGARI, f.narration) < 0.6:
+                problems.append(f"scene {f.scene}: narration must be written in Devanagari script")
+            if lang == "Hinglish" and (not f.caption_text.strip() or _ratio(LATIN, f.caption_text) < 0.6):
+                problems.append(f"scene {f.scene}: caption_text must be the same sentence in Roman-script Hinglish")
+            if lang in ("Hindi", "Hinglish", "English") and OTHER_SCRIPT.search(f.narration + f.caption_text):
+                problems.append(f"scene {f.scene}: use only Devanagari and Latin letters")
+        if problems:
+            raise ValueError("; ".join(problems))
     result, meta = ai.generate("script", prompts.system("a careful news script editor"), prompt, SceneFixes,
                                max_tokens=3000, validate=check)
     for f in result.fixes:
         s = pkg["scenes"][f.scene - 1]
         s["narration"] = _spoken(f.narration)
-        s["caption_text"] = s["narration"]
+        s["caption_text"] = _spoken(f.caption_text) or s["narration"]
         overlay = _spoken(f.on_screen_text)
         s["on_screen_text"] = "" if check_display_language(overlay) else overlay
     return pkg, meta

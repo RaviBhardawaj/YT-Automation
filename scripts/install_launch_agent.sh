@@ -37,6 +37,8 @@ cat > "$PLIST" <<EOF
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>30</integer>
+  <key>Nice</key><integer>10</integer>
+  <key>ProcessType</key><string>Standard</string>
   <key>StandardOutPath</key><string>$PWD/data/logs/server.out</string>
   <key>StandardErrorPath</key><string>$PWD/data/logs/server.out</string>
 </dict></plist>

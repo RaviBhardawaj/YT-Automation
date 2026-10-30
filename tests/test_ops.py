@@ -139,6 +139,15 @@ class RepeatTests(unittest.TestCase):
                                                              "scenes": [{"narration": "Milo the puppy wades in."}]}))
         self.assertTrue(ops.repeat_check(pipeline.load(other))["ok"])
 
+    def test_story_uploads_with_dialogue_lines_do_not_break_the_check(self):
+        story = {"title": "Talking samosa", "scenes": [{"lines": [{"speaker": "pappu", "text": "Samosa bol raha hai!"}]}]}
+        prod(channel_id=channel("Stories")["id"], kind="story", youtube_video_id="st1", status="uploaded",
+             uploaded_at=db.iso(), package=json.dumps(story))
+        pid = prod(channel_id=channel("News")["id"],
+                   package=json.dumps({"title": "Markets today", "scenes": [{"narration": "बाज़ार आज गिरा।"}]}))
+        self.assertTrue(ops.repeat_check(pipeline.load(pid))["ok"])
+        self.assertIn("Samosa bol raha hai", ops.spoken_text(story))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,6 @@
 """Original chart graphics drawn from verified bars (Pillow). No third-party chart images."""
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 from typing import Any
 

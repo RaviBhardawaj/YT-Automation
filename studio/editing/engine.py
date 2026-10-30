@@ -203,7 +203,7 @@ def cut_clip(src: dict[str, Any], start: float, end: float, w: int, h: int, refr
             graph += f";[0:a]{af}[a]"
         else:
             args += ["-f", "lavfi", "-t", f"{dur / speed:.3f}", "-i", f"anullsrc=r={SR}:cl=stereo"]
-            graph += f";[1:a]anull[a]"
+            graph += ";[1:a]anull[a]"
     ff([*args, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *X264, *AAC, "-r", str(FPS),
         "-movflags", "+faststart", str(out)])
 

@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 from PIL import Image
@@ -372,6 +371,8 @@ def generate_local_flux(prompt: str, fmt: str, out: Path, look: str = "real", *,
         raise net.FetchError("offline")
     if not local_flux_installed():
         raise net.FetchError("local FLUX is not installed (Computer & setup)")
+    from .. import resources
+    resources.ensure(5.0, "A picture on this Mac (local FLUX)")
     w, h = size or ((768, 1344) if fmt == "short" else (1344, 768))
     w, h = w // 16 * 16, h // 16 * 16
     seed = int(hashlib.sha1(out.name.encode() + prompt.encode()).hexdigest()[:7], 16)
@@ -803,7 +804,3 @@ def credits(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             seen.add(line)
             out.append({"line": line, "required": required})
     return out
-
-
-def search_url_safe(q: str) -> str:
-    return quote(q)

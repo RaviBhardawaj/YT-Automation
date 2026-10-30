@@ -45,7 +45,9 @@ def fake_generate(fixed_text: str):
 class SceneFixTests(unittest.TestCase):
     def _run(self, reviews):
         p = prod()
-        with mock.patch.object(pipeline, "_topic", lambda p: {"title": "t"}), \
+        from studio import profile
+        with mock.patch.object(profile, "language", lambda: "English"), \
+                mock.patch.object(pipeline, "_topic", lambda p: {"title": "t"}), \
                 mock.patch.object(pipeline, "_evidence", lambda p: []), \
                 mock.patch.object(content, "review", side_effect=[(r, {"provider": "fake"}) for r in reviews]), \
                 mock.patch.object(content.ai, "generate", fake_generate("India chased easily")):

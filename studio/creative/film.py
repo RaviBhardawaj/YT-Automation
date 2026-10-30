@@ -29,8 +29,8 @@ from PIL import Image, ImageDraw, ImageFilter
 from pydantic import BaseModel, Field
 
 from .. import ai, channels, config, db, logs, settings
-from ..media import graphics, render, tts, visuals
-from . import music, script_import
+from ..media import graphics, tts, visuals
+from . import script_import
 
 STAGES = ["script", "plan", "cast", "voice", "sync", "shots", "render", "qa"]
 STATUS = {"script": "reading the script", "plan": "planning the shots", "cast": "casting the characters",
@@ -233,11 +233,6 @@ def _gen(prompt: str, out: Path, *, refs: list[Path] | None = None, size: tuple[
     raise WaitForAllowance()
 
 
-def _location_text(film: dict[str, Any]) -> str:
-    loc = re.sub(r"(?i)^the entire film takes place primarily in one\s*", "", film.get("location") or "").strip()
-    return loc[:420] or "a village courtyard in North India"
-
-
 def stage_cast(p: dict[str, Any]) -> None:
     """Propose a picture for every character and the location; continue only with approved pictures."""
     from .. import pipeline
@@ -403,15 +398,6 @@ def _card(text: str, sub: str, w: int, h: int, out: Path) -> Path:
         graphics.draw_lines(d, l2, f2, lh2, w // 2, int(h * 0.62), (200, 190, 170))
     img.save(out, "JPEG", quality=94)
     return out
-
-
-def _pause_after(ln: dict[str, Any], nxt: dict[str, Any] | None) -> float:
-    text = f"{(nxt or {}).get('action', '')}"
-    if re.search(r"\blaugh", text, re.I):
-        return 1.4                                      # let the joke land
-    if re.search(r"\b(pause|freeze|stare|silence)", text, re.I):
-        return 1.0
-    return 0.35
 
 
 def stage_render(p: dict[str, Any]) -> None:

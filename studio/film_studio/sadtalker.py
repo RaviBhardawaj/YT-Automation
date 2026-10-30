@@ -73,6 +73,8 @@ def talk(image: Path, audio: Path, out: Path, *, size: tuple[int, int], hold: fl
     seconds = _duration(audio)
     if seconds <= 0.2:
         raise RuntimeError("the voice line is empty")
+    from .. import resources
+    resources.ensure(4.0, "A talking face on this Mac (SadTalker)")
     started = time.time()
     tmp = Path(tempfile.mkdtemp(prefix="sadtalker-"))
     try:

@@ -254,7 +254,7 @@ def _ai_clip(p: dict[str, Any], scene: dict[str, Any], idx: int, work: Path) -> 
     prompt = (f"{scene.get('visual_description') or scene.get('visual_query')}. Cinematic, realistic, smooth camera "
               f"motion, no text, no captions, no logos, no watermark.")
     try:
-        res = videogen.generate(prompt, "9:16" if p["format"] == "short" else "16:9", target,
+        videogen.generate(prompt, "9:16" if p["format"] == "short" else "16:9", target,
                                 label=f"#{p['id']} scene {idx + 1}")
     except videogen.VideoGenError as e:
         logs.event("warning", "videogen", f"Scene {idx + 1}: AI clip not made ({e}); using stock/original visuals",
@@ -721,6 +721,9 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
             logs.event("info", "pipeline", msg, production_id=pid)
             return
         raise NeedsAttention(msg + " Switch uploads on for that channel first.")
+    if by.startswith("auto") and (db.loads(p.get("request"), {}) or {}).get("hold_for_review"):
+        save(pid, status="awaiting_approval", error="Held for your review before publishing.")
+        return
     if by.startswith("auto") and ch and privacy != "private":
         # Every workflow's automatic approval passes the same gate (channel opt-in, active, first N uploads
         # approved by the owner, clean QA) — not only the ones that checked it themselves before calling here.

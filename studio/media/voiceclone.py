@@ -145,6 +145,8 @@ def _worker():
     if p is None or p.poll() is not None:
         if not installed():
             raise RuntimeError("Voice cloning isn't installed on this computer (Settings › Voice › My voice).")
+        from .. import resources
+        resources.ensure(4.0, "Your cloned voice (Chatterbox)")     # starting a model: only with room for it
         p = subprocess.Popen([str(CLONE_PY), "-I", str(Path(__file__).with_name("clone_worker.py"))],
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                              env={"PATH": "/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin", "HOME": str(Path.home()),

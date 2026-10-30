@@ -132,17 +132,28 @@ def summary_text() -> str:
             f"Style: {', '.join(styles())}. Niche: {a.get('niche') or '(to be researched)'}.")
 
 
+SPOKEN_STYLE = (
+    "Write the way a popular Indian YouTuber or TV anchor actually speaks — NOT formal or textbook ('shuddh') Hindi: "
+    "when an English word is the everyday one, use it (टेक कंपनियां not तकनीकी कंपनियां, बड़ी not प्रमुख, करीब not "
+    "लगभग, मार्केट, शेयर, इंडेक्स, रिपोर्ट, प्रॉफिट, ग्रोथ, लॉन्च); short sentences; talk to the viewer. NUMBERS: "
+    "always write numbers as digits (500, 2.5%, ₹1,200, 24,591.41, 2026) — never as Hindi number words (पाँच सौ, "
+    "एक चौथाई, दो प्रतिशत); the voice says them in English the way viewers do ('25%' not 'एक चौथाई'). Brand and "
+    "company names in narration are written in Devanagari (अमेज़न, मेटा, एस एंड पी 500).")
+
+
 def language_rules() -> str:
     lang = language()
     if lang == "Hindi":
         return ("LANGUAGE: Natural, conversational Hindi in Devanagari script for narration, caption_text, title, "
                 "description, tags, on_screen_text and thumbnail text. Use everyday English loan words the way Indian "
-                "viewers speak, but write them in Devanagari inside narration so the Hindi voice pronounces them.")
+                "viewers speak, but write them in Devanagari inside narration so the Hindi voice pronounces them. "
+                + SPOKEN_STYLE)
     if lang == "Hinglish":
         return ("LANGUAGE: Hinglish. `narration` MUST be written in DEVANAGARI script (English words transliterated, "
-                "e.g. 'टेक्नोलॉजी') because a Hindi text-to-speech voice reads it. `caption_text` MUST contain the SAME "
-                "sentences written in Roman-script Hinglish (e.g. 'Aaj hum technology ki baat karenge'). Title, "
-                "description, tags, on_screen_text and thumbnail text use Roman-script Hinglish.")
+                "e.g. 'टेक्नोलॉजी') because a Hindi text-to-speech voice reads it — every scene, including the last "
+                "call-to-action. `caption_text` MUST contain the SAME sentences written in Roman-script Hinglish (e.g. "
+                "'Aaj hum technology ki baat karenge'), only Latin letters. Title, description, tags, on_screen_text "
+                "and thumbnail text use Roman-script Hinglish. " + SPOKEN_STYLE)
     if lang == "English":
         return "LANGUAGE: Clear, conversational English everywhere."
     return f"LANGUAGE: Write narration, captions and metadata in {lang}."

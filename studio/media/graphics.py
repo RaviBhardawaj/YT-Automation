@@ -11,7 +11,6 @@ import random
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -303,7 +302,3 @@ def save_jpeg_under(img: Image.Image, out: Path, max_bytes: int, quality: int = 
         if size <= max_bytes or quality <= 50:
             return size
         quality -= 6
-
-
-def describe_palette() -> dict[str, Any]:
-    return settings.get("brand")

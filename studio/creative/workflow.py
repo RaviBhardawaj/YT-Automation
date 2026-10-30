@@ -196,10 +196,6 @@ def _srt_time(t: float) -> str:
 def _render(p: dict[str, Any], fmt: str, scene_ids: list[int], audio_lines: dict[tuple[int, int], dict[str, Any]],
             out_dir: Path, *, title_card: bool, end_card: bool, hook: str = "") -> dict[str, Any]:
     """Draw and encode the scenes, build the dialogue track, mix music, mux. Returns timing info."""
-    pkg = p["package"]
-    cast = p["episode"]["cast"]
-    ch = channels.get(p["channel_id"])
-    hindi = (p.get("language") or "Hindi") != "English"
     out_dir.mkdir(parents=True, exist_ok=True)
     silent = out_dir / "video_noaudio.mp4"
     enc = cartoon.Encoder(silent, fmt)
@@ -396,7 +392,6 @@ def stage_qa(p: dict[str, Any]) -> None:
 
 def describe(p: dict[str, Any], parent_video_id: str | None = None) -> str:
     from .. import pipeline
-    ch = channels.get(p["channel_id"])
     pkg = p["package"] if p["kind"] == "story" else pipeline.load(p["parent_id"])["package"]
     hindi = (p.get("language") or "Hindi") != "English"
     parts = [pkg.get("description", "").strip()]

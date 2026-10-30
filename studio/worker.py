@@ -17,7 +17,9 @@ from . import ai, db, logs
 log = logging.getLogger(__name__)
 
 LANES = ("general", "media")
-LANE_FOR = {"production": "media"}
+# Heavy work (renders, local AI models) runs one job at a time on the media lane so the Mac never runs two at once.
+LANE_FOR = {t: "media" for t in ("production", "film_ref", "film_shots_run", "film_short_make", "local_flux_setup",
+                                 "voiceclone_setup")}
 BACKOFF = [60, 300, 1800, 3600, 3 * 3600]
 
 _handlers: dict[str, Callable[[dict[str, Any], dict[str, Any]], Any]] = {}

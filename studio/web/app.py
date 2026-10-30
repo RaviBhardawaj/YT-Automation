@@ -22,7 +22,7 @@ from .. import auth, bootstrap, config, db, logs, net, pipeline, plans, profile,
 from ..ai import providers, router
 from ..media import tts
 from ..research import engine
-from ..youtube import analytics, oauth
+from ..youtube import oauth
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
@@ -387,14 +387,6 @@ def safe_next(url: Any) -> str:
     if not url.startswith("/") or url.startswith("//") or "\\" in url or any(ord(ch) < 32 for ch in url):
         return "/"
     return url
-
-
-def _login_response(token: str, next_url: str) -> RedirectResponse:
-    resp = RedirectResponse(next_url if next_url.startswith("/") and not next_url.startswith("//") else "/",
-                            status_code=303)
-    # Lax (not Strict) so the session survives the redirect back from Google's YouTube authorization
-    set_cookie(resp, "sid", token, auth.SESSION_DAYS * 86400)
-    return resp
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1371,10 +1363,10 @@ async def api_approve(request: Request, pid: int):
     data = await body(request)
     if not plans.can(ws_id(request), "publish"):
         return bad(f"“{plans.FEATURES['publish']}” isn't enabled for your account.")
-    return _approve(pid, data.get("privacy", "private"), data.get("publish_at_local"))
+    return _approve(pid, data.get("privacy", "private"), data.get("publish_at_local"), who=actor(request))
 
 
-def _approve(pid: int, privacy: str, publish_at_local: Any) -> JSONResponse:
+def _approve(pid: int, privacy: str, publish_at_local: Any, who: str = "user") -> JSONResponse:
     if privacy not in ("private", "unlisted", "public", "scheduled"):
         return bad("invalid privacy")
     publish_at = None
@@ -1390,7 +1382,7 @@ def _approve(pid: int, privacy: str, publish_at_local: Any) -> JSONResponse:
         return bad("Your Google Cloud project must pass the YouTube API audit before public/scheduled/unlisted uploads "
                    "(otherwise YouTube locks them private). Choose 'private' for now, or update Settings › YouTube.")
     try:
-        pipeline.approve(pid, privacy=privacy, publish_at=publish_at, by=actor(request))
+        pipeline.approve(pid, privacy=privacy, publish_at=publish_at, by=who)
     except pipeline.NeedsAttention as e:
         return bad(str(e))
     return ok()
@@ -2257,7 +2249,7 @@ def api_voice_action(request: Request, vid: int, action: str):
 @app.post("/api/create")
 async def api_create(request: Request):
     """One entry point for the Create and Upload & Edit pages."""
-    from .. import channels as chmod, jobs
+    from .. import jobs
     from ..editing import workflow as editing
     data = await body(request)
     ws = ws_id(request)
@@ -2717,7 +2709,7 @@ async def api_publish(request: Request, pid: int):
             .split(",") if t.strip()][:20]
     pkg.update({"title": title, "final_description": desc, "tags": tags})
     pipeline.save(pid, package=pkg, title=title, channel_id=cid)
-    return _approve(pid, str(data.get("privacy") or "private"), data.get("publish_at_local"))
+    return _approve(pid, str(data.get("privacy") or "private"), data.get("publish_at_local"), who=actor(request))
 
 
 # ------------------------------------------------------------------ projects, publishing, usage, admin, tools
