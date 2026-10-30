@@ -117,3 +117,136 @@ def clear_cache(older_than_days: int = 0) -> int:
             freed += f.stat().st_size
             f.unlink()
     return freed
+
+
+# ------------------------------------------------------------------ this Mac: memory, disk, installed AI tools
+
+def _hf_cache() -> Path:
+    import os
+    home = os.environ.get("HF_HOME")
+    return (Path(home) / "hub") if home else Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _unique_bytes(path: Path) -> int:
+    """Size on disk; Hugging Face model folders are links into shared blobs, so each blob is counted once."""
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    seen, n = set(), 0
+    for p in path.rglob("*"):
+        try:
+            r = p.resolve()
+            if r.is_file() and r not in seen:
+                seen.add(r)
+                n += r.stat().st_size
+        except OSError:
+            continue
+    return n
+
+
+def components() -> list[dict[str, Any]]:
+    """Big optional parts installed for the studio, with what each is for and its size. `required` ones have no
+    Uninstall button (the studio can't make videos without them)."""
+    hf = _hf_cache()
+    sad = Path.home() / "sadtalker"
+    items = [
+        {"key": "local_flux", "name": "Local AI pictures (FLUX.2 klein, 4-bit)",
+         "what": "Draws pictures on this Mac when the free online picture services are used up.",
+         "paths": [config.ROOT / ".venv-flux", hf / "models--Runpod--FLUX.2-klein-4B-mflux-4bit"],
+         "after": "Pictures come from Cloudflare / Hugging Face / stock only.", "reinstall": "Settings › System › Local pictures"},
+        {"key": "voiceclone", "name": "Voice cloning (Chatterbox)",
+         "what": "Narrates with a cloned voice (yours, with consent).",
+         "paths": [config.ROOT / ".venv-voiceclone", hf / "models--ResembleAI--chatterbox"],
+         "after": "Cloned voices stop working; Kokoro voices are used.", "reinstall": "Settings › System › Voice cloning"},
+        {"key": "parler", "name": "Indic Parler voices",
+         "what": "Extra Indian-language voices with style control.",
+         "paths": [config.ROOT / ".venv-parler", hf / "models--ai4bharat--indic-parler-tts"],
+         "after": "Kokoro voices are used.", "reinstall": "Settings › System"},
+        {"key": "sadtalker", "name": "Talking presenter (SadTalker)",
+         "what": "Makes the AI News presenter talk on this Mac when the free online GPU minutes are used up.",
+         "paths": [sad, Path.home() / ".cache" / "torch" / "hub" / "checkpoints"],
+         "after": "Presenter talks only while free online GPU minutes last, otherwise stays a still picture.",
+         "reinstall": "ask Claude to reinstall SadTalker"},
+        {"key": "whisper", "name": "Speech-to-text (Whisper)",
+         "what": "Transcribes uploads for Upload & Edit and the Shorts clipper.",
+         "paths": [config.DATA_DIR / "models" / "whisper"],
+         "after": "Downloaded again automatically the next time it is needed (~460 MB).", "reinstall": "automatic"},
+        {"key": "piper", "name": "Piper voices", "what": "Lightweight backup voices.",
+         "paths": [config.VOICES_DIR / "piper"], "after": "Kokoro voices are used.", "reinstall": "Voices page"},
+        {"key": "ollama_models", "name": "Local AI writer models (Ollama)",
+         "what": "Writes scripts on this Mac with no daily limit.",
+         "paths": [Path.home() / ".ollama" / "models"], "after": "Scripts use the free online writers only.",
+         "reinstall": "Settings › AI › pull a model"},
+        {"key": "kokoro", "name": "Kokoro voices", "what": "Main narration voices (Hindi + English).",
+         "paths": [config.VOICES_DIR / "kokoro"], "required": True},
+        {"key": "app", "name": "The studio app itself", "what": "Python environment the app runs in.",
+         "paths": [config.ROOT / ".venv"], "required": True},
+    ]
+    for c in items:
+        c["bytes"] = sum(_unique_bytes(p) for p in c["paths"])
+        c["installed"] = c["bytes"] > 0
+        c.setdefault("required", False)
+    return items
+
+
+def uninstall(key: str) -> int:
+    """Delete one optional part. Returns bytes freed. Refused while a video is being made."""
+    c = next((x for x in components() if x["key"] == key), None)
+    if not c or c["required"]:
+        raise ValueError("This part can't be uninstalled.")
+    if db.q1("SELECT 1 FROM tasks WHERE status='running' AND lane='media'"):
+        raise ValueError("A video is being made right now — try again when it has finished.")
+    home = Path.home().resolve()
+    freed = 0
+    for p in c["paths"]:
+        p = Path(p)
+        if not p.exists() or p.resolve() in (home, config.ROOT.resolve(), config.DATA_DIR.resolve()):
+            continue
+        n = _unique_bytes(p)
+        shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink()
+        freed += n
+    logs.event("info", "storage", f"Uninstalled {c['name']} — {freed / 1e9:.2f} GB freed")
+    return freed
+
+
+def machine() -> dict[str, Any]:
+    """What this Mac is using right now: memory, swap, processor load, disk, and the biggest programs in memory."""
+    import os
+    import re
+    import subprocess
+
+    def run(*args: str) -> str:
+        try:
+            return subprocess.run(args, capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    out: dict[str, Any] = {}
+    total = int(run("sysctl", "-n", "hw.memsize").strip() or 0)
+    vm = run("vm_stat")
+    page = int((re.search(r"page size of (\d+)", vm) or [0, 16384])[1])
+    pages = {k.strip().lower(): int(v.strip().rstrip(".")) for k, v in re.findall(r"^(.+?):\s+(\d+)\.?$", vm, re.M)}
+    used = (pages.get("pages active", 0) + pages.get("pages wired down", 0)
+            + pages.get("pages occupied by compressor", 0)) * page
+    out["ram_total"], out["ram_used"] = total, min(used, total) if total else used
+    out["ram_pct"] = round(100 * out["ram_used"] / total) if total else 0
+    swap = re.search(r"used = ([\d.]+)M", run("sysctl", "-n", "vm.swapusage"))
+    out["swap_used"] = int(float(swap[1]) * 2**20) if swap else 0
+    try:
+        out["load"] = [round(x, 2) for x in os.getloadavg()]
+    except OSError:
+        out["load"] = []
+    out["cores"] = int(run("sysctl", "-n", "hw.ncpu").strip() or 0)
+    out["cpu"] = run("sysctl", "-n", "machdep.cpu.brand_string").strip()
+    du = shutil.disk_usage(config.DATA_DIR)
+    out["disk_total"], out["disk_free"] = du.total, du.free
+    out["disk_pct"] = round(100 * (du.total - du.free) / du.total) if du.total else 0
+    procs = []
+    for line in run("ps", "-axo", "rss=,pid=,comm=", "-m").splitlines()[:10]:
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit():
+            procs.append({"mb": int(parts[0]) // 1024, "pid": int(parts[1]), "name": Path(parts[2]).name})
+    out["top"] = procs
+    out["studio_mb"] = next((p["mb"] for p in procs if p["pid"] == os.getpid()),
+                            int((run("ps", "-o", "rss=", "-p", str(os.getpid())).strip() or 0)) // 1024)
+    return out

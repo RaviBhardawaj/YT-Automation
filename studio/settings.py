@@ -109,6 +109,8 @@ DEFAULTS: dict[str, Any] = {
     "film_studio.video_clips_per_run": 4,         # real-video clips per DAY (free GPU quota is small; 0 = none)
     "film_studio.zerogpu_quota_until": "",        # set when the Space says the free minutes are used up
     "film_studio.talking": True,                  # lip-synced talking clips (LTX-2, free GPU) for presenters/dialogue
+    "film_studio.sadtalker": True,                # talking presenter on this Mac (SadTalker) when the free GPU is used up
+    "film_studio.sadtalker_dir": "",              # where SadTalker is installed; empty = ~/sadtalker
     "film_studio.talking_clips_per_day": 2,       # 3-second talking pieces per day (each reserves ~104 s of the
                                                   # free GPU minutes, shared with the Wan clips)
     "brand": {

@@ -24,7 +24,7 @@ config.ensure_dirs()
 db.migrate()
 from studio import channels, settings  # noqa: E402
 from studio.creative import news  # noqa: E402
-from studio.film_studio import talking, zerogpu  # noqa: E402
+from studio.film_studio import sadtalker, talking, zerogpu  # noqa: E402
 
 TMP = Path(tempfile.mkdtemp())
 CLIP = TMP / "piece.mp4"
@@ -138,11 +138,40 @@ class PresenterTalkTests(unittest.TestCase):
         self.assertTrue(Path(row["local_path"]).exists())
         self.assertEqual(assets[1]["kind"], "image")
 
-    def test_no_token_keeps_the_still_picture(self):
+    def test_no_token_and_no_sadtalker_keeps_the_still_picture(self):
         p, assets, tl, work = self._news()
-        with token(False):
+        with token(False), mock.patch.object(sadtalker, "installed", lambda: False):
             self.assertEqual(news.make_presenter_talk(p, assets, tl, 0.5, work), 0)
         self.assertEqual(assets[0]["kind"], "image")
+
+    def test_used_up_gpu_falls_back_to_sadtalker_on_the_mac(self):
+        p, assets, tl, work = self._news()
+        settings.set("film_studio.zerogpu_quota_until", db.iso_in(3600))
+        calls = []
+
+        def fake_sad(image, audio, out, *, size, hold=0.0):
+            calls.append((size, hold))
+            out.write_bytes(CLIP.read_bytes())
+            return {"provider": sadtalker.PROVIDER, "model": "SadTalker 256 (on this Mac)", "pieces": 1,
+                    "speech_seconds": 4.0, "wall_seconds": 1.0,
+                    "video": {"width": 896, "height": 512, "duration": 4.5}}
+        with token(), mock.patch.object(sadtalker, "talk", fake_sad):
+            self.assertEqual(news.make_presenter_talk(p, assets, tl, 0.5, work), 1)
+        row = db.q1("SELECT kind, license FROM assets WHERE production_id=? AND scene_index=0", (p["id"],))
+        self.assertEqual((row["kind"], calls[0][0]), ("video", (896, 512)))
+        self.assertIn("SadTalker", row["license"])
+
+
+class SadTalkerTests(unittest.TestCase):
+    def test_not_installed_is_refused_without_running_anything(self):
+        settings.set("film_studio.sadtalker_dir", str(TMP / "nowhere"))
+        wav = voice(2.0)
+        try:
+            with mock.patch.object(sadtalker.subprocess, "run") as run, self.assertRaises(sadtalker.NotInstalled):
+                sadtalker.talk(PIC, wav, TMP / "s.mp4", size=(896, 512))
+            run.assert_not_called()
+        finally:
+            settings.set("film_studio.sadtalker_dir", "")
 
 
 if __name__ == "__main__":

@@ -226,9 +226,10 @@ TALK_PROMPT = ("The news presenter speaks directly to the camera with natural li
 
 def make_presenter_talk(p: dict[str, Any], assets: dict[int, dict[str, Any]], tl: dict[str, Any], pad: float,
                         work: Path) -> int:
-    """Before rendering: each presenter scene becomes a lip-synced clip of that scene's own narration (free LTX-2
-    on the free GPU). Anything that can't be made keeps the still presenter picture, with the reason logged."""
-    from ..film_studio import talking, zerogpu
+    """Before rendering: each presenter scene becomes a lip-synced clip of that scene's own narration — free LTX-2
+    on the free GPU first (most real), then SadTalker on this Mac (no daily limit). Anything that can't be made
+    keeps the still presenter picture, with the reason logged."""
+    from ..film_studio import sadtalker, talking, zerogpu
     made = 0
     for idx, a in sorted(assets.items()):
         if a["provider"] != PRESENTER_PROVIDER or a["kind"] != "image" or idx >= len(tl.get("scenes") or []):
@@ -239,20 +240,26 @@ def make_presenter_talk(p: dict[str, Any], assets: dict[int, dict[str, Any]], tl
         try:
             info = talking.talk(Path(a["local_path"]), wav, TALK_PROMPT, out, size=size, hold=pad + 0.3,
                                 seed=p["id"] * 10 + idx)
-        except (talking.TooLong, zerogpu.QuotaExceeded, zerogpu.SpaceError) as e:
-            logs.event("info", "news", f"Presenter in scene {idx + 1} stays a still picture: {e}", production_id=p["id"])
-            continue
-        except Exception as e:  # noqa: BLE001 - a talking clip is an upgrade; the video is made either way
-            logs.event("warning", "news", f"Presenter talking clip failed in scene {idx + 1}: {type(e).__name__}: "
-                       f"{str(e)[:200]}", production_id=p["id"])
-            continue
+            how = "LTX-2 lip-sync"
+        except Exception as e:  # noqa: BLE001 - a talking clip is an upgrade; the Mac's SadTalker is tried next
+            why = str(e) if isinstance(e, (talking.TooLong, zerogpu.QuotaExceeded, zerogpu.SpaceError)) \
+                else f"{type(e).__name__}: {str(e)[:200]}"
+            try:
+                info = sadtalker.talk(Path(a["local_path"]), wav, out, size=size, hold=pad + 0.3)
+                how = "SadTalker lip-sync on this Mac"
+                logs.event("info", "news", f"Free GPU talking clip not available ({why}); made on this Mac instead",
+                           production_id=p["id"])
+            except Exception as e2:  # noqa: BLE001 - the video is made either way
+                logs.event("info", "news", f"Presenter in scene {idx + 1} stays a still picture: {why}; "
+                           f"this Mac: {str(e2)[:200]}", production_id=p["id"])
+                continue
         v = info["video"]
         db.ex("UPDATE assets SET kind='video', local_path=?, width=?, height=?, duration=?, license=?, author=? "
               "WHERE production_id=? AND scene_index=?",
-              (str(out), v["width"], v["height"], v["duration"], "AI-generated (own presenter, LTX-2 lip-sync)",
+              (str(out), v["width"], v["height"], v["duration"], f"AI-generated (own presenter, {how})",
                "AI presenter (fictional)", p["id"], idx))
         a.update(kind="video", local_path=str(out))
         made += 1
         logs.event("info", "news", f"Presenter talks in scene {idx + 1}: {info['speech_seconds']} s lip-synced "
-                   f"({info['pieces']} pieces, {info['wall_seconds']} s)", production_id=p["id"])
+                   f"via {info['model']} ({info['wall_seconds']} s)", production_id=p["id"])
     return made

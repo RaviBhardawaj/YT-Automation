@@ -2806,7 +2806,9 @@ def storage_page(request: Request):
     if not is_admin(request):
         rep.pop("cache_bytes", None)
         rep.pop("disk_free_bytes", None)
-    return page(request, "storage.html", rep=rep, lim=plans.limits(ws_id(request)),
+    mac = storage.machine() if is_admin(request) else None
+    parts = storage.components() if is_admin(request) else []
+    return page(request, "storage.html", rep=rep, lim=plans.limits(ws_id(request)), mac=mac, parts=parts,
                 auto_clean=settings.get("storage.auto_clean_days"),
                 auto_delete=settings.get("storage.auto_delete_rejected_days"))
 
@@ -2858,6 +2860,12 @@ async def api_storage(request: Request, action: str):
     if action == "cache" and is_admin(request):
         freed = storage.clear_cache(int(data.get("older_than_days") or 0))
         return ok(detail=f"Download cache: {freed / 1e6:.0f} MB freed")
+    if action == "uninstall" and is_admin(request):
+        try:
+            freed = storage.uninstall(str(data.get("key") or ""))
+        except ValueError as e:
+            return bad(str(e))
+        return ok(detail=f"Uninstalled — {freed / 1e9:.2f} GB freed")
     return bad("unknown action", 404)
 
 

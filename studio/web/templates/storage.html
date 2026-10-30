@@ -8,6 +8,29 @@
   <div class="card tight stat"><div class="n">{{ '%.2f' % (rep.final_bytes / 1e9) }} GB</div><div class="l">Final videos</div></div>
   <div class="card tight stat"><div class="n">{{ '%.2f' % (rep.uploads_bytes / 1e9) }} GB</div><div class="l">Your uploads (originals)</div></div>
 </div>
+{% if mac %}
+<div class="card" style="margin-bottom:16px"><div class="spread"><h2>This Mac right now</h2><span class="muted small">{{ mac.cpu }} · {{ mac.cores }} cores</span></div>
+  <div class="grid g4">
+    <div class="card tight stat"><div class="n">{{ '%.1f' % (mac.ram_used / 2**30) }} / {{ '%.0f' % (mac.ram_total / 2**30) }} GB</div><div class="l">Memory in use ({{ mac.ram_pct }}%){% if mac.ram_pct >= 85 %} — <b>high</b>{% endif %}</div></div>
+    <div class="card tight stat"><div class="n">{{ '%.1f' % (mac.swap_used / 2**30) }} GB</div><div class="l">Swap (memory spilled to disk{% if mac.swap_used > 2**30 %} — Mac is short of memory{% endif %})</div></div>
+    <div class="card tight stat"><div class="n">{{ mac.load[0] if mac.load else '—' }}</div><div class="l">Processor load (1 min; {{ mac.cores }} = fully busy)</div></div>
+    <div class="card tight stat"><div class="n">{{ '%.1f' % (mac.disk_free / 1e9) }} GB free</div><div class="l">Disk {{ mac.disk_pct }}% full of {{ '%.0f' % (mac.disk_total / 1e9) }} GB{% if mac.disk_free < 15e9 %} — <b>low</b>{% endif %}</div></div>
+  </div>
+  <h3 style="margin-top:12px">Biggest programs in memory</h3>
+  <table><tr><th>Program</th><th>Memory</th></tr>
+    {% for p in mac.top %}<tr><td>{{ p.name }}</td><td>{{ p.mb }} MB</td></tr>{% endfor %}</table>
+  <div class="muted small">Video making needs the most memory while rendering and making talking clips. Closing big browser tabs helps.</div>
+</div>
+<div class="card" style="margin-bottom:16px"><h2>Installed AI tools</h2>
+  <div class="muted small">Uninstall a part you don't use to free space. Your videos and channels are not touched. Parts marked "needed" can't be removed.</div>
+  <table><tr><th>Part</th><th>What it does</th><th>Size</th><th></th></tr>
+  {% for c in parts|sort(attribute='bytes', reverse=True) %}
+    <tr><td><b>{{ c.name }}</b></td><td>{{ c.what }}{% if c.installed and not c.required %}<div class="muted small">After removing: {{ c.after }} Reinstall: {{ c.reinstall }}.</div>{% endif %}</td>
+      <td>{{ '%.2f' % (c.bytes / 1e9) }} GB</td>
+      <td>{% if c.required %}<span class="chip">needed</span>{% elif c.installed %}<button class="sm danger" data-post="/api/storage/uninstall" data-body='{"key": "{{ c.key }}"}' data-confirm="Uninstall {{ c.name }} and free {{ '%.2f' % (c.bytes / 1e9) }} GB? {{ c.after }}">Uninstall</button>{% else %}<span class="muted small">not installed</span>{% endif %}</td></tr>
+  {% endfor %}</table>
+</div>
+{% endif %}
 {% if is_admin %}
 <div class="grid g2" style="margin-bottom:16px">
   <form class="card" data-form="/api/storage/settings" data-done="Saved">
