@@ -274,6 +274,11 @@ def video_voice(p: dict[str, Any]) -> dict[str, Any] | None:
     if not want and p.get("channel_id"):
         from . import channels
         want = (channels.get(p["channel_id"]) or {}).get("voice") or {}
+    if want.get("engine") and want.get("engine") != "clone" and want.get("voice_id"):   # a chosen built-in voice
+        match = next((v for v in tts.all_voices() if v["engine"] == want["engine"] and v["id"] == want["voice_id"]), None)
+        if match:
+            return {**match, "voice_id": match["id"], "speed": float(want.get("speed") or 1.0), "installed": True}
+        return None
     if want.get("engine") != "clone":
         return None
     v = voiceclone.get(want.get("voice_id"), p.get("workspace_id") or 1)
@@ -397,6 +402,8 @@ def stage_render(p: dict[str, Any]) -> str | None:
     style = settings.get("brand").get("caption_style", "bold")
     look = video_look(p)
     assets = {a["scene_index"]: a for a in db.q("SELECT * FROM assets WHERE production_id=?", (p["id"],))}
+    from .creative import news
+    news.make_presenter_talk(p, assets, tl, pad, work)    # news presenter speaks his lines (when the free GPU allows)
     wm_path = work / "overlays" / "watermark.png"
     wm = graphics.watermark_png(w, h, fmt, wm_path)
     ribbon = None

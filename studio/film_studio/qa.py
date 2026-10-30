@@ -160,8 +160,11 @@ def creative(p: dict[str, Any], limit: int = 12) -> tuple[list[dict[str, Any]], 
     real = sum(v for k, v in by_motion.items() if k in ("video", "dialogue_video", "lipsync_verified"))
     checks.append(_check("real motion", True, f"{real} of {len(shots)} shots are real video; the rest are stills with "
                                               "camera moves (labelled)", kind="creative", severity="info"))
+    talking = by_motion.get("dialogue_video", 0)
     checks.append(_check("lip-sync", None,                 # a limitation to report, never a pass and never a block
-                         ("unverified on the AI video shots; " if real else "") +
+                         (f"{talking} dialogue shot(s) lip-synced from their own voice line by LTX-2 (not measured); "
+                          if talking else "") +
+                         ("unverified on the other AI video shots; " if real - talking else "") +
                          "not supported on stills with camera moves — dialogue plays over the speaker's shot",
                          kind="creative"))
     warn = [w for w in (film.get("audio_sync") or {}).get("warnings", [])]

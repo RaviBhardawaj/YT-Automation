@@ -90,6 +90,13 @@ def _client() -> httpx.Client:
                         headers={"Authorization": f"Bearer {settings.secret('hf_token')}"})
 
 
+def retry_after_from(msg: str) -> int | None:
+    """Seconds until the free minutes come back, from the Space's own 'Try again in H:MM:SS'."""
+    import re
+    m = re.search(r"(?i)try again in (\d+):(\d\d):(\d\d)", msg or "")
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)) + 120 if m else None
+
+
 def _quota_text(msg: str) -> bool:
     # an empty error ("null") is how a ZeroGPU Space reports a spent GPU allowance
     low = (msg or "").strip().lower()
@@ -234,7 +241,8 @@ def generate(image: Path, prompt: str, out: Path, *, seconds: float = 3.5, seed:
                 msg = error if error is not None else "no result from the Space"
                 _record(False, msg)
                 if error is not None and _quota_text(msg):
-                    q = QuotaExceeded("Today's free ZeroGPU minutes are used up — the clip is made after the reset.")
+                    q = QuotaExceeded("Today's free ZeroGPU minutes are used up — the clip is made after the reset.",
+                                      retry_after=retry_after_from(msg))
                     _remember_quota(q.retry_after)
                     raise q
                 raise SpaceError(f"The video Space returned an error: {msg[:200]}", "server")

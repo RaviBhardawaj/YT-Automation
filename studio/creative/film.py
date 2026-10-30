@@ -357,7 +357,8 @@ def stage_shots(p: dict[str, Any]) -> None:
     from ..film_studio import generate
     res = generate.run(p, _gen, workdir(p["id"]))
     film = pipeline.load(p["id"])["package"]
-    film["generation"] = {k: res[k] for k in ("keyframes", "video", "camera_move", "failed", "upgraded", "left")}
+    film["generation"] = {k: res[k] for k in ("keyframes", "video", "talking", "camera_move", "failed", "upgraded",
+                                              "left")}
     pipeline.save(p["id"], package=film)
     if pipeline.load(p["id"])["status"] in ("paused", "rejected"):
         return
@@ -369,7 +370,7 @@ def stage_shots(p: dict[str, Any]) -> None:
                           error=f"{len(stuck)} shot(s) failed repeatedly — open the Film Studio page to retry or "
                                 "change them.")
             return
-    logs.event("info", "film", f"Shots: {res['video']} real video, {res['camera_move']} stills with camera move, "
+    logs.event("info", "film", f"Shots: {res['video']} real video, {res['talking']} lip-synced, {res['camera_move']} stills with camera move, "
                f"{res['keyframes']} new pictures", production_id=p["id"])
 
 

@@ -31,7 +31,10 @@ class BudgetExceeded(Exception):
 
 
 class AllProvidersFailed(Exception):
-    pass
+    """Every writer is used up, busy or unreachable right now. Free allowances come back (daily/monthly resets,
+    networks return), so the job waits and tries again instead of failing for good."""
+    temporary = True
+    retry_after = 1800
 
 
 def month_start() -> str:

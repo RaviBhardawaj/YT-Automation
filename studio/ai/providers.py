@@ -246,6 +246,12 @@ class AnthropicProvider(Provider):
 
 # ------------------------------------------------------------------ Gemini
 
+# free Gemini-API models, each with its own daily quota (tried in this order after the configured model)
+GEMINI_FREE_MODELS = ["gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.6-flash", "gemma-4-31b-it",
+                      "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemma-4-26b-a4b-it", "gemini-flash-lite-latest"]
+_gemini_spent: dict[str, str] = {}             # model -> the (Pacific) day its free quota ran out
+
+
 class GeminiProvider(Provider):
     id = "gemini"
 
@@ -277,18 +283,51 @@ class GeminiProvider(Provider):
         except (httpx.HTTPError, ValueError, KeyError):
             return []
 
+    def models(self) -> list[str]:
+        """The configured model first, then the other free models — each has its own free daily quota."""
+        extra = settings.get("ai.gemini_fallback_models") or GEMINI_FREE_MODELS
+        return list(dict.fromkeys([self.model(), *extra]))
+
     def complete_json(self, system: str, prompt: str, schema: dict, max_tokens: int) -> LLMResult:
-        model = self.model()
-        body: dict[str, Any] = {
-            "systemInstruction": {"parts": [{"text": system}]},
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": schema,
-                                 "maxOutputTokens": max_tokens},
-        }
+        """Tries the free models in turn: one model's spent daily quota (or a busy model) moves on to the next."""
+        day = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 7 * 3600))       # Google resets at midnight PT
+        tried = []
+        for model in self.models():
+            if _gemini_spent.get(model) == day:
+                continue
+            try:
+                return self._call(model, system, prompt, schema, max_tokens)
+            except ProviderError as e:
+                if getattr(e, "quota", False):
+                    _gemini_spent[model] = day
+                    tried.append(f"{model}: used up")
+                    continue
+                if getattr(e, "busy", False):
+                    tried.append(f"{model}: busy")
+                    continue
+                raise
+        raise ProviderError("Gemini: every free model is used up or busy today (" + "; ".join(tried)[:300] + ")",
+                            skip_provider=True)
+
+    def _call(self, model: str, system: str, prompt: str, schema: dict, max_tokens: int) -> LLMResult:
+        gemma = model.startswith("gemma")
+        if gemma:      # Gemma on this API takes no system instruction and no JSON mode: ask for JSON in the text
+            body: dict[str, Any] = {
+                "contents": [{"role": "user", "parts": [{"text": f"{system}\n\n{prompt}\n\nAnswer with ONE JSON "
+                                                                 f"object matching this JSON schema, nothing else:\n"
+                                                                 f"{json.dumps(schema)[:6000]}"}]}]}
+            # (a generationConfig makes Gemma on this API answer HTTP 500)
+        else:
+            body = {
+                "systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": schema,
+                                     "maxOutputTokens": max_tokens},
+            }
         url = f"{GEMINI_BASE}/models/{model}:generateContent"
         try:
             r = httpx.post(url, json=body, headers=self._headers(), timeout=httpx.Timeout(600, connect=10))
-            if r.status_code == 400 and "schema" in r.text.lower():
+            if r.status_code == 400 and "schema" in r.text.lower() and not gemma:
                 # Older models may reject responseJsonSchema: fall back to plain JSON mode.
                 body["generationConfig"].pop("responseJsonSchema")
                 r = httpx.post(url, json=body, headers=self._headers(), timeout=600)
@@ -296,8 +335,14 @@ class GeminiProvider(Provider):
             raise ProviderError(f"Gemini request failed: {e}", retryable=True) from e
         if r.status_code in (401, 403):
             raise ProviderError("Gemini: API key rejected", skip_provider=True)
-        if r.status_code == 429:
-            raise ProviderError("Gemini: rate limit / free-tier quota reached", skip_provider=True)
+        if r.status_code in (429, 404):          # 404: a model retired for new users — same as used up for us
+            err = ProviderError(f"Gemini {model}: rate limit / free-tier quota reached", skip_provider=True)
+            err.quota = True  # type: ignore[attr-defined]
+            raise err
+        if r.status_code >= 500:                  # busy or broken right now: the next free model is tried
+            err = ProviderError(f"Gemini {model}: server busy/error {r.status_code}", retryable=True)
+            err.busy = True  # type: ignore[attr-defined]
+            raise err
         if r.status_code >= 500:
             raise ProviderError(f"Gemini: server error {r.status_code}", retryable=True)
         if r.status_code >= 400:

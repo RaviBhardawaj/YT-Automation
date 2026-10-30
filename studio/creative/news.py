@@ -217,3 +217,42 @@ def presenter_asset(p: dict[str, Any], idx: int, work: Path) -> dict[str, Any] |
             "source_url": "", "page_url": "", "local_path": str(target), "license": "AI-generated (own presenter)",
             "license_url": "", "author": "AI presenter (fictional)", "attribution": "", "width": w, "height": h,
             "duration": None}
+
+
+TALK_PROMPT = ("The news presenter speaks directly to the camera with natural lip movement that matches the words, "
+               "small head nods and calm, confident expressions; static camera; the same face, hair, suit and studio "
+               "throughout; no text, no cuts.")
+
+
+def make_presenter_talk(p: dict[str, Any], assets: dict[int, dict[str, Any]], tl: dict[str, Any], pad: float,
+                        work: Path) -> int:
+    """Before rendering: each presenter scene becomes a lip-synced clip of that scene's own narration (free LTX-2
+    on the free GPU). Anything that can't be made keeps the still presenter picture, with the reason logged."""
+    from ..film_studio import talking, zerogpu
+    made = 0
+    for idx, a in sorted(assets.items()):
+        if a["provider"] != PRESENTER_PROVIDER or a["kind"] != "image" or idx >= len(tl.get("scenes") or []):
+            continue
+        wav = Path(tl["scenes"][idx]["wav"])
+        out = work / "visuals" / f"presenter_talk_{idx:03d}.mp4"
+        size = (512, 896) if p["format"] == "short" else (896, 512)
+        try:
+            info = talking.talk(Path(a["local_path"]), wav, TALK_PROMPT, out, size=size, hold=pad + 0.3,
+                                seed=p["id"] * 10 + idx)
+        except (talking.TooLong, zerogpu.QuotaExceeded, zerogpu.SpaceError) as e:
+            logs.event("info", "news", f"Presenter in scene {idx + 1} stays a still picture: {e}", production_id=p["id"])
+            continue
+        except Exception as e:  # noqa: BLE001 - a talking clip is an upgrade; the video is made either way
+            logs.event("warning", "news", f"Presenter talking clip failed in scene {idx + 1}: {type(e).__name__}: "
+                       f"{str(e)[:200]}", production_id=p["id"])
+            continue
+        v = info["video"]
+        db.ex("UPDATE assets SET kind='video', local_path=?, width=?, height=?, duration=?, license=?, author=? "
+              "WHERE production_id=? AND scene_index=?",
+              (str(out), v["width"], v["height"], v["duration"], "AI-generated (own presenter, LTX-2 lip-sync)",
+               "AI presenter (fictional)", p["id"], idx))
+        a.update(kind="video", local_path=str(out))
+        made += 1
+        logs.event("info", "news", f"Presenter talks in scene {idx + 1}: {info['speech_seconds']} s lip-synced "
+                   f"({info['pieces']} pieces, {info['wall_seconds']} s)", production_id=p["id"])
+    return made

@@ -383,9 +383,13 @@ def generate_long(topic: dict[str, Any], evidence: list[dict[str, Any]], feedbac
                      + ("End with this closing idea: " + outline.closing if idx == len(outline.chapters) else "")
                      + f"\n{VISUAL_RULES}\nList fact checks for the claims in this chapter.")
 
-        def check_ch(c: ChapterScenes) -> None:
+        def check_ch(c: ChapterScenes, want: int = ch.target_words) -> None:
             validate_scenes(c.scenes, "long", check_totals=False)
             validate_facts(c.fact_checks, valid_ids)
+            got = sum(word_count(s.narration) for s in c.scenes)
+            if got < want * 0.7:          # caught here, so the writer expands it now (not after the whole script)
+                raise ValueError(f"this chapter has only {got} spoken words; write about {want} — add more detail, "
+                                 "context and explanation from the evidence (no padding or repetition)")
 
         part, m = ai.generate("script", prompts.system("an expert documentary scriptwriter"), ch_prompt,
                               ChapterScenes, max_tokens=7000, validate=check_ch)

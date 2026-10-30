@@ -61,3 +61,37 @@ class CloudflareTextTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeminiRotationTests(unittest.TestCase):
+    def setUp(self):
+        providers._gemini_spent.clear()
+
+    def test_a_used_up_model_moves_on_to_the_next_free_one_and_is_skipped_afterwards(self):
+        seen = []
+
+        def post(url, **kw):
+            model = url.split("/models/")[1].split(":")[0]
+            seen.append(model)
+            if model in ("gemini-flash-latest", "gemini-3.5-flash"):
+                return httpx.Response(429, json={"error": {"message": "quota"}})
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": '{"a": 1}'}]}}]})
+        g = providers.get("gemini")
+        with mock.patch.object(httpx, "post", post):
+            r1 = g.complete_json("s", "p", {"type": "object"}, 100)
+            r2 = g.complete_json("s", "p", {"type": "object"}, 100)
+        self.assertEqual((r1.model, r2.model), ("gemini-3-flash-preview", "gemini-3-flash-preview"))
+        self.assertEqual(seen.count("gemini-flash-latest"), 1)              # remembered as spent for today
+
+    def test_gemma_gets_the_schema_in_the_text_and_no_json_mode(self):
+        bodies = []
+        with mock.patch.object(httpx, "post", lambda url, **kw: bodies.append(kw["json"]) or httpx.Response(
+                200, json={"candidates": [{"content": {"parts": [{"text": 'ok {"a": 1}'}]}}]})):
+            providers.get("gemini")._call("gemma-4-31b-it", "sys", "p", {"type": "object"}, 100)
+        self.assertNotIn("systemInstruction", bodies[0])
+        self.assertNotIn("generationConfig", bodies[0])
+        self.assertIn("JSON schema", bodies[0]["contents"][0]["parts"][0]["text"])
+
+    def test_every_writer_used_up_is_a_wait_not_a_failure(self):
+        self.assertTrue(router.AllProvidersFailed.temporary)
+        self.assertGreater(router.AllProvidersFailed.retry_after, 0)

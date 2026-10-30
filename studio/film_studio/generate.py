@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import db, logs, settings
-from . import providers, store, zerogpu
+from . import providers, store, talking, zerogpu
 
 KEY_PRIORITY = {"insert": 0, "establishing": 1, "reaction": 2, "close_up": 3, "wide": 4, "over_shoulder": 5,
                 "medium": 6, "cutaway": 7}
@@ -183,6 +183,37 @@ def _video_take(shot: dict[str, Any], ws: int, key: Path, out: Path, pick: dict[
     return tid
 
 
+def talk_prompt(shot: dict[str, Any], film: dict[str, Any] | None = None) -> str:
+    """Image-to-video prompt for a dialogue shot driven by the line's own audio."""
+    film = film or {}
+    d = (shot.get("dialogue") or [{}])[0]
+    speaker = d.get("name") or _names(film, [d.get("speaker")] if d.get("speaker") else []) or "the speaker"
+    others = [k for k in shot.get("characters") or [] if k != d.get("speaker")]
+    listen = f" {_names(film, others)} listen and react silently." if others else ""
+    return (f"{speaker} speaks to the others with natural lip movement that matches the words, expressive face and "
+            f"small hand gestures.{listen} Camera locked off, stable framing. Keep the same faces, hair, clothes, "
+            "props and place as in the first frame; no new people, no cut; realistic light and shadows.")[:900]
+
+
+def _talk_take(shot: dict[str, Any], ws: int, key: Path, out: Path, film: dict[str, Any]) -> int:
+    """A lip-synced take: the key picture's speaker says the shot's recorded line (LTX-2 on the free GPU)."""
+    from . import qa
+    d = shot["dialogue"][0]
+    prompt = talk_prompt(shot, film)
+    info = talking.talk(key, Path(d["wav"]), prompt, out, size=(896, 512), max_pieces=3, seed=shot["id"])
+    settings_ = {"keyframe": str(key), "start_image": str(key), "key_made_by": _key_meta(key),
+                 "lipsync": info["lipsync"], "speech_seconds": info["speech_seconds"], "pieces": info["pieces"],
+                 "video": info["video"], "motion_check": qa.motion_stats(out)}
+    tid = store.add_take(shot["id"], ws, provider=info["provider"], motion_type="dialogue_video", file_path=str(out),
+                         model=info["model"], prompt=prompt, settings=settings_)
+    cont = dict(store.shot(shot["id"], ws)["continuity"])
+    cont["audio"] = {**(cont.get("audio") or {}), "lipsync": "audio-driven (LTX-2 made the mouth from this line)"}
+    for k in ("video_wanted", "video_error"):
+        cont.pop(k, None)
+    store.set_shot(shot["id"], ws, continuity=cont)
+    return tid
+
+
 def _note_failure(shot: dict[str, Any], ws: int, pick: dict[str, Any], err: Exception, film: dict[str, Any]) -> str:
     kind = getattr(err, "kind", type(err).__name__)
     store.add_take(shot["id"], ws, provider=pick["provider"], motion_type="video", file_path=None,
@@ -223,7 +254,7 @@ def run(p: dict[str, Any], gen_image, work: Path) -> dict[str, Any]:
                 and s["motion_type"] not in ("video", "dialogue_video", "lipsync_verified")]
     todo.sort(key=lambda s: (0 if wants_video(s) else 1, video_priority(s), s["scene_no"], s["shot_no"]))
     upgrades.sort(key=video_priority)
-    made = {"keyframes": 0, "video": 0, "camera_move": 0, "failed": 0, "upgraded": 0, "resumed": 0}
+    made = {"keyframes": 0, "video": 0, "talking": 0, "camera_move": 0, "failed": 0, "upgraded": 0, "resumed": 0}
 
     for shot in upgrades:                                    # real motion for shots that only have a camera move
         if not can_video():
@@ -261,6 +292,22 @@ def run(p: dict[str, Any], gen_image, work: Path) -> dict[str, Any]:
             gen_image(prompt, key, refs=_refs(film, shot), size=(1024, 576))
             made["keyframes"] += 1
         note = ""
+        line = (shot.get("dialogue") or [{}])[0]
+        if line.get("wav") and Path(line["wav"]).exists() and talking.enabled():
+            why = talking.available(float(line.get("seconds") or 0), max_pieces=3)
+            if not why:
+                try:
+                    _talk_take(shot, ws, key, clips_dir / f"shot_{shot['id']:05d}_talk.mp4", film)
+                    made["talking"] += 1
+                    continue
+                except Exception as e:  # noqa: BLE001 - recorded; the shot still gets a take below
+                    kind = getattr(e, "kind", type(e).__name__)
+                    store.add_take(shot["id"], ws, provider=talking.PROVIDER, motion_type="dialogue_video",
+                                   file_path=None, prompt=talk_prompt(shot, film), status="failed",
+                                   error=f"[{kind}] {str(e)[:280]}", settings={"error_kind": kind})
+                    note = f"lip-synced take failed ({kind}); "
+            else:
+                note = f"no lip-sync ({why}); "
         if wants_video(shot):
             if can_video():
                 out = clips_dir / f"shot_{shot['id']:05d}.mp4"
@@ -274,18 +321,18 @@ def run(p: dict[str, Any], gen_image, work: Path) -> dict[str, Any]:
                         raise                                  # 'all': wait for the quota reset, then continue
                     stop_reason = str(e)
                     logs.event("info", "film", str(e), production_id=pid)
-                    note = "real video wanted — today's free GPU minutes are used up; use 'Make it video' later"
+                    note += "real video wanted — today's free GPU minutes are used up; use 'Make it video' later"
                 except Exception as e:  # noqa: BLE001 - every failure is recorded with its kind
                     kind = _note_failure(shot, ws, pick, e, film)
                     made["failed"] += 1
                     if kind in ("auth", "interface", "not_configured"):
                         stop_reason = str(e)
-                    note = f"real video failed ({kind}: {str(e)[:90]}); still with camera move used — retry later"
+                    note += f"real video failed ({kind}: {str(e)[:90]}); still with camera move used — retry later"
             else:
                 if mode == "all" and "limit" not in stop_reason and "used up" in stop_reason:
                     store.set_shot(shot["id"], ws, status="waiting")
                     raise zerogpu.QuotaExceeded(stop_reason)
-                note = f"real video wanted — {stop_reason}; still with camera move used"
+                note += f"real video wanted — {stop_reason}; still with camera move used"
         store.add_take(shot["id"], ws, provider="ffmpeg_camera", motion_type="camera_move", file_path=str(key),
                        model="flux keyframe + zoompan", prompt=keyframe_prompt(film, shot),
                        settings={"keyframe": str(key), "key_made_by": _key_meta(key), "note": note,

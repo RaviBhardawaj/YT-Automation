@@ -13,7 +13,9 @@ GAP = 0.35
 def lipsync_status(motion_type: str) -> str:
     if motion_type == "lipsync_verified":
         return "verified"
-    if motion_type in ("video", "dialogue_video"):
+    if motion_type == "dialogue_video":
+        return "audio-driven — LTX-2 made the mouth from this line's own voice (not measured)"
+    if motion_type == "video":
         return "unverified — AI video, mouth movement not checked against the words"
     return "not supported — still image with camera move (no mouth movement)"
 
