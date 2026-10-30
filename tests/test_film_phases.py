@@ -24,7 +24,7 @@ config.ensure_dirs()
 db.migrate()
 from studio import auth, channels, jobs, pipeline, settings, worker  # noqa: E402
 from studio.creative import film  # noqa: E402
-from studio.film_studio import audio, edit, generate, qa, store, zerogpu  # noqa: E402
+from studio.film_studio import audio, edit, generate, qa, sadtalker, store, zerogpu  # noqa: E402
 
 auth.ensure_default_workspace()
 channels.ensure_default()
@@ -94,9 +94,12 @@ def new_film() -> int:
         return jobs.create(channels.holder(1), SCRIPT, no_upload=True)["production_ids"][0]
 
 
-def run_all(pid, video=True, zgen=fake_zerogpu):
+def run_all(pid, video=True, zgen=fake_zerogpu, sad=None):
     ok = ("cloudflare_flux", "ffmpeg_camera") + (("hf_zerogpu",) if video else ())
-    with health(*ok), mock.patch("studio.media.visuals.generate_cloudflare", fake_image), \
+    # SadTalker may really be installed on this Mac: never run it here unless a test fakes it
+    with health(*ok), mock.patch.object(sadtalker, "enabled", lambda: sad is not None), \
+            mock.patch.object(sadtalker, "talk", sad or sadtalker.talk), \
+            mock.patch("studio.media.visuals.generate_cloudflare", fake_image), \
             mock.patch("studio.media.tts._synth_sentence", fake_tts), \
             mock.patch("studio.media.tts.kokoro_installed", lambda: True), \
             mock.patch.object(film, "_devanagari", lambda lines: ["देव " + x for x in lines]), \
@@ -153,6 +156,24 @@ class GenerationTests(unittest.TestCase):
         with self.assertRaises(zerogpu.QuotaExceeded) as cm:
             run_all(pid, zgen=quota)
         self.assertTrue(cm.exception.temporary)                           # the worker waits, no attempt used
+
+    def test_one_speaker_shots_talk_on_this_mac_when_the_free_gpu_is_out(self):
+        made = []
+
+        def fake_sad(image, audio_path, out, *, size, hold=0.0):
+            made.append(Path(audio_path).name)
+            subprocess.run([config.FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i",
+                            "testsrc=size=1024x576:rate=25:d=2", "-pix_fmt", "yuv420p", str(out)], check=True)
+            return {"provider": sadtalker.PROVIDER, "model": "SadTalker 256 (on this Mac)", "pieces": 1,
+                    "speech_seconds": 2.0, "wall_seconds": 1.0, "lipsync": "audio-driven",
+                    "video": {"width": 1024, "height": 576, "duration": 2.0}}
+        p = run_all(new_film(), video=False, sad=fake_sad)
+        shots = store.shots(p["id"], 1)
+        talking = [s for s in shots if s["motion_type"] == "dialogue_video"]
+        self.assertTrue(talking and made)
+        self.assertTrue(all(len(s["characters"]) == 1 and s["dialogue"] for s in talking))
+        self.assertIn("SadTalker", talking[0]["continuity"]["audio"]["lipsync"])
+        self.assertFalse(any(s["motion_type"] == "dialogue_video" and len(s["characters"]) != 1 for s in shots))
 
     def test_failures_are_recorded_and_earlier_takes_kept(self):
         def broken(*a, **k):

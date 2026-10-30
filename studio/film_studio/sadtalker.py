@@ -37,6 +37,8 @@ def python() -> Path:
 
 
 def installed() -> bool:
+    if os.environ.get("STUDIO_OFFLINE") == "1":       # tests / offline runs never start a minutes-long local model
+        return False
     h = home()
     return (h / "inference.py").exists() and python().exists() and \
         (h / "checkpoints" / "SadTalker_V0.0.2_256.safetensors").exists()

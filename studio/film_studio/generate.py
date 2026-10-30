@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import db, logs, settings
-from . import providers, store, talking, zerogpu
+from . import providers, sadtalker, store, talking, zerogpu
 
 KEY_PRIORITY = {"insert": 0, "establishing": 1, "reaction": 2, "close_up": 3, "wide": 4, "over_shoulder": 5,
                 "medium": 6, "cutaway": 7}
@@ -214,6 +214,23 @@ def _talk_take(shot: dict[str, Any], ws: int, key: Path, out: Path, film: dict[s
     return tid
 
 
+def _sad_take(shot: dict[str, Any], ws: int, key: Path, out: Path) -> int:
+    """A talking take made on this Mac: SadTalker animates the one speaker's face from the shot's recorded line
+    (face only — the body and the set stay as drawn)."""
+    from . import qa
+    d = shot["dialogue"][0]
+    info = sadtalker.talk(key, Path(d["wav"]), out, size=(1024, 576))
+    settings_ = {"keyframe": str(key), "start_image": str(key), "key_made_by": _key_meta(key),
+                 "lipsync": info["lipsync"], "speech_seconds": info["speech_seconds"], "video": info["video"],
+                 "motion_check": qa.motion_stats(out)}
+    tid = store.add_take(shot["id"], ws, provider=info["provider"], motion_type="dialogue_video", file_path=str(out),
+                         model=info["model"], prompt="", settings=settings_)
+    cont = dict(store.shot(shot["id"], ws)["continuity"])
+    cont["audio"] = {**(cont.get("audio") or {}), "lipsync": "audio-driven (SadTalker on this Mac moved the face)"}
+    store.set_shot(shot["id"], ws, continuity=cont)
+    return tid
+
+
 def _note_failure(shot: dict[str, Any], ws: int, pick: dict[str, Any], err: Exception, film: dict[str, Any]) -> str:
     kind = getattr(err, "kind", type(err).__name__)
     store.add_take(shot["id"], ws, provider=pick["provider"], motion_type="video", file_path=None,
@@ -293,7 +310,8 @@ def run(p: dict[str, Any], gen_image, work: Path) -> dict[str, Any]:
             made["keyframes"] += 1
         note = ""
         line = (shot.get("dialogue") or [{}])[0]
-        if line.get("wav") and Path(line["wav"]).exists() and talking.enabled():
+        has_line = bool(line.get("wav") and Path(line["wav"]).exists())
+        if has_line and talking.enabled():
             why = talking.available(float(line.get("seconds") or 0), max_pieces=3)
             if not why:
                 try:
@@ -308,6 +326,17 @@ def run(p: dict[str, Any], gen_image, work: Path) -> dict[str, Any]:
                     note = f"lip-synced take failed ({kind}); "
             else:
                 note = f"no lip-sync ({why}); "
+        if has_line and len(shot.get("characters") or []) == 1 and sadtalker.enabled():
+            # free GPU not available: one speaker on screen can still talk — SadTalker on this Mac
+            try:
+                _sad_take(shot, ws, key, clips_dir / f"shot_{shot['id']:05d}_sad.mp4")
+                made["talking"] += 1
+                continue
+            except Exception as e:  # noqa: BLE001 - recorded; the shot still gets a take below
+                store.add_take(shot["id"], ws, provider=sadtalker.PROVIDER, motion_type="dialogue_video",
+                               file_path=None, prompt="", status="failed", error=str(e)[:300],
+                               settings={"error_kind": type(e).__name__})
+                note += f"talking face on this Mac failed ({type(e).__name__}); "
         if wants_video(shot):
             if can_video():
                 out = clips_dir / f"shot_{shot['id']:05d}.mp4"
