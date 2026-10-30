@@ -74,6 +74,9 @@ def _section(lines: list[str], heading_words: tuple[str, ...]) -> str:
         if SECTION_RX.match(ln):
             on = any(w in ln.upper() for w in heading_words)
             continue
+        if SCENE_RX.match(ln) or CHAR_RX.match(ln):
+            on = False                                 # a scene or character block ends the section
+            continue
         if on and ln.strip():
             out.append(ln.strip().lstrip("*•- ").strip())
     return " ".join(out)[:900]

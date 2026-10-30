@@ -38,7 +38,8 @@ def character_prompt(name: str, bible: dict[str, Any], notes: str = "") -> str:
 def location_prompt(description: str, notes: str = "") -> str:
     loc = re.sub(r"(?i)^the entire film takes place primarily in one\s*", "", description or "").strip()
     return (f"Cinematic wide establishing shot, no people: {loc[:420] or 'a village courtyard in North India'}. "
-            f"{notes} Natural afternoon sunlight, real place, lived-in details").replace("  ", " ")
+            f"{notes} Natural afternoon sunlight, real place, lived-in details, no speech bubbles, no captions, "
+            "no readable lettering").replace("  ", " ")
 
 
 def propose(production_id: int, ws: int, film: dict[str, Any]) -> int:

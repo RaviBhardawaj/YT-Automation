@@ -108,6 +108,15 @@ def run_all(pid, video=True, zgen=fake_zerogpu, sad=None):
     return pipeline.load(pid)
 
 
+class ScriptSectionTests(unittest.TestCase):
+    def test_the_set_description_stops_at_the_first_scene(self):
+        from studio.creative import script_import
+        loc = script_import.parse(SCRIPT)["location"]
+        self.assertIn("neem tree", loc)
+        self.assertNotIn("Do rupaye", loc)                 # no dialogue in the set picture's prompt
+        self.assertNotIn("SCENE", loc)
+
+
 class GenerationTests(unittest.TestCase):
     def setUp(self):
         CALLS["video"] = 0
