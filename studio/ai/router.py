@@ -67,6 +67,9 @@ def is_free(provider_id: str | None) -> bool:
     """Costs nothing: Ollama (local, or the cloud plan's included usage) and Gemini on its free tier."""
     if provider_id in ("ollama_local", "ollama_cloud"):
         return True
+    if provider_id == "cloudflare_ai":                       # free allowance only; never billed
+        from ..media import visuals
+        return visuals.cloudflare_ready()
     return provider_id == "gemini" and settings.get("ai.gemini_tier") != "paid" and settings.has_secret("gemini_api_key")
 
 
@@ -79,7 +82,7 @@ def provider_chain(task: str) -> list[str]:
     if settings.get("ai.free_first", True):
         # free providers first (in the configured order, then the other free ones); paid ones only when every
         # free option failed or is used up
-        free = [p for p in chain + ["ollama_local", "ollama_cloud", "gemini"] if is_free(p)]
+        free = [p for p in chain + ["ollama_local", "ollama_cloud", "gemini", "cloudflare_ai"] if is_free(p)]
         chain = free + [p for p in chain if not is_free(p)]
     seen: list[str] = []
     for pid in chain:

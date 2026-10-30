@@ -64,6 +64,14 @@ class StoryTests(unittest.TestCase):
         self.assertIsNone(news.pick(ch, stories))                           # covered today: not repeated
 
 
+    def test_astrology_is_never_picked_as_news(self):
+        ch = news_channel("No astrology")
+        story = {"keyword": "guru gochar", "traffic": 99000, "published_at": "", "articles": [
+            {"title": "Guru Gochar 2026: 3 राशियां खूब कमाएंगी पैसा", "url": "https://x.example/1", "source": "A"},
+            {"title": "Jupiter transit: lucky zodiac signs", "url": "https://y.example/1", "source": "B"}]}
+        self.assertIsNone(news.pick(ch, [story]))
+
+
 class ScheduleTests(unittest.TestCase):
     def test_two_times_make_two_daily_slots_and_fewer_times_remove_one(self):
         ch = news_channel("Slots", schedule_enabled=1, schedule_time="18:00, 09:00")

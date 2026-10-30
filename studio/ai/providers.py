@@ -1,6 +1,7 @@
 """LLM provider adapters. Each returns raw JSON text plus token usage; the router validates."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -54,7 +55,7 @@ class Provider:
     local = False
 
     def model(self) -> str:
-        return settings.get("ai.models").get(self.id, "")
+        return settings.get("ai.models").get(self.id) or settings.DEFAULTS["ai.models"].get(self.id, "")
 
     def available(self) -> tuple[bool, str]:
         raise NotImplementedError
@@ -322,6 +323,71 @@ class GeminiProvider(Provider):
         return result
 
 
+# ------------------------------------------------------------------ Cloudflare Workers AI (free daily allowance)
+
+CF_TEXT_NEURONS = (26_668, 204_805)       # neurons per million input / output tokens (Llama 3.3 70B fp8-fast)
+
+
+class CloudflareProvider(Provider):
+    """Free last resort when Ollama Cloud and Gemini are used up: Llama 3.3 70B on Workers AI with JSON-schema output.
+    Shares the free 10,000 neurons a day with the Cloudflare FLUX pictures (about 700 neurons per script)."""
+    id = "cloudflare_ai"
+
+    def __init__(self) -> None:
+        self.label = settings.PROVIDERS[self.id]
+
+    def available(self) -> tuple[bool, str]:
+        from ..media import visuals
+        if not visuals.cloudflare_ready():
+            return False, "Cloudflare Workers AI not set up (token + account ID)"
+        if visuals.cloudflare_used_today() >= visuals.CF_FREE_NEURONS * 0.95:
+            return False, "today's free Cloudflare allowance is used up"
+        return True, "free daily allowance"
+
+    def complete_json(self, system: str, prompt: str, schema: dict, max_tokens: int) -> LLMResult:
+        from .. import db
+        ok, why = self.available()
+        if not ok:
+            raise ProviderError(f"{self.label}: {why}", skip_provider=True)
+        model = self.model()
+        account = settings.get("visuals.cloudflare_account_id").strip()
+        body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                "response_format": {"type": "json_schema", "json_schema": schema}, "max_tokens": min(max_tokens, 8000)}
+        try:
+            r = httpx.post(f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}", json=body,
+                           headers={"Authorization": f"Bearer {settings.secret('cloudflare_api_token')}"},
+                           timeout=httpx.Timeout(300, connect=10))
+        except httpx.HTTPError as e:
+            raise ProviderError(f"Cloudflare request failed: {e}", retryable=True) from e
+        if r.status_code in (401, 403):
+            raise ProviderError("Cloudflare: token rejected", skip_provider=True)
+        if r.status_code == 429:
+            raise ProviderError("Cloudflare: today's free allowance is used up", skip_provider=True)
+        if r.status_code >= 500:
+            raise ProviderError(f"Cloudflare: server error {r.status_code}", retryable=True)
+        if r.status_code >= 400:
+            raise ProviderError(f"Cloudflare: HTTP {r.status_code} {r.text[:300]}", skip_provider=True)
+        res = (r.json() or {}).get("result") or {}
+        if res.get("choices"):                                   # OpenAI-style answer
+            msg = res["choices"][0].get("message") or {}
+            out, finish = msg.get("content"), res["choices"][0].get("finish_reason")
+        else:
+            out, finish = res.get("response"), None
+        text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)
+        usage = res.get("usage") or {}
+        in_t, out_t = int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
+        neurons = int((in_t * CF_TEXT_NEURONS[0] + out_t * CF_TEXT_NEURONS[1]) / 1e6) + 1
+        db.insert("ai_usage", {"task": "text", "provider": "cloudflare", "model": model, "input_tokens": 0,
+                               "output_tokens": neurons, "cost_usd": 0.0, "ok": 1, "error": "",
+                               "duration_s": 0, "created_at": db.iso()})      # counts against the shared allowance
+        result = LLMResult(text=text or "", provider=self.id, model=model, input_tokens=in_t, output_tokens=out_t)
+        if finish == "length":
+            err = ProviderError("Cloudflare output hit max tokens", retryable=True)
+            err.result = result  # type: ignore[attr-defined]
+            raise err
+        return result
+
+
 def get(provider_id: str) -> Provider:
     if provider_id == "ollama_local":
         return OllamaProvider(cloud=False)
@@ -331,6 +397,8 @@ def get(provider_id: str) -> Provider:
         return AnthropicProvider()
     if provider_id == "gemini":
         return GeminiProvider()
+    if provider_id == "cloudflare_ai":
+        return CloudflareProvider()
     raise KeyError(provider_id)
 
 

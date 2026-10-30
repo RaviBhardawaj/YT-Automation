@@ -28,6 +28,9 @@ HT = "{https://trends.google.com/trending/rss}"
 MIN_OUTLETS = 2               # a story at least two different outlets report
 RECENT_DAYS = 3               # a story this channel covered in the last 3 days is not repeated
 SAME_STORY = 0.45
+# predictions and fortune-telling are trending searches, not news anyone can confirm
+NOT_NEWS = re.compile(r"(?i)horoscope|astrolog|rashifal|rashi\b|gochar|zodiac|tarot|numerolog|vastu|lucky number|"
+                      r"राशि|राशिफल|गोचर|ज्योतिष|नक्षत्र|शुभ मुहूर्त|satta|matka")
 READABLE = re.compile(r"[\x00-\x7f\u0900-\u097f\u2010-\u203a\u20b9]+")   # Latin + Devanagari headlines
 PRESENTER_ROLE = "news presenter"
 PRESENTER_PROVIDER = "ai_presenter"
@@ -94,6 +97,8 @@ def pick(ch: dict[str, Any], stories: list[dict[str, Any]] | None = None) -> dic
     for s in sorted(stories, key=lambda s: -s["traffic"]):
         s = {**s, "articles": [a for a in s["articles"] if READABLE.fullmatch(a["title"])]}   # English/Hindi reports
         outlets = {a["source"] for a in s["articles"] if a["source"]}
+        if NOT_NEWS.search(s["keyword"] + " " + " ".join(a["title"] for a in s["articles"])):
+            continue
         if len(outlets) < MIN_OUTLETS:
             continue
         text = f"{s['keyword']} {s['articles'][0]['title']}"

@@ -42,6 +42,7 @@ PROVIDERS = {
     "ollama_cloud": "Ollama Cloud (hosted models, your Ollama key)",
     "anthropic": "Claude API (Anthropic)",
     "gemini": "Gemini API (Google)",
+    "cloudflare_ai": "Cloudflare Workers AI (free daily allowance)",
 }
 
 DEFAULTS: dict[str, Any] = {
@@ -55,6 +56,7 @@ DEFAULTS: dict[str, Any] = {
         "ollama_cloud": "gemma4:31b",
         "anthropic": "claude-opus-5-5",
         "gemini": "gemini-flash-latest",          # alias: Google retired 2.5 Flash for new keys
+        "cloudflare_ai": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     },
     "ai.anthropic_effort": "medium",
     "ai.free_first": True,                        # free providers first; paid ones only when free ones fail
