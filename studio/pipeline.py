@@ -172,6 +172,22 @@ def stage_review(p: dict[str, Any]) -> str | None:
         save(p["id"], package=pkg)
         logs.event("info", "pipeline", f"Editor found {len(high)} high-severity issue(s); revising script", production_id=p["id"])
         return "script"
+    # Still flagged after the full rewrite: fix only those scenes and check again (a full rewrite tends to bring
+    # in new unsupported details). Two rounds; if it is still flagged the video waits for your approval.
+    for _ in range(2 - pkg.get("scene_fixes", 0)):
+        if not high:
+            break
+        try:
+            pkg, _meta = content.fix_scenes(pkg, high, _topic(p), _evidence(p))
+            pkg["scene_fixes"] = pkg.get("scene_fixes", 0) + 1
+            save(p["id"], package=pkg)
+            logs.event("info", "pipeline", f"Rewrote flagged scene(s) {sorted({i['scene'] for i in high})}; "
+                       "checking again", production_id=p["id"])
+            rev, meta = content.review(pkg, _topic(p), _evidence(p))
+        except (ai.AllProvidersFailed, ValueError) as e:
+            log.warning("scene fix skipped: %s", e)
+            break
+        high = [i for i in rev["issues"] if i["severity"] == "high"]
     rev["generated_by"] = meta
     pkg["review"] = rev
     save(p["id"], package=pkg)

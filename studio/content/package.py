@@ -447,6 +447,47 @@ def review(pkg: dict[str, Any], topic: dict[str, Any], evidence: list[dict[str, 
     return result.model_dump(), meta
 
 
+class SceneFix(BaseModel):
+    scene: int = Field(..., ge=1, description="1-based scene index being rewritten")
+    narration: str = Field(..., min_length=3, max_length=700)
+    on_screen_text: str = Field(..., max_length=60, description="Headline overlay (max 6 words) or empty string")
+
+
+class SceneFixes(BaseModel):
+    fixes: list[SceneFix] = Field(..., min_length=1, max_length=15)
+
+
+def fix_scenes(pkg: dict[str, Any], issues: list[dict[str, Any]], topic: dict[str, Any],
+               evidence: list[dict[str, Any]]) -> tuple[dict[str, Any], dict]:
+    """Rewrite ONLY the scenes the editor flagged (a full rewrite tends to bring in new unsupported details).
+    Everything else — other scenes, visuals, title — is kept exactly as it was."""
+    flagged = sorted({i["scene"] for i in issues if 1 <= i["scene"] <= len(pkg["scenes"])})
+    if not flagged:
+        raise ValueError("no scene to fix")
+    lines = "\n".join(f"{n}. {pkg['scenes'][n - 1]['narration']}  [overlay: {pkg['scenes'][n - 1]['on_screen_text']}]"
+                      for n in flagged)
+    notes = "\n".join(f"- scene {i['scene']}: {i['detail']} → {i['suggestion']}" for i in issues)
+    prompt = (f"CHANNEL PROFILE: {profile.summary_text()}\nTOPIC: {topic['title']}\n\n"
+              f"{prompts.evidence_block(evidence, max_chars=12000, content_chars=1000)}\n\n"
+              f"SCENES TO FIX:\n{lines}\n\nEDITOR'S PROBLEMS:\n{notes}\n\n"
+              "Rewrite only these scenes so every problem is gone. Keep the same language, script, tone and about "
+              "the same length. Use only facts, numbers and outlet names that appear in the EVIDENCE; when unsure, "
+              "say it more generally instead of adding a detail. Return one fix per scene listed.")
+
+    def check(r: SceneFixes) -> None:
+        if {f.scene for f in r.fixes} != set(flagged):
+            raise ValueError(f"return exactly one fix for each of scenes {flagged}")
+    result, meta = ai.generate("script", prompts.system("a careful news script editor"), prompt, SceneFixes,
+                               max_tokens=3000, validate=check)
+    for f in result.fixes:
+        s = pkg["scenes"][f.scene - 1]
+        s["narration"] = _spoken(f.narration)
+        s["caption_text"] = s["narration"]
+        overlay = _spoken(f.on_screen_text)
+        s["on_screen_text"] = "" if check_display_language(overlay) else overlay
+    return pkg, meta
+
+
 def suggest_publish_time(fmt: str) -> dict[str, Any]:
     """Next free slot from the configured publishing slots (local time)."""
     slots = settings.get("publish.slots").get(fmt) or ["18:00"]
