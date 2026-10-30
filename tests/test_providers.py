@@ -82,8 +82,37 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(c["provider"], "ffmpeg_camera")
         self.assertEqual(c["motion_type"], "camera_move")
         self.assertIn("not as video", c["limitation"])
-        with healthy("ffmpeg_camera", "wan22_local"):
+        with healthy("ffmpeg_camera", "hf_zerogpu"):         # a provider this app can really run
             self.assertEqual(pv.choose("video_i2v")["motion_type"], "video")
+        with healthy("ffmpeg_camera", "wan22_local"):        # listed for information only: never chosen
+            self.assertEqual(pv.choose("video_i2v")["motion_type"], "camera_move")
+
+
+class TruthfulnessTests(unittest.TestCase):
+    def test_providers_without_an_adapter_are_never_chosen_even_when_healthy(self):
+        no_adapter = [p for p in pv.REGISTRY if not p["adapter"]]
+        self.assertTrue(no_adapter)
+        healthy = {p["id"]: (lambda: (True, "pretend ready")) for p in no_adapter}
+        with mock.patch.dict(pv.BY_ID, {i: {**pv.BY_ID[i], "health": f} for i, f in healthy.items()}), \
+                mock.patch.object(pv, "REGISTRY", [{**p, "health": healthy.get(p["id"], p["health"])}
+                                                   for p in pv.REGISTRY]):
+            for cap in pv.CAPS:
+                for c in pv.candidates(cap):
+                    self.assertTrue(pv.BY_ID[c["provider"]]["adapter"], (cap, c))
+            self.assertFalse(any(not s["adapter"] and s["usable_now"] for s in pv.status_all()))
+
+    def test_talking_clips_try_the_free_gpu_then_this_mac(self):
+        with mock.patch.dict(pv.BY_ID["hf_ltx2"], health=lambda: (True, "ok")), \
+                mock.patch.dict(pv.BY_ID["sadtalker_local"], health=lambda: (True, "ok")):
+            self.assertEqual([c["provider"] for c in pv.candidates("dialogue_video")], ["hf_ltx2", "sadtalker_local"])
+
+    def test_failed_video_tries_are_counted_apart_from_clips_made(self):
+        for ok in (1, 0, 0):
+            db.insert("ai_usage", {"provider": "hf_zerogpu", "model": "m", "task": "video_shot", "input_tokens": 0,
+                                   "output_tokens": 0, "cost_usd": 0.0, "ok": ok, "error": "", "created_at": db.iso()})
+        b = pv.video_budget()
+        self.assertGreaterEqual(b["attempts"] - b["used"], 2)
+        self.assertEqual(b["failed"], b["attempts"] - b["used"])
 
 
 class FilmImageRoutingTests(unittest.TestCase):

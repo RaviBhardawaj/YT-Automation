@@ -20,7 +20,7 @@
     {% set m = c.monetization or {} %}{% if m.fetched_at %}
     <div class="small" style="margin-top:6px">{{ m.subscribers if m.subscribers is number else '?' }} subscribers · {{ m.watch_hours_12m }} watch h · {{ '{:,}'.format(m.shorts_views_90d) }} Shorts views
       {% set pr = m.tiers.early %}<div class="bar" title="Progress to early monetization (subscribers)"><i style="width:{{ pr.subscribers_pct }}%"></i></div>
-      <span class="muted">{{ 'eligible to apply for monetization' if m.tiers.full.eligible or pr.eligible else 'monetization: ' ~ pr.subscribers_pct ~ '% of the subscriber goal' }}</span></div>{% endif %}
+      <span class="muted">{{ 'monetization requirements met — apply in YouTube Studio (YouTube still reviews)' if m.tiers.full.eligible or pr.eligible else 'monetization: ' ~ pr.subscribers_pct ~ '% of the subscriber goal' }}</span></div>{% endif %}
   </a>
   <div class="row" style="margin:-8px 0 8px 4px">
     {% if c.uploads_enabled %}<button class="sm" data-post="/api/channels/{{ c.id }}" data-body='{"uploads_enabled": false}' data-confirm="Switch off YouTube uploads for {{ c.name }}? Videos will still be made and kept for download.">Uploads ON — switch off</button>

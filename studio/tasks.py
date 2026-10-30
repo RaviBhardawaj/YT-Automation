@@ -42,6 +42,12 @@ def _voiceclone_setup(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     return system_setup.install_voiceclone()
 
 
+@worker.handler("weekly_review")
+def _weekly_review(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from . import learning
+    return learning.weekly_all()
+
+
 @worker.handler("learning_review")
 def _learning_review(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     from . import learning
@@ -236,6 +242,9 @@ def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     ch = channels.get(int(payload["channel_id"]))
     if not ch or ch["status"] != "active":
         return {"skipped": "channel paused or deleted"}
+    from . import ops
+    if ops.stopped():
+        return {"skipped": "emergency stop is on"}
     from . import plans
     if not plans.can(ch["workspace_id"], "schedules"):
         return {"skipped": "automatic daily videos aren't enabled for this account"}

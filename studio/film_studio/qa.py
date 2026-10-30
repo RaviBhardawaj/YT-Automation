@@ -129,6 +129,9 @@ def technical(video: str, srt: str | None, expected: float, shots_missing: list[
     black = _ff(["-i", video, "-an", "-vf", "blackdetect=d=0.6:pix_th=0.08", "-f", "null", "-"])
     black_s = sum(float(x) for x in re.findall(r"black_duration:([\d.]+)", black))
     checks.append(_check("no unintended black", black_s <= max(2.0, dur * 0.02), f"{black_s:.1f} s black", severity="warn"))
+    from ..media import qa as media_qa
+    fr = media_qa.freeze_check(Path(video), dur)                  # on the final film, not the key pictures
+    checks.append(_check("no frozen picture", fr["ok"], fr["detail"], severity="warn"))
     vol = _ff(["-i", video, "-vn", "-af", "volumedetect", "-f", "null", "-"])
     peak = float((re.search(r"max_volume: ([-\d.]+) dB", vol) or [None, "-99"])[1])
     mean = float((re.search(r"mean_volume: ([-\d.]+) dB", vol) or [None, "-99"])[1])

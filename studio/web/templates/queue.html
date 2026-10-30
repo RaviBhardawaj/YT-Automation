@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="head"><div><h1>Queue &amp; logs</h1><div class="muted">Background tasks survive restarts. Failed tasks retry automatically with back-off.</div></div>
-  <div class="row"><a class="btn" href="/queue">Refresh</a></div></div>
+  <div class="row"><a class="btn" href="/queue">Refresh</a>
+    {% if is_admin and not estop %}<button class="danger" data-post="/api/ops/emergency-stop" data-body='{"on": true, "reason": "stopped from the Queue page"}' data-confirm="EMERGENCY STOP: halt all new work and all publishing on every channel? A step already running finishes; nothing new starts until you switch it off.">Emergency stop</button>{% endif %}</div></div>
 {% if task_counts.get('running') %}<div data-autorefresh="10"></div>{% endif %}
 <div class="card">
   <h2>Tasks</h2>
@@ -22,4 +23,14 @@
   <div class="events" style="max-height:none">{% for e in events %}<div class="lvl-{{ e.level }}"><span class="muted">{{ e.created_at|dt }}</span> · <span class="chip">{{ e.source }}</span> {{ e.message }}{% if e.production_id %} <a href="/productions/{{ e.production_id }}">#{{ e.production_id }}</a>{% endif %}</div>{% else %}<div class="muted">No events.</div>{% endfor %}</div>
   <p class="muted small">Full technical log: data/logs/studio.log (credentials are redacted).</p>
 </div>
+{% if audit %}
+<div class="card" style="margin-top:16px">
+  <h2>Audit trail</h2>
+  <div class="muted small">Approvals, uploads, channel switches, emergency stops and uninstalls. Entries are hash-chained: changing or deleting one later is detected (Compliance page).</div>
+  <table><tr><th>When</th><th>Who</th><th>What</th><th>Video</th><th>Details</th></tr>
+  {% for a in audit %}<tr><td class="small muted">{{ a.created_at|dt }}</td><td class="small">{{ a.actor }}</td><td><span class="chip">{{ a.event }}</span></td>
+    <td>{% if a.production_id %}<a href="/productions/{{ a.production_id }}">#{{ a.production_id }}</a>{% endif %}</td>
+    <td class="small" style="max-width:420px">{{ (a.details|tojson)[:240] }}</td></tr>{% endfor %}</table>
+</div>
+{% endif %}
 {% endblock %}

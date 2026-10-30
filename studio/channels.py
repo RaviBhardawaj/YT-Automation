@@ -92,7 +92,7 @@ def using(channel_id: int | None) -> Iterator[None]:
 FIELDS = ("name", "niche", "sub_niche", "audience", "language", "tone", "styles", "workflow", "formats", "long_minutes",
           "short_seconds", "shorts_per_episode", "instructions", "restrictions", "research_required", "branding",
           "voice", "schedule_enabled", "schedule_time", "schedule_days", "timezone", "auto_publish",
-          "publish_privacy", "status", "uploads_enabled", "made_for_kids", "publish_time")
+          "publish_privacy", "status", "uploads_enabled", "made_for_kids", "publish_time", "approve_first_n")
 
 
 def clean(data: dict[str, Any], partial: bool = False) -> dict[str, Any]:
@@ -121,6 +121,8 @@ def clean(data: dict[str, Any], partial: bool = False) -> dict[str, Any]:
             v = max(15, min(180, int(v)))
         elif k == "shorts_per_episode":
             v = max(0, min(8, int(v)))
+        elif k == "approve_first_n":                  # first N uploads wait for the owner even with auto-publish on
+            v = max(0, min(50, int(v)))
         elif k in ("research_required", "schedule_enabled", "auto_publish", "uploads_enabled", "made_for_kids"):
             v = 1 if v in (True, 1, "1", "true", "on", "yes") else 0
         elif k == "schedule_time":                     # one time, or several ("09:00, 18:00") = that many videos
@@ -159,10 +161,18 @@ def create(data: dict[str, Any], workspace_id: int | None = None) -> int:
     return db.insert("channels", {**row, "workspace_id": ws, "created_at": db.iso(), "updated_at": db.iso()})
 
 
-def update(channel_id: int, data: dict[str, Any]) -> None:
+AUDITED = ("status", "auto_publish", "uploads_enabled", "publish_privacy", "approve_first_n")
+
+
+def update(channel_id: int, data: dict[str, Any], actor: str = "user") -> None:
     row = clean(data, partial=True)
     if row:
+        before = get(channel_id) or {}
         db.update("channels", channel_id, {**row, "updated_at": db.iso()})
+        changed = {k: [before.get(k), row[k]] for k in AUDITED if k in row and before.get(k) != row[k]}
+        if changed:                                  # pausing, publishing switches: on the audit trail
+            from . import ops
+            ops.audit(actor, "channel_settings", channel_id=channel_id, detail=changed)
 
 
 def ensure_default() -> None:

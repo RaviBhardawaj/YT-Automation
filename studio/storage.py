@@ -207,6 +207,8 @@ def uninstall(key: str) -> int:
         shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink()
         freed += n
     logs.event("info", "storage", f"Uninstalled {c['name']} — {freed / 1e9:.2f} GB freed")
+    from . import ops
+    ops.audit("owner", "uninstalled", detail={"part": key, "bytes": freed})
     return freed
 
 

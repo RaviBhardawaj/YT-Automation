@@ -28,6 +28,24 @@ def _ffmpeg_stderr(args: list[str], timeout: int = 1800) -> str:
     return p.stderr
 
 
+FREEZE_LONGEST = 8.0      # seconds: a single frozen stretch this long looks broken (charts hold 2–5 s on purpose)
+FREEZE_SHARE = 0.40       # share of the video frozen in 2 s+ stretches
+
+
+def freeze_check(video: Path, duration: float) -> dict[str, Any]:
+    """Frozen / repeated picture on the FINAL render (not the storyboard): stretches of 2 s or more with no change.
+    Short holds are normal (charts, a held last frame); a long one or a mostly frozen video needs a human look."""
+    out = _ffmpeg_stderr(["-i", str(video), "-an", "-vf", "freezedetect=n=-60dB:d=2", "-map", "0:v", "-f", "null", "-"])
+    spans = [float(x) for x in re.findall(r"freeze_duration: ([\d.]+)", out)]
+    starts = [float(x) for x in re.findall(r"freeze_start: ([\d.]+)", out)]
+    if len(starts) > len(spans):                  # still frozen when the video ends: no end marker is printed
+        spans.append(max(0.0, duration - starts[-1]))
+    longest, total = max(spans, default=0.0), sum(spans)
+    ok = longest < FREEZE_LONGEST and total < duration * FREEZE_SHARE
+    return _check("frozen picture", ok, f"{len(spans)} still stretch(es) of 2 s+, longest {longest:.1f} s, "
+                  f"{total:.1f} s in all" + ("" if ok else " — looks frozen; check before publishing"), "warn")
+
+
 def run(production: dict[str, Any], pkg: dict[str, Any], timeline: dict[str, Any], assets: list[dict[str, Any]],
         thumb: dict[str, Any] | None, voice: dict[str, Any], review: dict[str, Any] | None,
         originality: dict[str, Any] | None) -> dict[str, Any]:
@@ -78,6 +96,7 @@ def run(production: dict[str, Any], pkg: dict[str, Any], timeline: dict[str, Any
     black = _ffmpeg_stderr(["-i", str(video), "-an", "-vf", "blackdetect=d=0.5:pix_th=0.10", "-f", "null", "-"])
     black_total = sum(float(x) for x in re.findall(r"black_duration:([\d.]+)", black))
     checks.append(_check("black frames", black_total <= max(1.5, duration * 0.08), f"{black_total:.1f}s black"))
+    checks.append(freeze_check(video, duration))
 
     distinct = {a["local_path"] for a in assets}
     procedural = [a for a in assets if a["provider"] == "procedural" and not a.get("is_card")]

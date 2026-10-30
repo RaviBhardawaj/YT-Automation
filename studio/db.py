@@ -666,6 +666,19 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_set_library_channel ON set_library(channel_id, location, time, status);
     """,
+    # v20 — operations control: first N uploads of a channel need the owner's approval even with auto-publish on;
+    # weekly per-channel decision reports. (Critical actions go to the existing hash-chained audit_log.) Additive.
+    """
+    ALTER TABLE channels ADD COLUMN approve_first_n INTEGER NOT NULL DEFAULT 3;
+    CREATE TABLE channel_reviews (
+        id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL,
+        week TEXT NOT NULL,                           -- ISO week, e.g. 2026-W44
+        report TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        UNIQUE (channel_id, week)
+    );
+    """,
 ]
 
 

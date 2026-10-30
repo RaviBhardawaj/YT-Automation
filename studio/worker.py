@@ -55,8 +55,13 @@ def enqueue(task_type: str, payload: dict[str, Any] | None = None, *, priority: 
 def claim(lane: str) -> dict[str, Any] | None:
     now = db.iso()
     with db.tx() as c:
+        from . import ops
+        only_safe = ops.stopped() is not None          # emergency stop: only harmless bookkeeping runs
+        safe = ",".join("?" * len(ops.SAFE_DURING_STOP))
         row = c.execute("SELECT id FROM tasks WHERE status='pending' AND lane=? AND run_after<=? "
-                        "ORDER BY priority DESC, id LIMIT 1", (lane, now)).fetchone()
+                        + (f"AND type IN ({safe}) " if only_safe else "")
+                        + "ORDER BY priority DESC, id LIMIT 1",
+                        (lane, now, *(ops.SAFE_DURING_STOP if only_safe else ()))).fetchone()
         if not row:
             return None
         c.execute("UPDATE tasks SET status='running', attempts=attempts+1, locked_at=?, updated_at=? WHERE id=?",

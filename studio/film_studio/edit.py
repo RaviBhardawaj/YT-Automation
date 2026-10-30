@@ -55,14 +55,31 @@ def timeline(p: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def cache_key(c: dict[str, Any], film: dict[str, Any], size: tuple[int, int]) -> dict[str, Any]:
+    """Everything that changes how one timeline clip looks: the shot's own fields, the identity (size + time) of
+    its video and key picture — a re-made take at the same path counts as changed — the card text, frame size,
+    encoder settings and the renderer version."""
+    from .. import settings
+    key = {k: c.get(k) for k in ("kind", "source", "keyframe", "seconds", "subtitle", "motion_type", "speech",
+                                 "speaker", "transition_out")}
+    key["source_id"] = render.file_id(c.get("source"))
+    key["keyframe_id"] = render.file_id(c.get("keyframe"))
+    if c.get("kind") in ("title", "end"):
+        key["card"] = [film.get("title"), film.get("closing_line") if c["kind"] == "end" else None]
+    key["size"] = list(size)
+    key["encode"] = [settings.get("render.preset"), settings.get("render.crf")]
+    key["renderer"] = render.RENDER_VERSION
+    return key
+
+
 def _clip_for(c: dict[str, Any], i: int, work: Path, film: dict[str, Any], seed: str) -> Path:
     from ..creative import film as filmmod
     w, h = config.frame_size("long")
     out = work / f"c{i:04d}.mp4"
     sig = work / f"c{i:04d}.json"
-    key = {k: c.get(k) for k in ("kind", "source", "seconds", "subtitle", "motion_type", "speech")}
+    key = cache_key(c, film, (w, h))
     if out.exists() and sig.exists() and json.loads(sig.read_text()) == key:
-        return out                                           # unchanged since the last edit: reuse
+        return out                                           # nothing that changes the picture changed: reuse
     overlays = []
     if c.get("subtitle"):
         sp = work / f"sub{i:04d}.png"
@@ -83,14 +100,15 @@ def _clip_for(c: dict[str, Any], i: int, work: Path, film: dict[str, Any], seed:
         part_a = work / f"c{i:04d}_a.mp4"
         render.scene_clip(i, {"kind": "video", "local_path": c["source"]}, play, 0.0,
                           [o for o in overlays if o["start"] < play], "long", work, part_a, seed, look="real")
-        if rest > 0.2 and c.get("keyframe") and Path(c["keyframe"]).exists():
-            part_b = work / f"c{i:04d}_b.mp4"                # finish the shot on its key picture, no stretching
+        if rest > 0.2:
+            # finish the shot from where the motion ended (its last frame) with a gentle camera move — never jump
+            # back to the key picture the motion started from, and never stretch the clip
+            part_b = work / f"c{i:04d}_b.mp4"
+            end_pic = render.last_frame(Path(c["source"]), work / f"c{i:04d}_last.jpg")
             shifted = [{**o, "start": 0.0, "end": max(0.0, o["end"] - play)} for o in overlays if o["end"] > play]
-            render.scene_clip(i, {"kind": "image", "local_path": c["keyframe"]}, rest, 0.0, shifted, "long", work,
+            render.scene_clip(i, {"kind": "image", "local_path": str(end_pic)}, rest, 0.0, shifted, "long", work,
                               part_b, seed, look="real")
-            lst = work / f"c{i:04d}.txt"
-            lst.write_text(f"file '{part_a}'\nfile '{part_b}'\n")
-            render.ffmpeg(["-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(out)])
+            render.concat([part_a, part_b], out, w=w, h=h)
         else:
             part_a.replace(out)
     else:
@@ -125,10 +143,9 @@ def assemble(p: dict[str, Any]) -> dict[str, Any]:
         raise FileNotFoundError(f"{len(missing)} shot(s) have no take yet: {', '.join(missing[:8])}")
     clips = [_clip_for(c, i, work, film, f"film{pid}") for i, c in enumerate(tl)]
     total = tl[-1]["end"]
-    listing = work / "clips.txt"
-    listing.write_text("".join(f"file '{c}'\n" for c in clips))
     video = work / "video.mp4"
-    render.ffmpeg(["-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(video)])
+    w, h = config.frame_size("long")
+    joined = render.concat(clips, video, w=w, h=h)            # copy only when every clip's format matches
     sr = filmmod.SR
     track = np.zeros(int((total + 1) * sr), dtype=np.int32)
     for c in tl:
@@ -151,8 +168,21 @@ def assemble(p: dict[str, Any]) -> dict[str, Any]:
     (exp / "film.srt").write_text("".join(f"{i + 1}\n{_ts(a)} --> {_ts(b)}\n{t}\n\n" for i, (a, b, t) in enumerate(srt)),
                                   encoding="utf-8")
     _manifests(p, tl, exp, total)
+    _render_manifest(exp, tl, film, (w, h), joined, final, srt_count=len(srt))
     logs.event("info", "film", f"Edited {total / 60:.1f} min from {len(tl) - 2} shots", production_id=pid)
     return {"video": str(final), "srt": str(exp / "film.srt"), "seconds": round(total, 2), "timeline": tl}
+
+
+def _render_manifest(exp: Path, tl: list[dict[str, Any]], film: dict[str, Any], size: tuple[int, int], joined: str,
+                     final: Path, srt_count: int) -> None:
+    """What this export was made from and how: every clip's cache key (inputs + their file identity), the join
+    method, renderer version and the real output properties — enough to tell whether a re-export would differ."""
+    out = render.stream_format(final)
+    manifest = {"renderer": render.RENDER_VERSION, "made_at": db.iso(), "size": list(size), "fps": config.FPS,
+                "join": joined, "subtitles": srt_count,
+                "clips": [{"index": i, **cache_key(c, film, size)} for i, c in enumerate(tl)],
+                "output": {"file": final.name, "bytes": final.stat().st_size, "video": out["v"], "audio": out["a"]}}
+    (exp / "render_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1))
 
 
 def _manifests(p: dict[str, Any], tl: list[dict[str, Any]], exp: Path, total: float) -> None:

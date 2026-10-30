@@ -573,6 +573,9 @@ def stage_qa(p: dict[str, Any]) -> str | None:
                                  "; ".join(f"{f['why']}: '{f['match']}'" for f in found[:5])
                                  + " — review the wording before publishing; it won't be auto-published"})
         result["auto_publish_ok"] = result["auto_publish_ok"] and not found
+    from . import ops
+    result["checks"].append(ops.repeat_check(p))          # across every channel, not just this one
+    result["auto_publish_ok"] = result["auto_publish_ok"] and result["checks"][-1]["ok"]
     _viral(p, pkg, tl, result)
     save(p["id"], qa=result)
     from .youtube import oauth
@@ -588,15 +591,22 @@ def stage_qa(p: dict[str, Any]) -> str | None:
     if not result["passed"]:
         failing = "; ".join(c["name"] for c in result["checks"] if not c["ok"] and c["severity"] == "fail")
         raise NeedsAttention(f"Quality checks failed: {failing}")
-    from . import channels
+    from . import channels, ops
     chan = channels.get(p.get("channel_id"))
-    if chan and chan.get("auto_publish") and chan.get("status") == "active" and oauth.connected(chan["id"]) \
-            and result["auto_publish_ok"] and not p["test_mode"]:
-        approve(p["id"], privacy=chan.get("publish_privacy") or "private", publish_at=None,
-                by="auto (channel auto-publish)")
+    if chan:
+        # A channel's video goes out on its own only through the channel's own opt-in and every gate
+        # (ops.auto_publish_block) — the studio-wide publish mode never overrides a channel that didn't opt in.
+        why = ops.auto_publish_block(chan, result["auto_publish_ok"]) or \
+            ("" if oauth.connected(chan["id"]) else "this channel's YouTube account is not connected")
+        if not why and not p["test_mode"]:
+            approve(p["id"], privacy=chan.get("publish_privacy") or "private", publish_at=None,
+                    by="auto (channel auto-publish)")
+            return None
+        save(p["id"], status="awaiting_approval", error=None)
+        logs.event("info", "pipeline", f"Ready for your review and approval ({why})", production_id=p["id"])
         return None
     auto = (settings.get("publish.mode") == "auto_after_validation" and result["auto_publish_ok"]
-            and oauth.connected() and not p["test_mode"])
+            and not ops.stopped() and oauth.connected() and not p["test_mode"])
     if auto:
         public_ok = settings.get("youtube.audit_passed") and not nc_voice(tl)
         approve(p["id"], privacy="scheduled" if public_ok else "private",
@@ -699,8 +709,11 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
         raise NeedsAttention("Test-mode productions cannot be uploaded.")
     if not p["qa"].get("passed"):
         raise NeedsAttention("QA has not passed for this production.")
-    from . import channels
+    from . import channels, ops
     ch = channels.get(p.get("channel_id"))
+    if by.startswith("auto") and ops.stopped():
+        save(pid, status="awaiting_approval", error="Emergency stop is on — nothing is published automatically.")
+        return
     if ch and not channels.uploads_allowed(ch):
         msg = f"Uploads are switched off for '{ch['name']}' — the video is kept here, not uploaded."
         if by.startswith("auto"):                   # automation never uploads to a switched-off channel
@@ -731,6 +744,8 @@ def approve(pid: int, *, privacy: str, publish_at: str | None, by: str = "user")
         if not allowed:
             raise NeedsAttention(f"Blocked by the compliance gate: {why}")
     save(pid, status="approved", approved_at=db.iso(), privacy=privacy, publish_at=publish_at)
+    ops.audit(by, "approved_for_upload", channel_id=p.get("channel_id"), production_id=pid,
+              detail={"privacy": privacy, "publish_at": publish_at, "title": p.get("title")})
     worker.enqueue("upload", {"production_id": pid}, production_id=pid, max_attempts=8)
     logs.event("info", "pipeline", f"Approved by {by} for upload ({privacy}"
                + (f", publish at {publish_at}" if publish_at and privacy == 'scheduled' else "") + ")", production_id=pid)
@@ -770,6 +785,13 @@ def _run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]
         # Never upload the same production twice (e.g. a re-approval after a finished upload)
         save(pid, status="uploaded", error=None)
         return {"skipped": f"already uploaded as https://youtu.be/{p['youtube_video_id']}"}
+    from . import ops, worker
+    hold = "the emergency stop is on" if ops.stopped() else \
+        (f"'{chan['name']}' is paused" if chan and chan.get("status") == "paused" else "")
+    if hold:                                         # approved, but nothing leaves while stopped/paused
+        save(pid, status="approved", error=f"Upload waiting: {hold} (checks again every 30 minutes).")
+        worker.enqueue("upload", {"production_id": pid}, production_id=pid, delay=1800, max_attempts=48)
+        return {"held": hold}
     if not oauth.connected():
         save(pid, status="approved", error="This channel's YouTube account is not connected — connect it on the "
                                             "Channels page, then retry the upload.")
@@ -829,6 +851,9 @@ def _run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]
         res = upload.upload(p, p["package"], assets_for(pid))
     res["destination"] = dest
     save(pid, status="uploaded", error=None)
+    ops.audit("youtube", "uploaded", channel_id=p.get("channel_id"), production_id=pid,
+              detail={"video_id": res.get("video_id"), "channel": dest.get("id"), "privacy": p.get("privacy"),
+                      "title": p["package"].get("title")})
     logs.event("info", "youtube", f"Uploaded to YouTube channel '{dest['title']}' ({dest['id']})", production_id=pid)
     if p.get("kind") == "nifty_short" and p.get("parent_id"):
         from .finance import shorts as fin_shorts

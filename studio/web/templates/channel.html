@@ -218,6 +218,7 @@
     <div class="grid g2" style="margin-top:8px">
       <label class="f"><span>Privacy when publishing</span><select name="publish_privacy">{% for v in ['public','unlisted','private'] %}<option {{ 'selected' if ch.publish_privacy == v }}>{{ v }}</option>{% endfor %}</select></label>
       <label class="f"><span>Go public at (empty = right away)</span><input name="publish_time" value="{{ ch.publish_time or '' }}" placeholder="18:00" style="width:110px"></label>
+      <label class="f"><span>You approve the first … uploads yourself (even with auto-publish on)</span><input name="approve_first_n" data-type="number" type="number" min="0" max="50" value="{{ ch.approve_first_n if ch.approve_first_n is not none else 3 }}" style="width:90px"></label>
     </div>
     <div class="muted small">Long episodes upload first; their Shorts wait for the episode's video ID so they can link back to it.</div>
     {% set ys = ch.youtube_status or {} %}{% if ys.checked_at %}
@@ -250,8 +251,9 @@
     <div class="card tight stat"><div class="n">{{ m.public_uploads_90d }}</div><div class="l">Public uploads (90 days)</div></div>
   </div>
   {% for key, t in tiers.items() %}{% set pr = m.tiers[key] %}
-  <div style="margin:12px 0"><div class="spread"><b>{{ t.label }}</b>{% if pr.eligible %}<span class="chip ok">eligible — apply in YouTube Studio → Earn</span>{% else %}<span class="chip">not yet</span>{% endif %}</div>
-    <div class="small muted">{{ t.subscribers }} subscribers{% if t.public_uploads_90d %} + {{ t.public_uploads_90d }} public uploads in 90 days{% endif %} + either {{ '{:,}'.format(t.watch_hours_12m) }} watch hours in 12 months or {{ '{:,}'.format(t.shorts_views_90d) }} Shorts views in 90 days</div>
+  <div style="margin:12px 0"><div class="spread"><b>{{ t.label }}</b>{% if pr.eligible %}<span class="chip ok">requirements met — apply in YouTube Studio → Earn (YouTube still reviews)</span>{% else %}<span class="chip">not yet</span>{% endif %}</div>
+    <div class="small muted">{{ t.subscribers }} subscribers{% if t.public_uploads_90d %} + {{ t.public_uploads_90d }} public uploads in 90 days{% endif %} + either {{ '{:,}'.format(t.watch_hours_12m) }} watch hours in 12 months or {{ '{:,}'.format(t.shorts_views_90d) }} Shorts views in 90 days
+      {% if t.verified %}<span class="chip ok">checked {{ ypp_rules.checked }}</span>{% else %}<span class="chip warn">unverified threshold</span>{% endif %}</div>
     <div class="grid g3 small" style="margin-top:6px">
       <div>Subscribers {{ pr.subscribers_pct }}%<div class="bar"><i style="width:{{ pr.subscribers_pct }}%"></i></div></div>
       <div>Watch hours {{ pr.watch_pct }}%<div class="bar"><i style="width:{{ pr.watch_pct }}%"></i></div></div>
@@ -260,6 +262,24 @@
   <div class="muted small">Updated {{ m.fetched_at|dt }} from YouTube Data + Analytics APIs (estimates; YouTube counts public views only). {{ m.note }}</div>
   {% elif connected %}<div class="muted small">Click “Refresh numbers” to load this channel's progress. It also refreshes every morning.</div>
   {% else %}<div class="muted small">Connect the channel to track its progress toward monetization.</div>{% endif %}
+  <h3 style="margin-top:14px">Status: {{ ypp_status.label }}</h3>
+  <form class="row small" data-form="/api/channels/{{ ch.id }}/monetization-status" data-done="Saved">
+    <span class="muted">What YouTube decided (only you can know — no API reports it):</span>
+    <select name="status"><option value="">— not applied —</option>{% for v in ['applied','accepted','rejected'] %}<option {{ 'selected' if ypp_status.key == v }}>{{ v }}</option>{% endfor %}</select>
+    <button class="sm" type="submit">Save</button></form>
+  <h3 style="margin-top:14px">Policy readiness (our checks, not YouTube's decision)</h3>
+  <table>{% for c in readiness %}<tr><td style="width:120px">{% if c.state == 'pass' %}<span class="chip ok">pass</span>{% elif c.state == 'warn' %}<span class="chip warn">check</span>{% elif c.state == 'fail' %}<span class="chip err">fail</span>{% else %}<span class="chip">not checked</span>{% endif %}</td>
+    <td><b>{{ c.name }}</b><div class="small muted">{{ c.detail }}{% if c.policy %} · <a href="{{ c.policy }}" target="_blank" rel="noopener">YouTube policy</a>{% endif %}</div></td></tr>{% endfor %}</table>
+  <div class="spread" style="margin-top:14px"><h3>Weekly review{% if weekly %} · {{ weekly.week }}{% endif %}</h3>
+    <button class="sm" data-post="/api/channels/{{ ch.id }}/weekly-review">Make this week's review</button></div>
+  {% if weekly %}
+    {% if weekly.next %}<ul class="small">{% for n in weekly.next %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+    <table class="small"><tr><th>#</th><th>Video</th><th>Views/day</th><th>Watched</th><th>Decision</th></tr>
+    {% for v in weekly.videos[:12] %}<tr><td><a href="/productions/{{ v.id }}">{{ v.id }}</a></td><td>{{ v.title[:60] }}</td><td>{{ v.views_per_day }}</td><td>{{ v.avg_viewed_pct if v.avg_viewed_pct is not none else '—' }}{{ '%' if v.avg_viewed_pct is not none }}</td>
+      <td><span class="chip">{{ v.decision }}</span><div class="muted">{{ v.why }}</div></td></tr>{% endfor %}</table>
+    <div class="muted small">Not collected: {{ weekly.not_collected|join(', ') }} — decisions use views and watch percentage only.</div>
+  {% else %}<div class="muted small">Made every Monday morning from this channel's real YouTube numbers.</div>{% endif %}
+  <div class="muted small" style="margin-top:8px">Rules checked {{ ypp_rules.checked }} on YouTube's official pages: <a href="{{ ypp_rules.sources.ypp_overview }}" target="_blank" rel="noopener">Partner Program</a> · <a href="{{ ypp_rules.sources.monetization_policies }}" target="_blank" rel="noopener">monetization policies</a>. No date or income is promised.</div>
   <div class="note small" style="margin-top:10px"><b>How monetization works:</b> when a channel is eligible, its owner applies in YouTube Studio → Earn, links an AdSense account and YouTube reviews the channel (usually about a month). No app can switch monetization on.
     YouTube doesn't pay for “inauthentic” mass-produced or repetitive content, so each channel needs original videos with a clear human creative voice — the same template re-used across many channels is a common reason for rejection.</div>
 </div>

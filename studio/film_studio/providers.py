@@ -112,6 +112,27 @@ def _zerogpu_health() -> tuple[bool, str]:
     return True, f"token saved · Space {zerogpu.space()} · {left['left']} of {left['limit']} clips left today"
 
 
+def _ltx2_health() -> tuple[bool, str]:
+    from . import talking, zerogpu
+    if not settings.has_secret("hf_token"):
+        return False, "add a free Hugging Face token (Credentials)"
+    if not settings.get("film_studio.talking", True):
+        return False, "switched off (Settings → Film Studio)"
+    if zerogpu.quota_until():
+        return False, f"today's free GPU minutes are used up — after {zerogpu.quota_until():%H:%M} UTC"
+    b = talking.budget()
+    return (b["left"] > 0, f"{b['left']} of {b['limit']} talking pieces left today")
+
+
+def _sadtalker_health() -> tuple[bool, str]:
+    from . import sadtalker
+    if not sadtalker.installed():
+        return False, "not installed on this Mac (~3 GB)"
+    if not settings.get("film_studio.sadtalker", True):
+        return False, "switched off (Settings → Film Studio)"
+    return True, "ready on this Mac · no daily limit (about 1 minute per second of speech)"
+
+
 CHECKED = "2026-10-29"
 REGISTRY: list[dict[str, Any]] = [
     {"id": "cloudflare_flux", "name": "Cloudflare Workers AI — FLUX.2 klein 4B", "caps": ["image", "image_ref"],
@@ -119,73 +140,85 @@ REGISTRY: list[dict[str, Any]] = [
      "allowance": "about 10,000 neurons a day (~60–90 images), resets 00:00 UTC", "checked": CHECKED,
      "source": "Cloudflare Workers AI free plan", "licence": "Apache-2.0", "commercial": True,
      "hardware": "none (cloud)", "limits": "about 1 minute per image; 4 reference pictures max",
-     "est_cost_usd": 0.0, "fallback": ["hf_flux", "local_flux"], "health": _cf_health},
+     "est_cost_usd": 0.0, "fallback": ["hf_flux", "local_flux"], "adapter": True, "health": _cf_health},
     {"id": "hf_flux", "name": "FLUX.1 schnell — Hugging Face ZeroGPU Space", "caps": ["image"],
      "where": "remote", "model": "black-forest-labs/FLUX.1-schnell (official Space)", "cost": "free_allowance",
      "allowance": "free ZeroGPU minutes (more with a free Hugging Face token); about 8 s per image",
      "checked": CHECKED, "source": "Black Forest Labs' public Space", "licence": "Apache-2.0", "commercial": True,
      "hardware": "none (cloud)", "limits": "no reference pictures — faces follow the written description only",
-     "est_cost_usd": 0.0, "fallback": ["local_flux"], "health": _hf_flux_health},
+     "est_cost_usd": 0.0, "fallback": ["local_flux"], "adapter": True, "health": _hf_flux_health},
     {"id": "local_flux", "name": "FLUX.2 klein 4B on this Mac (mflux)", "caps": ["image"], "where": "local",
      "model": "FLUX.2-klein-4B, 4-bit (MLX)", "cost": "free_local", "last_resort": True, "checked": CHECKED,
      "source": "Black Forest Labs weights via mflux (MIT)", "licence": "Apache-2.0", "commercial": True,
      "hardware": "Apple Silicon, 16 GB memory", "limits": "slower: about a minute a picture; one at a time",
-     "est_cost_usd": 0.0, "fallback": [], "health": _local_flux_health},
+     "est_cost_usd": 0.0, "fallback": [], "adapter": True, "health": _local_flux_health},
     {"id": "local_sd", "name": "Local Stable Diffusion (A1111/Forge/Draw Things API)", "caps": ["image"],
      "where": "local", "model": "your local checkpoint", "cost": "free_local", "checked": CHECKED,
      "licence": "depends on the checkpoint you load", "commercial": None, "hardware": "Apple Silicon / GPU",
-     "limits": "speed depends on the Mac", "est_cost_usd": 0.0, "fallback": [], "health": _local_sd_health},
+     "limits": "speed depends on the Mac", "est_cost_usd": 0.0, "fallback": [], "adapter": True, "health": _local_sd_health},
     {"id": "gemini_image", "name": "Gemini image generation", "caps": ["image", "image_ref"], "where": "remote",
      "model": "gemini image models", "cost": "paid", "checked": CHECKED, "licence": "Google terms",
      "commercial": True, "hardware": "none (cloud)", "limits": "billed per image",
-     "est_cost_usd": 0.039, "fallback": [], "health": _secret("gemini_api_key", "Gemini")},
+     "est_cost_usd": 0.039, "fallback": [], "adapter": True, "health": _secret("gemini_api_key", "Gemini")},
     {"id": "wan22_local", "name": "Wan 2.2 TI2V-5B (local, open weights)", "caps": ["video_t2v", "video_i2v"],
      "where": "local", "model": "Wan2.2-TI2V-5B", "cost": "free_local", "checked": CHECKED,
      "licence": "Apache-2.0 (recheck before install)", "commercial": None,
      "hardware": "17–21 GB download; 16 GB Mac unconfirmed; minutes per few-second clip",
-     "limits": "a few seconds per clip", "est_cost_usd": 0.0, "fallback": ["hf_zerogpu"], "health": _wan_health},
+     "limits": "a few seconds per clip", "est_cost_usd": 0.0, "fallback": ["hf_zerogpu"], "adapter": False, "health": _wan_health},
     {"id": "hf_zerogpu", "name": "Hugging Face ZeroGPU Space (video)", "caps": ["video_t2v", "video_i2v"],
      "where": "remote", "model": "Wan 2.2 14B fast (zerogpu-aoti Space)", "cost": "free_allowance",
      "allowance": "a few GPU-minutes a day on a free account (1–3 short clips); app limit per day in Settings",
      "checked": CHECKED,
      "source": "huggingface.co/docs/hub/spaces-zerogpu", "licence": "Wan 2.2: Apache-2.0 (recheck)",
      "commercial": None, "hardware": "none (cloud)", "limits": "queues; daily quota",
-     "est_cost_usd": 0.0, "fallback": [], "health": _zerogpu_health},
+     "est_cost_usd": 0.0, "fallback": [], "adapter": True, "health": _zerogpu_health},
     {"id": "gemini_omni", "name": "Gemini Omni Flash (AI video with sound)",
      "caps": ["video_t2v", "video_i2v", "dialogue_video"], "where": "remote", "model": "gemini-omni-1.1-flash",
      "cost": "paid", "checked": CHECKED, "licence": "Google terms", "commercial": True, "hardware": "none (cloud)",
      "limits": "about $0.10/second at 720p", "est_cost_usd": 0.8, "fallback": [],
-     "health": _secret("gemini_api_key", "Gemini")},
+     "adapter": False, "health": _secret("gemini_api_key", "Gemini")},
+    {"id": "hf_ltx2", "name": "LTX-2 talking clips — Hugging Face ZeroGPU Space", "caps": ["dialogue_video"],
+     "where": "remote", "model": "LTX-2 audio-to-video (alexnasa/ltx-2-TURBO)", "cost": "free_allowance",
+     "allowance": "shares the free ZeroGPU minutes: about 2 three-second pieces a day", "checked": "2026-10-30",
+     "source": "huggingface.co/spaces/alexnasa/ltx-2-TURBO", "licence": "LTX-2 Community (free under $10M revenue)",
+     "commercial": True, "hardware": "none (cloud)", "limits": "3-second pieces chained; ~104 s of GPU each",
+     "est_cost_usd": 0.0, "fallback": ["sadtalker_local"], "adapter": True, "health": _ltx2_health},
+    {"id": "sadtalker_local", "name": "SadTalker talking face on this Mac", "caps": ["dialogue_video"],
+     "where": "local", "model": "SadTalker 256", "cost": "free_local", "last_resort": True, "checked": "2026-10-30",
+     "source": "github.com/OpenTalker/SadTalker", "licence": "Apache-2.0", "commercial": True,
+     "hardware": "Apple Silicon, 16 GB (the 512 model needs more memory)",
+     "limits": "face only (lips, expression, blinks); about 1 minute per second of speech",
+     "est_cost_usd": 0.0, "fallback": [], "adapter": True, "health": _sadtalker_health},
     {"id": "ffmpeg_camera", "name": "Camera move on a still (FFmpeg)", "caps": ["camera_move"], "where": "local",
      "model": "zoompan", "cost": "free_local", "checked": CHECKED, "licence": "LGPL/GPL (FFmpeg)",
      "commercial": True, "hardware": "any", "limits": "no real motion — labelled as a still with camera move",
-     "est_cost_usd": 0.0, "fallback": [], "health": _ffmpeg_health},
+     "est_cost_usd": 0.0, "fallback": [], "adapter": True, "health": _ffmpeg_health},
     {"id": "kokoro", "name": "Kokoro voices (Hindi + English)", "caps": ["tts"], "where": "local",
      "model": "Kokoro-82M", "cost": "free_local", "checked": CHECKED, "licence": "Apache-2.0", "commercial": True,
      "hardware": "any", "limits": "2 male + 2 female Hindi voices", "est_cost_usd": 0.0, "fallback": [],
-     "health": _kokoro_health},
+     "adapter": True, "health": _kokoro_health},
     {"id": "sarvam", "name": "Sarvam Bulbul voices", "caps": ["tts"], "where": "remote", "model": "bulbul",
      "cost": "paid", "checked": CHECKED, "licence": "Sarvam terms", "commercial": True, "hardware": "none (cloud)",
      "limits": "billed per character", "est_cost_usd": 0.36, "fallback": ["kokoro"],
-     "health": _secret("sarvam_api_key", "Sarvam")},
+     "adapter": True, "health": _secret("sarvam_api_key", "Sarvam")},
     {"id": "chatterbox", "name": "Chatterbox voice cloning (with consent)", "caps": ["voice_clone", "tts"],
      "where": "local", "model": "Chatterbox Multilingual", "cost": "free_local", "checked": CHECKED,
      "licence": "MIT", "commercial": True, "hardware": "Apple Silicon; ~8–10× slower than real time on M2",
      "limits": "needs a consented voice sample", "est_cost_usd": 0.0, "fallback": ["kokoro"],
-     "health": _clone_health},
+     "adapter": True, "health": _clone_health},
     {"id": "whisper", "name": "Whisper small (speech-to-text, offline)", "caps": ["stt"], "where": "local",
      "model": "faster-whisper small", "cost": "free_local", "checked": CHECKED,
      "licence": "MIT (recheck)", "commercial": None, "hardware": "any", "limits": "",
-     "est_cost_usd": 0.0, "fallback": [], "health": _whisper_health},
+     "est_cost_usd": 0.0, "fallback": [], "adapter": True, "health": _whisper_health},
     {"id": "gemini_vision", "name": "Gemini Flash-Lite picture checks", "caps": ["vision_check"], "where": "remote",
      "model": "gemini-flash-lite-latest", "cost": "free_allowance", "allowance": "free tier, paced to ~14/min",
      "checked": CHECKED, "licence": "Google terms", "commercial": True, "hardware": "none (cloud)",
      "limits": "rate limited", "est_cost_usd": 0.0, "fallback": ["ollama_vision"],
-     "health": _secret("gemini_api_key", "Gemini")},
+     "adapter": True, "health": _secret("gemini_api_key", "Gemini")},
     {"id": "ollama_vision", "name": "Ollama Cloud vision checks", "caps": ["vision_check"], "where": "remote",
      "model": "gemma4:31b", "cost": "free_allowance", "allowance": "plan's included usage", "checked": CHECKED,
      "licence": "Gemma terms", "commercial": True, "hardware": "none (cloud)", "limits": "",
-     "est_cost_usd": 0.0, "fallback": [], "health": _secret("ollama_api_key", "Ollama")},
+     "est_cost_usd": 0.0, "fallback": [], "adapter": True, "health": _secret("ollama_api_key", "Ollama")},
 ]
 BY_ID = {p["id"]: p for p in REGISTRY}
 
@@ -230,7 +263,8 @@ def status_all() -> list[dict[str, Any]]:
     for p in REGISTRY:
         h = health(p["id"])
         out.append({**{k: v for k, v in p.items() if k != "health"}, **h,
-                    "usable_now": h["available"] and (p["cost"] in FREE or paid_allowed(p["id"]))})
+                    "usable_now": bool(p.get("adapter")) and h["available"]
+                    and (p["cost"] in FREE or paid_allowed(p["id"]))})
     return out
 
 
@@ -241,6 +275,9 @@ def choose(cap: str) -> dict[str, Any]:
     rank = {"free_local": 0, "free_allowance": 1, "paid": 2}
     tried = []
     for p in sorted((p for p in REGISTRY if cap in p["caps"]), key=lambda p: rank[p["cost"]] + (1.5 if p.get("last_resort") else 0)):
+        if not p.get("adapter"):
+            tried.append(f"{p['name']}: listed for information — this app can't run it")
+            continue
         if p["cost"] == "paid" and not paid_allowed(p["id"]):
             tried.append(f"{p['name']}: paid — off at ₹{budget_inr():.0f}")
             continue
@@ -265,7 +302,7 @@ def candidates(cap: str) -> list[dict[str, Any]]:
     rank = {"free_local": 0, "free_allowance": 1, "paid": 2}
     out = []
     for p in sorted((p for p in REGISTRY if cap in p["caps"]), key=lambda p: rank[p["cost"]] + (1.5 if p.get("last_resort") else 0)):
-        if (p["cost"] in FREE or paid_allowed(p["id"])) and health(p["id"])["available"]:
+        if p.get("adapter") and (p["cost"] in FREE or paid_allowed(p["id"])) and health(p["id"])["available"]:
             out.append({"provider": p["id"], "name": p["name"], "cost": p["cost"], "motion_type": _motion(cap)})
     return out
 
@@ -299,10 +336,11 @@ def video_budget() -> dict[str, Any]:
             limit, source = DEFAULT_CLIPS_PER_DAY, "default"
             warning = f"'{raw}' is not a valid clip limit (0–100) — the default {DEFAULT_CLIPS_PER_DAY} is used"
     day = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
-    used = int(db.q1("SELECT COUNT(*) AS n FROM ai_usage WHERE provider IN ('hf_zerogpu') AND task='video_shot' "
-                     "AND ok=1 AND created_at>=?", (day,))["n"])
+    row = db.q1("SELECT COUNT(*) AS tries, COALESCE(SUM(ok),0) AS ok FROM ai_usage WHERE provider IN ('hf_zerogpu') "
+                "AND task='video_shot' AND created_at>=?", (day,))
+    used = int(row["ok"])                      # the limit counts clips made; failed tries are shown separately
     return {"limit": limit, "used": used, "left": max(0, limit - used), "source": source, "warning": warning,
-            "mode": video_mode()}
+            "mode": video_mode(), "attempts": int(row["tries"]), "failed": int(row["tries"]) - used}
 
 
 def run_video(provider_id: str, image: Path, prompt: str, out: Path, *, seconds: float,

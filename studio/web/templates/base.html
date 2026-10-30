@@ -70,6 +70,7 @@
     </div>
   </aside>
   <main>
+    {% if estop %}<div class="note err"><b>Emergency stop is ON</b> since {{ estop.at|dt }}{% if estop.reason %} — {{ estop.reason }}{% endif %}. No new work starts and nothing is published.{% if is_admin %} <button class="sm" data-post="/api/ops/emergency-stop" data-body='{"on": false}' data-confirm="Switch the emergency stop off and let all channels continue?">Switch off</button>{% endif %}</div>{% endif %}
     {% if is_admin and not sarvam.ok %}<div class="note warn helpbox" data-help="sarvam-{{ sarvam.since }}"><button class="x" type="button" title="Close this warning" aria-label="Close">✕</button><div><b>Sarvam voice is unavailable</b> since {{ sarvam.since|dt }} — new videos are being voiced with the free Kokoro voice so they still get made.
       Reason: {{ sarvam.error }}. Top up or check your key at dashboard.sarvam.ai; the studio retries Sarvam every 30 minutes and this warning clears by itself.</div></div>{% endif %}
     {% if page_help %}<div class="helpbox" data-help="{{ page }}">{{ ico('bulb') }}<div>{{ page_help|safe }}</div><button class="x" type="button" title="Hide this tip" aria-label="Hide this tip">✕</button></div>{% endif %}

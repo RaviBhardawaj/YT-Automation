@@ -251,6 +251,12 @@ def ws_id(request: Request) -> int:
     return request.state.sess["workspace"]["id"]
 
 
+def actor(request: Request) -> str:
+    """Who did it, for the audit trail."""
+    sess = getattr(request.state, "sess", None)
+    return (sess or {}).get("user", {}).get("email") or "user"
+
+
 def is_admin(request: Request) -> bool:
     return bool(request.state.sess and request.state.sess["user"]["is_admin"])
 
@@ -333,7 +339,12 @@ def common(request: Request | None = None) -> dict[str, Any]:
             "my_usage": _my_usage(ws) if sess and not sess["user"]["is_admin"] else None,
             "show_ads": bool(settings.get("ads.enabled") and settings.get("ads.html") and sess
                              and not sess["user"]["is_admin"] and sess["workspace"]["plan"] == "free"),
-            "ads_html": settings.get("ads.html")}
+            "ads_html": settings.get("ads.html"), "estop": _estop()}
+
+
+def _estop() -> dict[str, Any] | None:
+    from .. import ops
+    return ops.stopped()
 
 
 def page(request: Request, name: str, **ctx: Any) -> HTMLResponse:
@@ -731,7 +742,22 @@ def queue_page(request: Request, level: str = "all"):
     events = db.q(f"SELECT l.* FROM logs l LEFT JOIN productions p ON p.id=l.production_id "
                   f"WHERE (p.workspace_id=? OR (? AND l.production_id IS NULL)) {where} ORDER BY l.id DESC LIMIT 300",
                   (ws, admin))
-    return page(request, "queue.html", tasks=tasks, events=events, level=level)
+    from .. import ops
+    audit = ops.recent(60) if admin else []
+    return page(request, "queue.html", tasks=tasks, events=events, level=level, audit=audit)
+
+
+@app.post("/api/ops/emergency-stop")
+async def api_emergency_stop(request: Request):
+    """Owner only: halt (or continue) all new work and publishing across every channel."""
+    from .. import ops
+    if not is_admin(request):
+        return bad("Only the studio owner can use the emergency stop.", 403)
+    data = await body(request)
+    on = bool(data.get("on"))
+    ops.set_stop(on, actor(request), str(data.get("reason") or ""))
+    return ok(detail="Emergency stop is ON — nothing new starts and nothing is published." if on
+              else "Emergency stop is off — work continues.")
 
 
 @app.get("/schedule", response_class=HTMLResponse)
@@ -1273,7 +1299,7 @@ def _approve(pid: int, privacy: str, publish_at_local: Any) -> JSONResponse:
         return bad("Your Google Cloud project must pass the YouTube API audit before public/scheduled/unlisted uploads "
                    "(otherwise YouTube locks them private). Choose 'private' for now, or update Settings › YouTube.")
     try:
-        pipeline.approve(pid, privacy=privacy, publish_at=publish_at)
+        pipeline.approve(pid, privacy=privacy, publish_at=publish_at, by=actor(request))
     except pipeline.NeedsAttention as e:
         return bad(str(e))
     return ok()
@@ -1800,6 +1826,7 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
     chars = characters.for_channel(cid, include_all=True)
     recent = db.q("SELECT id, title, format, kind, status, stage, updated_at, youtube_video_id, parent_id, error "
                   "FROM productions WHERE channel_id=? ORDER BY id DESC LIMIT 12", (cid,))
+    from .. import learning
     from ..youtube import growth
     resp = page(request, "channel.html", ch=ch, counts=channels.counts(cid), connected=oauth.connected(cid), tiers=growth.TIERS,
                 oauth_ready=oauth.configured(), characters=chars, productions=recent, tab=tab,
@@ -1807,8 +1834,32 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
                 options=characters.OPTIONS, voices=sorted({v for vs in characters.VOICES.values() for v in vs}),
                 ideas_n=db.q1("SELECT COUNT(*) AS n FROM topics WHERE channel_id=? AND status IN ('idea','approved')",
                               (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid),
-                **_social_ctx(cid))
+                ypp_status=growth.status(ch), readiness=growth.policy_readiness(cid), ypp_rules=growth.RULES,
+                weekly=learning.latest_weekly(cid), **_social_ctx(cid))
     return _with_cookie(resp, cid)
+
+
+@app.post("/api/channels/{cid}/monetization-status")
+async def api_channel_ypp_status(request: Request, cid: int):
+    """The owner records what YouTube decided (no API reports a Partner Program decision)."""
+    from ..youtube import growth
+    if not auth.owns(ws_id(request), "channels", cid):
+        return bad("not found", 404)
+    data = await body(request)
+    try:
+        growth.set_owner_status(cid, str(data.get("status") or ""), actor(request))
+    except ValueError as e:
+        return bad(str(e))
+    return ok(detail="Saved")
+
+
+@app.post("/api/channels/{cid}/weekly-review")
+def api_channel_weekly(request: Request, cid: int):
+    from .. import learning
+    if not auth.owns(ws_id(request), "channels", cid):
+        return bad("not found", 404)
+    r = learning.weekly_report(cid)
+    return ok(detail=f"Weekly review: {r.get('counts') or r.get('skipped')}")
 
 
 @app.post("/api/channels")
@@ -1839,7 +1890,7 @@ async def api_channel_update(request: Request, cid: int):
     if data.get("schedule_enabled") and not plans.can(ws_id(request), "schedules"):
         return bad(f"“{plans.FEATURES['schedules']}” isn't enabled for your account.")
     try:
-        channels.update(cid, data)
+        channels.update(cid, data, actor=actor(request))
     except (ValueError, TypeError) as e:
         return bad(str(e))
     scheduler.sync_channels()

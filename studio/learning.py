@@ -169,3 +169,84 @@ def prompt_block(channel_id: int | None) -> str:
         return ""
     return ("WHAT WORKS ON THIS CHANNEL (learned from its own results — follow these unless the request says "
             "otherwise):\n" + "\n".join(f"- {r['lesson']}" for r in rows) + "\n")
+
+
+# ------------------------------------------------------------------ weekly decision report (no AI, rule-based)
+
+def _decide(r: dict[str, Any], median_vpd: float) -> tuple[str, str]:
+    """One decision per video from its real numbers. CTR/impressions aren't collected, so 'repackage' is judged
+    from views vs how much of the video viewers watch — stated as a hypothesis, never as a measured CTR problem."""
+    if r["age_days"] < MIN_AGE_DAYS:
+        return "too early", f"published {r['age_days']} days ago — wait for at least {MIN_AGE_DAYS} days of data"
+    pct = r.get("avg_viewed_pct")
+    if pct is None:
+        return "no data", "YouTube Analytics hasn't returned watch-time numbers for this video yet"
+    hot = median_vpd > 0 and r["views_per_day"] >= 1.5 * median_vpd
+    cold = median_vpd > 0 and r["views_per_day"] <= 0.5 * median_vpd
+    if hot and pct >= 40:
+        return "continue", "more views than usual and viewers stay — make more on this topic/format"
+    if pct < 25:
+        return "improve", f"viewers watch only {pct:.0f}% on average — tighten the opening and remove slow parts"
+    if cold and pct >= 40:
+        return "repackage", ("few views but people who start it watch well — test a clearer title or thumbnail "
+                             "(hypothesis: impressions/CTR are not collected)")
+    if cold:
+        return "test", "few views and average watching — try a different angle before making more like it"
+    return "continue", "in line with the channel's usual results"
+
+
+def weekly_report(channel_id: int, save_it: bool = True) -> dict[str, Any]:
+    """This week's decision for every public video of a channel (continue / improve / repackage / test / too early),
+    plus what to make next. Stored per ISO week, so past weeks can be compared."""
+    from datetime import date
+    from . import channels
+    ch = channels.get(channel_id)
+    if not ch:
+        return {"skipped": "channel not found"}
+    res = results(channel_id)
+    vpds = sorted(r["views_per_day"] for r in res if r["age_days"] >= MIN_AGE_DAYS)
+    median = vpds[len(vpds) // 2] if vpds else 0.0
+    rows = []
+    for r in res[:30]:
+        decision, why = _decide(r, median)
+        rows.append({"id": r["id"], "title": r["title"], "format": r["format"], "views": r["views"],
+                     "views_per_day": r["views_per_day"], "avg_viewed_pct": r["avg_viewed_pct"],
+                     "decision": decision, "why": why})
+    counts: dict[str, int] = {}
+    for x in rows:
+        counts[x["decision"]] = counts.get(x["decision"], 0) + 1
+    best = [x for x in rows if x["decision"] == "continue" and "more views" in x["why"]]
+    nxt = ([f"Make a follow-up to #{best[0]['id']} '{best[0]['title'][:60]}' (it beat the channel's usual views)"]
+           if best else []) + \
+        (["Rework openings: several videos lose most viewers early"] if counts.get("improve", 0) >= 2 else []) + \
+        (["Test new titles/thumbnails on the 'repackage' videos one at a time (change one thing per test)"]
+         if counts.get("repackage") else []) + \
+        (["Too little data to judge — keep the schedule steady and review next week"] if len(vpds) < MIN_VIDEOS else [])
+    week = f"{date.today().isocalendar()[0]}-W{date.today().isocalendar()[1]:02d}"
+    report = {"channel": ch["name"], "week": week, "videos": rows, "counts": counts, "median_views_per_day": median,
+              "next": nxt, "not_collected": ["impressions", "click-through rate", "traffic sources",
+                                             "returning viewers"],
+              "made_at": db.iso()}
+    if save_it:
+        db.ex("INSERT INTO channel_reviews (channel_id, week, report, created_at) VALUES (?,?,?,?) "
+              "ON CONFLICT(channel_id, week) DO UPDATE SET report=excluded.report, created_at=excluded.created_at",
+              (channel_id, week, db.dumps(report), db.iso()))
+    return report
+
+
+def weekly_all() -> dict[str, Any]:
+    from . import channels
+    done = {}
+    for ch in channels.all_channels():
+        try:
+            r = weekly_report(ch["id"])
+            done[ch["id"]] = r.get("counts", r.get("skipped"))
+        except Exception as e:  # one channel's problem never stops the others
+            done[ch["id"]] = f"failed: {str(e)[:120]}"
+    logs.event("info", "learning", f"Weekly channel review written for {len(done)} channel(s)")
+    return done
+
+
+def latest_weekly(channel_id: int) -> dict[str, Any] | None:
+    r = db.q1("SELECT report FROM channel_reviews WHERE channel_id=? ORDER BY week DESC LIMIT 1", (channel_id,))
+    return db.loads(r["report"], None) if r else None

@@ -22,6 +22,8 @@ DEFAULT_SCHEDULES = [
      "time_of_day": "06:00"},
     {"name": "Learn from results (better content every day)", "task_type": "learning_review", "kind": "daily",
      "time_of_day": "06:30"},
+    {"name": "Weekly channel review (continue / improve / repackage / test)", "task_type": "weekly_review",
+     "kind": "daily", "time_of_day": "07:15", "days": [0]},
     {"name": "Trend research for every channel (original ideas, never copies)", "task_type": "trend_research",
      "kind": "daily", "time_of_day": "07:00"},
     # 7-part 'फिबोनाची पिवट सीखें' series: one lesson generated per day; switches itself off after part 7.
