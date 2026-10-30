@@ -1,0 +1,3 @@
+vinthony/SadTalker-V002rc df6f230f2fbec618d69e47229ea32dd224fc9c5c
+camenduru/SadTalker 7caf8d94b767aa60b5a6768ada79fde0c6713b76
+vinthony/SadTalker 4aedd064359e623398a2d73eb8c253ebb2bd516c

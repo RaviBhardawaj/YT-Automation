@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><h1>AI providers &amp; services</h1><div class="muted">What the studio can use right now, what it costs, and what happens when one fails. Checked live and cheaply — no paid call is made to test anything, and no key is ever shown.</div></div>
+  <div class="row"><a class="btn" href="/providers">Refresh</a></div></div>
+{% if o.paid_in_use %}<div class="note warn">Paid writers in the chain: {{ o.paid_in_use|join(', ') }} (monthly budget ${{ '%.2f' % o.budget_usd }}).</div>{% else %}<div class="note ok small">No paid writer is in use — every script is written by a free provider.</div>{% endif %}
+<div class="card"><h2>Script writers ({{ o.writers_ready }} ready in the chain)</h2>
+  <div class="muted small">Tried in this order. When all are used up, the video waits 30 minutes and tries again — it never fails or switches to a paid service on its own.</div>
+  <table><tr><th>#</th><th>Writer</th><th>Status</th><th>Cost</th><th>Today</th></tr>
+  {% for w in o.writers %}<tr><td>{{ w.order or '—' }}</td><td><b>{{ w.name }}</b></td>
+    <td>{% if w.available %}<span class="chip ok">ready</span>{% else %}<span class="chip warn">not now</span>{% endif %} <span class="small muted">{{ w.detail }}</span></td>
+    <td>{% if w.cost == 'paid' %}<span class="chip err">paid</span>{% else %}<span class="chip">free</span>{% endif %}{% if not w.in_chain %} <span class="muted small">not used</span>{% endif %}</td>
+    <td class="small">{{ w.usage.calls }} calls{% if w.usage.failed %}, {{ w.usage.failed }} failed{% endif %}</td></tr>{% endfor %}</table></div>
+<div class="card" style="margin-top:16px"><h2>Pictures, video, voice and checks</h2>
+  <table><tr><th>Provider</th><th>Does</th><th>Status</th><th>Cost</th><th>Licence</th></tr>
+  {% for m in o.media %}<tr><td><b>{{ m.name }}</b>{% if not m.adapter %}<div class="muted small">listed for information — the app can't run it</div>{% endif %}</td>
+    <td class="small">{{ m.caps|join(', ')|replace('_',' ') }}</td>
+    <td>{% if m.usable_now %}<span class="chip ok">ready</span>{% else %}<span class="chip warn">not now</span>{% endif %} <span class="small muted">{{ m.detail }}</span></td>
+    <td class="small">{{ {'free_local':'free · this Mac','free_allowance':'free daily allowance','paid':'paid'}[m.cost] }}</td>
+    <td class="small">{{ m.licence }}</td></tr>{% endfor %}</table></div>
+<div class="card" style="margin-top:16px"><h2>Platforms</h2>
+  <table>{% for p in o.platforms %}<tr><td><b>{{ p.name }}</b></td><td>{% if p.available %}<span class="chip ok">ok</span>{% else %}<span class="chip warn">check</span>{% endif %} <span class="small muted">{{ p.detail }}</span></td></tr>{% endfor %}</table>
+  <div class="muted small">What to do when a service fails: docs/operations/PROVIDER_FAILURE_RUNBOOK.md</div></div>
+{% endblock %}

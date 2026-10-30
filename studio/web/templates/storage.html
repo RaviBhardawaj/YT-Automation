@@ -21,6 +21,12 @@
     {% for p in mac.top %}<tr><td>{{ p.name }}</td><td>{{ p.mb }} MB</td></tr>{% endfor %}</table>
   <div class="muted small">Video making needs the most memory while rendering and making talking clips. Closing big browser tabs helps.</div>
 </div>
+<div class="card" style="margin-bottom:16px"><div class="spread"><h2>Database backups</h2>
+  <button class="sm" data-post="/api/storage/backup">Back up now</button></div>
+  {% if backups.last %}<div class="small">Last checked copy: <b>{{ backups.last.made_at|dt }}</b> ({{ '%.1f' % ((backups.last.bytes or 0) / 1e6) }} MB) · {{ backups.count }} kept ({{ '%.1f' % (backups.bytes / 1e6) }} MB) · newest {{ backups.keep_daily }} daily + {{ backups.keep_weekly }} weekly, the last good copy is never deleted</div>
+  {% else %}<div class="note warn small">No automatic backup yet — one is made every night at 03:15, or click “Back up now”.</div>{% endif %}
+  <div class="muted small">Your channels, videos list, settings and history are in the copy; YouTube logins and keys stay in the macOS Keychain; video files stay in data/productions. Restore steps: docs/operations/BACKUP_AND_RESTORE.md.</div>
+</div>
 <div class="card" style="margin-bottom:16px"><h2>Installed AI tools</h2>
   <div class="muted small">Uninstall a part you don't use to free space. Your videos and channels are not touched. Parts marked "needed" can't be removed.</div>
   <table><tr><th>Part</th><th>What it does</th><th>Size</th><th></th></tr>

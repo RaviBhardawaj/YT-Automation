@@ -193,6 +193,7 @@
     {% elif p.status in ('approved','uploading') %}<div class="note">Approved — upload {{ 'in progress' if p.status == 'uploading' else 'queued' }}.</div>
       {% if p.status == 'approved' %}<button data-post="/api/productions/{{ p.id }}/retry" data-done="Upload re-queued">Retry upload</button>{% endif %}
     {% elif p.status == 'uploaded' %}<div class="note ok">Uploaded: <a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a> · visibility requested: {{ p.privacy }}{% if p.publish_at %} at {{ p.publish_at|dt }}{% endif %}</div>
+      {% include "_audience.html" %}
     {% elif p.status == 'test_passed' %}<div class="note ok">Self-test passed. Test videos are never uploaded.</div>
     {% else %}<div class="muted">Available after all checks pass.</div>{% endif %}
   </div>

@@ -1,0 +1,27 @@
+{# Audience on an uploaded video: where viewers leave (retention per scene) and what they say (comments). #}
+<div class="card" style="margin-top:12px">
+  <h3>Where viewers leave</h3>
+  {% if retention and retention.available %}
+    {% if retention.recommendation %}<div class="note small">{{ retention.recommendation }} <span class="muted">(confidence {{ retention.confidence }}, {{ retention.views }} views)</span></div>{% elif retention.note %}<div class="muted small">{{ retention.note }}</div>{% endif %}
+    <table class="small"><tr><th>Scene</th><th>Time</th><th>Watching at start → end</th><th>Biggest drop</th><th>Signal</th></tr>
+    {% for s in retention.scenes %}<tr><td>{{ s.index + 1 }} · {{ s.label }}</td><td>{{ '%d:%02d'|format(s.start//60, s.start%60) }}–{{ '%d:%02d'|format(s.end//60, s.end%60) }}</td>
+      <td>{{ s.start_watch }}% → {{ s.end_watch }}%</td><td>{{ s.largest_drop }} pts</td>
+      <td>{% if s.signal == 'drop_off' %}<span class="chip warn">viewers leave</span>{% elif s.signal in ('strong_hold','rewatch') %}<span class="chip ok">{{ 'rewatched' if s.signal == 'rewatch' else 'holds viewers' }}</span>{% else %}<span class="chip">{{ s.signal|replace('_',' ') }}</span>{% endif %}</td></tr>{% endfor %}</table>
+    {% if retention.traffic_sources %}<div class="muted small">Traffic sources: {% for k, v in retention.traffic_sources.items() %}{{ k|replace('_',' ')|lower }} {{ v.views }}{{ ', ' if not loop.last }}{% endfor %} views · from YouTube Analytics {{ retention.fetched_at|dt }}</div>{% endif %}
+  {% else %}<div class="muted small">{{ (retention or {}).why or 'Not available.' }}</div>{% endif %}
+</div>
+<div class="card" style="margin-top:12px">
+  <div class="spread"><h3>What viewers say{% if comments and comments.total %} · {{ comments.total }} comments{% endif %}</h3>
+    <div class="row"><button class="sm" data-post="/api/productions/{{ p.id }}/comments/sync" data-done="Comments read">Read comments</button>
+      {% if comments and comments.total %}<button class="sm" data-post="/api/productions/{{ p.id }}/comments/drafts" data-done="Drafts written">Draft replies</button>{% endif %}</div></div>
+  {% if comments and comments.total %}
+    <div class="small">{% for k, n in comments.counts.items() %}<span class="chip {{ 'warn' if k in ('spam','scam','toxic','correction') }}">{{ k }} {{ n }}</span> {% endfor %}</div>
+    {% for t in comments.themes %}<div class="small" style="margin-top:6px"><b>{{ t.title }}</b> ({{ t.count }}, {{ t.kind }}) — {{ t.summary }}</div>{% endfor %}
+    {% if comments.drafts %}<h3 style="margin-top:10px">Reply drafts — the app never posts them</h3>
+    {% for d in comments.drafts %}<div class="note small"><div class="muted">{{ d.author }}: “{{ d.text[:220] }}”</div>
+      <div style="margin:4px 0"><b>Draft:</b> {{ d.reply_draft }}</div>
+      <a href="{{ d.link }}" target="_blank" rel="noopener">Open the comment on YouTube to reply</a> ·
+      <button class="sm" data-post="/api/comments/{{ d.id }}/dismiss" data-done="Dismissed">Dismiss</button></div>{% endfor %}{% endif %}
+    {% if comments.analysed_at %}<div class="muted small">Sorted {{ comments.analysed_at|dt }} by {{ comments.model }}. Comment text is treated as data, never as instructions.</div>{% endif %}
+  {% else %}<div class="muted small">No comments read yet. They are read every morning for videos uploaded in the last 30 days.</div>{% endif %}
+</div>

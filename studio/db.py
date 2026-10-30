@@ -679,6 +679,34 @@ MIGRATIONS: list[str] = [
         UNIQUE (channel_id, week)
     );
     """,
+    # v21 — viewers' comments on our uploads: classification, themes and reply DRAFTS (never posted by the app).
+    """
+    CREATE TABLE video_comments (
+        id INTEGER PRIMARY KEY,
+        production_id INTEGER NOT NULL,
+        channel_id INTEGER,
+        comment_id TEXT NOT NULL UNIQUE,
+        author TEXT NOT NULL DEFAULT '',
+        text TEXT NOT NULL DEFAULT '',
+        like_count INTEGER NOT NULL DEFAULT 0,
+        reply_count INTEGER NOT NULL DEFAULT 0,
+        published_at TEXT,
+        is_owner INTEGER NOT NULL DEFAULT 0,
+        flags TEXT NOT NULL DEFAULT '[]',             -- question | request | praise | correction | spam | scam | toxic
+        sentiment TEXT,                               -- positive | neutral | negative (NULL = not analysed yet)
+        reply_draft TEXT,
+        draft_status TEXT NOT NULL DEFAULT 'none',    -- none | draft | dismissed  (posting is done by the owner)
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_video_comments_prod ON video_comments(production_id);
+    CREATE TABLE comment_themes (
+        production_id INTEGER PRIMARY KEY,
+        themes TEXT NOT NULL DEFAULT '[]',
+        analysed_at TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT ''
+    );
+    """,
 ]
 
 

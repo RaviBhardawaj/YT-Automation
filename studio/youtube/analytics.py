@@ -46,11 +46,38 @@ def sync(channel_id: int | None = None) -> dict[str, Any]:
         for row in data.get("rows", []):
             rec = dict(zip(cols, row))
             stats.setdefault(rec["video"], {}).update({k: v for k, v in rec.items() if k != "video"})
+    _with_retention(channel_id, by_vid, stats)
     now = db.iso()
     for vid, m in stats.items():
         db.insert("analytics", {"production_id": by_vid[vid]["id"], "video_id": vid, "metrics": db.dumps(m), "fetched_at": now})
     logs.event("info", "youtube", f"Analytics synced for {len(stats)} video(s). {note}".strip())
     return {"synced": len(stats), "note": note}
+
+
+RETENTION_PER_SYNC = 20
+
+
+def _with_retention(channel_id: int, by_vid: dict[str, dict[str, Any]], stats: dict[str, dict[str, Any]]) -> None:
+    """Retention curve + traffic sources for public videos at least 2 days old, refreshed at most daily (kept from
+    the previous sync otherwise). A failure keeps the other numbers."""
+    from . import retention
+    done = 0
+    for vid, m in stats.items():
+        row = by_vid[vid]
+        prev = db.loads((db.q1("SELECT metrics FROM analytics WHERE video_id=? ORDER BY id DESC LIMIT 1", (vid,))
+                         or {}).get("metrics"), {}) or {}
+        keep = {k: prev[k] for k in ("retention_points", "traffic_sources", "retention_fetched_at") if k in prev}
+        fresh = prev.get("retention_fetched_at") and prev["retention_fetched_at"] >= db.iso_in(-20 * 3600)
+        old_enough = (row.get("uploaded_at") or db.iso()) <= db.iso_in(-2 * 86400)
+        if fresh or not old_enough or m.get("privacy") != "public" or done >= RETENTION_PER_SYNC:
+            m.update(keep)
+            continue
+        try:
+            m.update(retention.fetch(channel_id, vid, row.get("uploaded_at") or db.iso()))
+            done += 1
+        except Exception as e:  # retention is extra detail: never lose the basic numbers over it
+            m.update(keep)
+            logs.event("info", "youtube", f"Retention for {vid} not available: {str(e)[:160]}")
 
 
 def latest() -> list[dict[str, Any]]:

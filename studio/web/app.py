@@ -718,7 +718,11 @@ def production_page(request: Request, pid: int):
         if p.get("channel_id") and p.get("video_path") else {}
     job_outputs = db.q("SELECT id, title, status, format, video_path, youtube_video_id FROM productions WHERE parent_id=? "
                        "AND kind='edit_clip' ORDER BY id", (pid,)) if p.get("kind") == "edit" else []
+    from ..youtube import comments as yt_comments, retention
+    ret = retention.report(pid) if p.get("youtube_video_id") else None
+    cmts = yt_comments.summary(pid) if p.get("youtube_video_id") else None
     return page(request, "production.html", p=p, pkg=p["package"], tl=p["timeline"], topic=topic, evidence=ev,
+                retention=ret, comments=cmts,
                 ev_by_id=ev_by_id, assets=pipeline.assets_for(pid), events=events, tasks=tasks,
                 files=files, info=info, sources=sources, job_outputs=job_outputs, my_channels=chans, social=social,
                 stages=stages, connected=oauth.connected(p["channel_id"]) if p.get("channel_id") else False,
@@ -745,6 +749,43 @@ def queue_page(request: Request, level: str = "all"):
     from .. import ops
     audit = ops.recent(60) if admin else []
     return page(request, "queue.html", tasks=tasks, events=events, level=level, audit=audit)
+
+
+@app.post("/api/productions/{pid}/comments/{action}")
+def api_comments(request: Request, pid: int, action: str):
+    """Read / sort a video's comments, or draft replies. Drafts are never posted by the app."""
+    from ..youtube import comments
+    if not auth.owns(ws_id(request), "productions", pid):
+        return bad("not found", 404)
+    try:
+        if action == "sync":
+            n = comments.sync(pid)
+            res = comments.analyse(pid)
+            return ok(detail=f"{n} new comment(s); {res.get('analysed', 0)} sorted"
+                             + (" (AI unavailable: only questions marked)" if res.get("fallback") else ""))
+        if action == "drafts":
+            return ok(detail=f"{comments.draft_replies(pid)} reply draft(s) written — copy one and reply on YouTube")
+    except Exception as e:  # noqa: BLE001 - shown to the owner, nothing half-done is kept hidden
+        return bad(f"Couldn't do that: {str(e)[:200]}")
+    return bad("unknown action", 404)
+
+
+@app.post("/api/comments/{cid}/dismiss")
+def api_comment_dismiss(request: Request, cid: int):
+    row = db.q1("SELECT production_id FROM video_comments WHERE id=?", (cid,))
+    if not row or not auth.owns(ws_id(request), "productions", row["production_id"]):
+        return bad("not found", 404)
+    db.ex("UPDATE video_comments SET draft_status='dismissed', updated_at=? WHERE id=?", (db.iso(), cid))
+    return ok()
+
+
+@app.get("/providers", response_class=HTMLResponse)
+def providers_page(request: Request):
+    """Every AI service, local tool and platform API: usable now, free or paid, today's use, what happens on failure."""
+    if not is_admin(request):
+        raise HTTPException(403)
+    from .. import provider_status
+    return page(request, "providers.html", o=provider_status.overview())
 
 
 @app.post("/api/ops/emergency-stop")
@@ -2857,9 +2898,11 @@ def storage_page(request: Request):
     if not is_admin(request):
         rep.pop("cache_bytes", None)
         rep.pop("disk_free_bytes", None)
+    from .. import backup
     mac = storage.machine() if is_admin(request) else None
+    backups = backup.status() if is_admin(request) else None
     parts = storage.components() if is_admin(request) else []
-    return page(request, "storage.html", rep=rep, lim=plans.limits(ws_id(request)), mac=mac, parts=parts,
+    return page(request, "storage.html", rep=rep, lim=plans.limits(ws_id(request)), mac=mac, parts=parts, backups=backups,
                 auto_clean=settings.get("storage.auto_clean_days"),
                 auto_delete=settings.get("storage.auto_delete_rejected_days"))
 
@@ -2911,6 +2954,15 @@ async def api_storage(request: Request, action: str):
     if action == "cache" and is_admin(request):
         freed = storage.clear_cache(int(data.get("older_than_days") or 0))
         return ok(detail=f"Download cache: {freed / 1e6:.0f} MB freed")
+    if action == "backup" and is_admin(request):
+        from .. import backup
+        try:
+            res = backup.make("manual")
+        except RuntimeError as e:
+            return bad(str(e)[:200])
+        drill = backup.restore_drill()
+        return ok(detail=f"Backed up and checked ({res['bytes'] / 1e6:.1f} MB); restore drill "
+                         + ("passed" if drill["ok"] else "FAILED — see the Activity log"))
     if action == "uninstall" and is_admin(request):
         try:
             freed = storage.uninstall(str(data.get("key") or ""))

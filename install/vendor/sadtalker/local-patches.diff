@@ -1,0 +1,147 @@
+diff --git a/inference.py b/inference.py
+index a0b0079..29d0694 100644
+--- a/inference.py
++++ b/inference.py
+@@ -138,6 +138,8 @@ if __name__ == '__main__':
+ 
+     if torch.cuda.is_available() and not args.cpu:
+         args.device = "cuda"
++    elif torch.backends.mps.is_available() and not args.cpu and os.environ.get("SADTALKER_MPS", "1") == "1":
++        args.device = "mps"
+     else:
+         args.device = "cpu"
+ 
+diff --git a/src/face3d/util/my_awing_arch.py b/src/face3d/util/my_awing_arch.py
+index cd56561..308752f 100644
+--- a/src/face3d/util/my_awing_arch.py
++++ b/src/face3d/util/my_awing_arch.py
+@@ -15,7 +15,7 @@ def calculate_points(heatmaps):
+     indexes = np.argmax(heatline, axis=2)
+ 
+     preds = np.stack((indexes % W, indexes // W), axis=2)
+-    preds = preds.astype(np.float, copy=False)
++    preds = preds.astype(float, copy=False)
+ 
+     inr = indexes.ravel()
+ 
+diff --git a/src/face3d/util/preprocess.py b/src/face3d/util/preprocess.py
+index b77a3a4..5810f00 100644
+--- a/src/face3d/util/preprocess.py
++++ b/src/face3d/util/preprocess.py
+@@ -9,7 +9,7 @@ import os
+ from skimage import transform as trans
+ import torch
+ import warnings
+-warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning) 
++pass 
+ warnings.filterwarnings("ignore", category=FutureWarning) 
+ 
+ 
+@@ -33,19 +33,19 @@ def POS(xp, x):
+     R2 = k[4:7]
+     sTx = k[3]
+     sTy = k[7]
+-    s = (np.linalg.norm(R1) + np.linalg.norm(R2))/2
+-    t = np.stack([sTx, sTy], axis=0)
++    s = float((np.linalg.norm(R1) + np.linalg.norm(R2))/2)
++    t = np.array([np.ravel(sTx)[0], np.ravel(sTy)[0]], dtype=np.float64)
+ 
+     return t, s
+     
+ # resize and crop images for face reconstruction
+ def resize_n_crop_img(img, lm, t, s, target_size=224., mask=None):
+     w0, h0 = img.size
+-    w = (w0*s).astype(np.int32)
+-    h = (h0*s).astype(np.int32)
+-    left = (w/2 - target_size/2 + float((t[0] - w0/2)*s)).astype(np.int32)
++    w = np.int32(w0*s)
++    h = np.int32(h0*s)
++    left = int(w/2 - target_size/2 + float((t[0] - w0/2)*s))
+     right = left + target_size
+-    up = (h/2 - target_size/2 + float((h0/2 - t[1])*s)).astype(np.int32)
++    up = int(h/2 - target_size/2 + float((h0/2 - t[1])*s))
+     below = up + target_size
+ 
+     img = img.resize((w, h), resample=Image.BICUBIC)
+diff --git a/src/facerender/modules/dense_motion.py b/src/facerender/modules/dense_motion.py
+index a286ead..b8ac9d4 100644
+--- a/src/facerender/modules/dense_motion.py
++++ b/src/facerender/modules/dense_motion.py
+@@ -72,7 +72,7 @@ class DenseMotionNetwork(nn.Module):
+         heatmap = gaussian_driving - gaussian_source
+ 
+         # adding background feature
+-        zeros = torch.zeros(heatmap.shape[0], 1, spatial_size[0], spatial_size[1], spatial_size[2]).type(heatmap.type())
++        zeros = torch.zeros(heatmap.shape[0], 1, spatial_size[0], spatial_size[1], spatial_size[2]).to(heatmap)
+         heatmap = torch.cat([zeros, heatmap], dim=1)
+         heatmap = heatmap.unsqueeze(2)         # (bs, num_kp+1, 1, d, h, w)
+         return heatmap
+diff --git a/src/facerender/modules/util.py b/src/facerender/modules/util.py
+index b916dee..d65dc07 100644
+--- a/src/facerender/modules/util.py
++++ b/src/facerender/modules/util.py
+@@ -32,13 +32,20 @@ def kp2gaussian(kp, spatial_size, kp_variance):
+ 
+     return out
+ 
++def _arange(n, type):
++    # Apple GPU tensors have no legacy type name ('torch.mps.FloatTensor'); build them directly
++    if isinstance(type, str) and ".mps." in type:
++        return torch.arange(n, dtype=torch.float32, device="mps")
++    return torch.arange(n).type(type)
++
++
+ def make_coordinate_grid_2d(spatial_size, type):
+     """
+     Create a meshgrid [-1,1] x [-1,1] of given spatial_size.
+     """
+     h, w = spatial_size
+-    x = torch.arange(w).type(type)
+-    y = torch.arange(h).type(type)
++    x = _arange(w, type)
++    y = _arange(h, type)
+ 
+     x = (2 * (x / (w - 1)) - 1)
+     y = (2 * (y / (h - 1)) - 1)
+@@ -53,9 +60,9 @@ def make_coordinate_grid_2d(spatial_size, type):
+ 
+ def make_coordinate_grid(spatial_size, type):
+     d, h, w = spatial_size
+-    x = torch.arange(w).type(type)
+-    y = torch.arange(h).type(type)
+-    z = torch.arange(d).type(type)
++    x = _arange(w, type)
++    y = _arange(h, type)
++    z = _arange(d, type)
+ 
+     x = (2 * (x / (w - 1)) - 1)
+     y = (2 * (y / (h - 1)) - 1)
+diff --git a/src/utils/face_enhancer.py b/src/utils/face_enhancer.py
+index 15851a1..c5cf3e9 100644
+--- a/src/utils/face_enhancer.py
++++ b/src/utils/face_enhancer.py
+@@ -1,7 +1,10 @@
+ import os
+ import torch 
+ 
+-from gfpgan import GFPGANer
++try:
++    from gfpgan import GFPGANer
++except ImportError:  # enhancer optional
++    GFPGANer = None
+ 
+ from tqdm import tqdm
+ 
+diff --git a/src/utils/preprocess.py b/src/utils/preprocess.py
+index 0f784e6..3e13fc4 100644
+--- a/src/utils/preprocess.py
++++ b/src/utils/preprocess.py
+@@ -145,7 +145,7 @@ class CropAndExtract():
+ 
+                 trans_params, im1, lm1, _ = align_img(frame, lm1, self.lm3d_std)
+  
+-                trans_params = np.array([float(item) for item in np.hsplit(trans_params, 5)]).astype(np.float32)
++                trans_params = np.asarray(trans_params, dtype=np.float32).ravel()
+                 im_t = torch.tensor(np.array(im1)/255., dtype=torch.float32).permute(2, 0, 1).to(self.device).unsqueeze(0)
+                 
+                 with torch.no_grad():

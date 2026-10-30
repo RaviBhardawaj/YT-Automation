@@ -16,7 +16,8 @@ from typing import Any
 
 from . import db, logs, settings
 
-SAFE_DURING_STOP = ("analytics_sync", "channel_stats", "housekeeping", "learning_review", "weekly_review")
+SAFE_DURING_STOP = ("analytics_sync", "channel_stats", "housekeeping", "learning_review", "weekly_review",
+                    "comments_daily", "backup")
 
 
 def stopped() -> dict[str, Any] | None:

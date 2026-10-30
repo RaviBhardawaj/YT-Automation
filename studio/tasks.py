@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import shutil
+from datetime import datetime
 from typing import Any
 
 from . import config, db, logs, pipeline, profile, settings, worker
@@ -40,6 +41,21 @@ def _local_flux_setup(payload: dict[str, Any], task: dict[str, Any]) -> Any:
 def _voiceclone_setup(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     from . import system_setup
     return system_setup.install_voiceclone()
+
+
+@worker.handler("backup")
+def _backup(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from . import backup
+    res = backup.make("auto")
+    if datetime.now().weekday() == 6:                 # Sundays: prove the newest copy can be restored
+        res["drill"] = backup.restore_drill()
+    return {k: res[k] for k in ("file", "bytes", "removed", "drill") if k in res}
+
+
+@worker.handler("comments_daily")
+def _comments_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from .youtube import comments
+    return comments.refresh_recent()
 
 
 @worker.handler("weekly_review")
