@@ -101,9 +101,8 @@ def report(workspace_id: int | None = None) -> dict[str, Any]:
     uploads = db.q1("SELECT COALESCE(SUM(size_bytes),0) AS n FROM media WHERE status='ready'"
                     + (" AND workspace_id=?" if workspace_id else ""), args)["n"]
     out = {"videos": rows, "final_bytes": total_final, "working_bytes": total_work, "uploads_bytes": int(uploads)}
-    if workspace_id is None or workspace_id == 1:
-        out["cache_bytes"] = size_of(config.DATA_DIR / "cache")
-        out["disk_free_bytes"] = shutil.disk_usage(config.DATA_DIR).free
+    out["cache_bytes"] = size_of(config.DATA_DIR / "cache")             # machine-wide: the page shows them to owners
+    out["disk_free_bytes"] = shutil.disk_usage(config.DATA_DIR).free
     return out
 
 

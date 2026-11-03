@@ -92,14 +92,14 @@ class ScheduleTests(unittest.TestCase):
         ch = news_channel("Daily news", schedule_enabled=1, schedule_time="09:00, 18:00")
         made = []
 
-        def fake_create(cid, request, idea_id=None, actor="", scheduled_for=None):
+        def fake_create(cid, request, idea_id=None, actor="", scheduled_for=None, **kw):
             made.append(scheduled_for)
             db.insert("productions", {"format": "long", "title": "x", "status": "queued", "stage": "research",
                                       "kind": "general", "workspace_id": 1, "channel_id": cid, "package": "{}",
                                       "request": db.dumps({"scheduled_for": scheduled_for}),
                                       "created_at": db.iso(), "updated_at": db.iso()})
             return {"production_ids": [1]}
-        with mock.patch.object(news, "trending", lambda: news.parse_trends(FEED)), \
+        with mock.patch.object(news, "trending", lambda geo="IN": news.parse_trends(FEED)), \
                 mock.patch.object(news.sources, "page_text", side_effect=news.net.FetchError("offline")), \
                 mock.patch("studio.jobs.create", fake_create), mock.patch("studio.plans.can", lambda *a: True):
             first = tasks._channel_daily({"channel_id": ch["id"]}, {})

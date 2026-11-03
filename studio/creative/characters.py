@@ -57,6 +57,8 @@ def normalise_design(d: dict[str, Any] | None) -> dict[str, Any]:
         v = str((d or {}).get(k, "")).lower().strip()
         if v in opts:
             out[k] = v
+    if (d or {}).get("mascot"):                     # a channel mascot (e.g. Fibbu) drawn by creative/mascot.py
+        out["mascot"] = str(d["mascot"])
     return out
 
 

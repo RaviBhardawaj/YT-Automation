@@ -10,6 +10,23 @@ from . import oauth
 ANALYTICS_METRICS = "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,subscribersGained"
 
 
+class NoInternet(RuntimeError):
+    """Temporary: the worker tries again in 15 minutes instead of waiting for the next scheduled run."""
+    temporary = True
+    retry_after = 900
+
+
+OFFLINE_HINTS = ("nodename nor servname", "Name or service not known", "Temporary failure in name resolution",
+                 "Network is unreachable", "No route to host", "ConnectError", "ConnectTimeout",
+                 "timed out", "Connection refused", "Connection reset")
+
+
+def offline_error(e: Exception | str) -> bool:
+    """Was this failure just the internet being down (not a problem with YouTube or the channel)?"""
+    text = f"{type(e).__name__}: {e}" if isinstance(e, Exception) else str(e)
+    return any(h.lower() in text.lower() for h in OFFLINE_HINTS)
+
+
 def sync(channel_id: int | None = None) -> dict[str, Any]:
     """Per-video statistics for the studio's uploads to one channel, read with that channel's own login."""
     if channel_id is None:
@@ -173,4 +190,6 @@ def sync_all() -> dict[str, Any]:
         except Exception as e:
             failed[ch["id"]] = str(e)[:200]
             logs.event("warning", "youtube", f"Analytics for '{ch['name']}' failed: {e}")
+    if failed and not done and all(offline_error(e) for e in failed.values()):
+        raise NoInternet("No internet connection — YouTube numbers will be refreshed again in 15 minutes")
     return {"channels": done, "failed": failed}

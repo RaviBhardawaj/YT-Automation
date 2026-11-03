@@ -10,6 +10,7 @@ import contextvars
 import re
 import json
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any, Iterator
 
 from . import db, settings
@@ -316,6 +317,16 @@ def uploads_allowed(ch: dict[str, Any] | None) -> bool:
 
 def styles(ch: dict[str, Any] | None) -> list[str]:
     return (ch or {}).get("styles") or []
+
+
+def long_made_today(channel_id: int | None) -> bool:
+    """Has this channel already started its one long video today (local date)? Every other video that day is a
+    Short — one strong long video plus Shorts, never several long ones a day."""
+    if not channel_id:
+        return False
+    start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    return bool(db.q1("SELECT 1 FROM productions WHERE channel_id=? AND format='long' AND created_at>=? AND "
+                      "status NOT IN ('rejected','failed')", (channel_id, db.iso(start))))
 
 
 def formats(ch: dict[str, Any] | None) -> list[str]:

@@ -94,7 +94,7 @@ class DailyPickTests(unittest.TestCase):
                                         why_now="this week's popular theme (original story)"))
         made = {}
 
-        def fake_create(cid_, request, idea_id=None, actor="", scheduled_for=None):
+        def fake_create(cid_, request, idea_id=None, actor="", scheduled_for=None, **kw):
             made["idea"] = idea_id
             return {"production_ids": [1]}
         with mock.patch("studio.jobs.create", fake_create), mock.patch("studio.plans.can", lambda *a: True):

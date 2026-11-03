@@ -1,5 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
+{% if timing %}
+<div class="card" style="margin-bottom:16px"><div class="spread"><h2>Smart timing — from your own numbers</h2>
+  <button class="sm primary" data-post="/api/schedule/smart-timing" data-confirm="Set every channel's making and publish times to this plan?">Apply this timing</button></div>
+  <div class="muted small">One heavy video is made at a time, so making windows never overlap; they sit in hours when the internet was reliable, and each video is ready before its audience time. Re-checked every Monday.</div>
+  <table class="small"><tr><th>Channel</th><th>Made at</th><th>Takes</th><th>Goes public</th><th>Why</th></tr>
+  {% for r in timing.channels %}<tr><td><b>{{ r.name }}</b></td><td>{{ r.make_at }}</td><td>~{{ r.make_minutes }} min</td><td>{{ r.publish_at }}</td><td class="muted">{{ r.why }}</td></tr>{% endfor %}</table>
+  <div class="muted small">Media lane today: {% for a, b, c in timing.lane %}{{ a }}–{{ b }}{{ ', ' if not loop.last }}{% endfor %} · {{ (timing.busy_minutes / 60)|round(1) }} h of making a day · internet unreliable at: {% for h, v in timing.offline_by_hour.items() if v >= 0.3 %}{{ h }}:00{{ ' ' }}{% endfor %}</div>
+</div>
+{% endif %}
 <div class="head"><div><h1>Schedule</h1><div class="muted">Recurring jobs run while the app is open (or always, if you install the background service — see README). Missed runs catch up once when the app starts.</div></div></div>
 <div class="card">
   <h2>Your cadence</h2>

@@ -49,10 +49,11 @@ def fixture_csv(start: date, n: int, base: float = 24000.0, header: str = "Index
     return "\n".join(rows)
 
 
-def import_fixture(start: date = date(2026, 7, 1), n: int = 45, source: str = "test_fixture") -> dict:
+def import_fixture(start: date = date(2026, 7, 1), n: int = 45, source: str = "test_fixture",
+                   retrieved: str = "2026-10-22T19:00") -> dict:
     return marketdata.import_file(None, text=fixture_csv(start, n), original_name="fixture.csv", source_id=source,
                                   timeframe="1d", data_nature="end_of_day",
-                                  retrieved_at_local="2026-10-22T19:00", retrieved_by="unit test")
+                                  retrieved_at_local=retrieved, retrieved_by="unit test")
 
 
 class PivotTests(unittest.TestCase):
@@ -164,7 +165,9 @@ class FactsTests(unittest.TestCase):
             analysis.build_facts(self.ds, "2026-07-04", "historical_case_study")      # a Saturday not in the data
 
     def test_thirty_day_lag_enforced_for_historical_mode(self):
-        recent = import_fixture(start=date.today() - timedelta(days=20), n=8)["dataset_id"]
+        # data retrieved now (a fixed past retrieval date would make these recent bars "from the future")
+        recent = import_fixture(start=date.today() - timedelta(days=20), n=8,
+                                retrieved=datetime.now().strftime("%Y-%m-%dT%H:%M"))["dataset_id"]
         bars = marketdata.daily_bars(recent)
         with self.assertRaises(marketdata.DataError) as ctx:
             analysis.build_facts(recent, bars[2]["trade_date"], "historical_case_study", "English")

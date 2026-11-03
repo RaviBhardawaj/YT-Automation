@@ -135,8 +135,8 @@ def review(channel_id: int) -> dict[str, Any]:
         return {"skipped": str(e)[:200]}
     lessons = [x for x in out.lessons if enough or x.kind == "quality"]
     with db.tx():
-        db.ex("UPDATE lessons SET status='old', updated_at=? WHERE channel_id=? AND status='active'",
-              (db.iso(), channel_id))
+        db.ex("UPDATE lessons SET status='old', updated_at=? WHERE channel_id=? AND status='active' "
+              "AND kind IN ('audience','quality')", (db.iso(), channel_id))     # the growth doctor's stay
         for x in lessons:
             if any(x.lesson.strip().lower() == o.strip().lower() for o in off):
                 continue

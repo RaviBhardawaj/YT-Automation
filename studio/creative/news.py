@@ -90,12 +90,23 @@ def _recent_titles(channel_id: int) -> list[tuple[int, str]]:
     return [(r["id"], f"{r['title']} {r['search_query'] or ''}") for r in rows]
 
 
-def pick(ch: dict[str, Any], stories: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
-    """The most-searched story today that ≥2 outlets report and this channel hasn't covered in the last days."""
-    stories = trending() if stories is None else stories
+ENGLISH_ONLY = re.compile(r"[\x00-\x7f\u2010-\u203a\u20b9\u00a0-\u00ff]+")
+COUNTRY = {"US": "the United States", "IN": "India", "GB": "the United Kingdom", "CA": "Canada", "AU": "Australia"}
+
+
+def regions(ch: dict[str, Any] | None) -> list[str]:
+    """Which countries' trending lists this news channel follows (branding.news_regions; India by default)."""
+    r = [g for g in ((ch or {}).get("branding") or {}).get("news_regions") or [] if g in COUNTRY]
+    return r or ["IN"]
+
+
+def pick(ch: dict[str, Any], stories: list[dict[str, Any]] | None = None, geo: str = "IN") -> dict[str, Any] | None:
+    """The most-searched story today (in `geo`) that ≥2 outlets report and this channel hasn't covered lately."""
+    stories = trending(geo) if stories is None else stories
     done = _recent_titles(ch["id"])
+    readable = ENGLISH_ONLY if (ch.get("language") or "") == "English" else READABLE
     for s in sorted(stories, key=lambda s: -s["traffic"]):
-        s = {**s, "articles": [a for a in s["articles"] if READABLE.fullmatch(a["title"])]}   # English/Hindi reports
+        s = {**s, "geo": geo, "articles": [a for a in s["articles"] if readable.fullmatch(a["title"])]}
         outlets = {a["source"] for a in s["articles"] if a["source"]}
         if NOT_NEWS.search(s["keyword"] + " " + " ".join(a["title"] for a in s["articles"])):
             continue
@@ -120,7 +131,7 @@ def create_topic(ch: dict[str, Any], story: dict[str, Any]) -> int:
         "angle": (f"Today's trending news ({today}): {story['keyword']}. Report only what these outlets confirm: "
                   f"{', '.join(outlets)}. Say what happened, why people are talking about it, and what happens next. "
                   "Neutral and factual; name the outlets; never guess, never add numbers the sources don't give."),
-        "why_now": f"trending in India today (~{story['traffic']:,}+ searches)", "score": min(100, story["traffic"] // 1000),
+        "why_now": f"trending in {COUNTRY.get(story.get('geo') or 'IN', 'India')} today (~{story['traffic']:,}+ searches)", "score": min(100, story["traffic"] // 1000),
         "idea_kind": "news", "style": "news", "language": ch.get("language") or "Hinglish",
         "summary": " | ".join(f"{a['source']}: {a['title']}" for a in story["articles"][:6]),
         "search_query": story["keyword"][:200], "norm_title": dedup.normalize(lead),
@@ -200,6 +211,9 @@ def presenter_asset(p: dict[str, Any], idx: int, work: Path) -> dict[str, Any] |
     """The presenter picture as the opening (and closing) visual of a news video on a channel that has one."""
     ch = channels.get(p.get("channel_id"))
     if not is_news(ch):
+        return None
+    from . import mascot
+    if mascot.of(ch):                                # a cartoon anchor presents this channel instead
         return None
     last = len((p.get("package") or {}).get("scenes") or []) - 1
     if idx not in (0, last):

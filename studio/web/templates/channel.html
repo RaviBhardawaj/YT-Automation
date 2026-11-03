@@ -262,6 +262,17 @@
   <div class="muted small">Updated {{ m.fetched_at|dt }} from YouTube Data + Analytics APIs (estimates; YouTube counts public views only). {{ m.note }}</div>
   {% elif connected %}<div class="muted small">Click “Refresh numbers” to load this channel's progress. It also refreshes every morning.</div>
   {% else %}<div class="muted small">Connect the channel to track its progress toward monetization.</div>{% endif %}
+  <div class="spread" style="margin-top:14px"><h3>Growth doctor — why it isn't growing yet</h3>
+    <button class="sm" data-post="/api/channels/{{ ch.id }}/growth-doctor">Check &amp; apply fixes</button></div>
+  {% if diagnosis.numbers %}<div class="muted small">{{ diagnosis.numbers.videos }} videos · {{ diagnosis.numbers.views }} views · {{ diagnosis.numbers.zero_view_videos }} with 0–2 views{% if diagnosis.numbers.shorts_share is not none %} · {{ diagnosis.numbers.shorts_share }}% of views from Shorts{% endif %} · {{ diagnosis.numbers.subs_gained }} subscribers gained from them</div>{% endif %}
+  {% for f in diagnosis.findings %}<div class="note {{ 'warn' if f.severity == 'high' else '' }} small" style="margin-top:6px"><b>{{ f.title }}</b> — {{ f.evidence }}<div style="margin-top:3px">{{ f.action }}</div>{% if f.auto %}<div class="muted">Done automatically: {{ f.auto }}.</div>{% endif %}</div>{% endfor %}
+  <div class="muted small">From this channel's real YouTube numbers. No subscriber or view count can be promised, and buying views/subscribers, sub-for-sub or bots get channels removed — the studio never does that.</div>
+  <h3 style="margin-top:14px">Daily experiments — each video tries one new thing</h3>
+  <table class="small"><tr><th>Testing</th><th>Versions (videos · measured · views/day)</th><th>Winner so far</th></tr>
+  {% for dim, r in experiments.items() %}<tr><td><b>{{ dim|replace('_',' ') }}</b></td>
+    <td>{% for arm, s in r.arms.items() %}<span class="chip {{ 'ok' if r.winner == arm }}">{{ arm|replace('_',' ') }} · {{ s.videos }} · {{ s.measured }} · {{ s.views_per_day if s.views_per_day is not none else '—' }}</span> {% endfor %}</td>
+    <td>{{ r.winner|replace('_',' ') if r.winner else 'not yet (needs 3+ measured videos per version)' }}</td></tr>{% endfor %}</table>
+  <div class="muted small">One thing changes per video, so the results can be compared. A winner is used most of the time; the others still get an occasional try.</div>
   <h3 style="margin-top:14px">Status: {{ ypp_status.label }}</h3>
   <form class="row small" data-form="/api/channels/{{ ch.id }}/monetization-status" data-done="Saved">
     <span class="muted">What YouTube decided (only you can know — no API reports it):</span>

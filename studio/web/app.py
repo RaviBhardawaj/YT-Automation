@@ -804,8 +804,19 @@ def schedule_page(request: Request):
     rows = db.q("SELECT s.* FROM schedules s LEFT JOIN channels c ON c.id=s.channel_id "
                 "WHERE c.workspace_id=? OR (? AND s.channel_id IS NULL) ORDER BY s.id",
                 (ws_id(request), int(is_admin(request))))
-    return page(request, "schedule.html", schedules=rows,
+    from .. import capacity
+    return page(request, "schedule.html", schedules=rows, timing=capacity.plan() if is_admin(request) else None,
                 cadence=profile.cadence(), slots=settings.get("publish.slots"))
+
+
+@app.post("/api/schedule/smart-timing")
+def api_smart_timing(request: Request):
+    """Owner only: set every channel's making and publish time from the measured plan."""
+    from .. import capacity
+    if not is_admin(request):
+        return bad("Only the studio owner can change the timing.", 403)
+    changed = capacity.apply(actor=actor(request))
+    return ok(detail="; ".join(changed) if changed else "Already on the best timing — nothing to change")
 
 
 @app.get("/analytics", response_class=HTMLResponse)
@@ -1910,7 +1921,8 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
     recent = db.q("SELECT id, title, format, kind, status, stage, updated_at, youtube_video_id, parent_id, error "
                   "FROM productions WHERE channel_id=? ORDER BY id DESC LIMIT 12", (cid,))
     from .. import learning
-    from ..youtube import growth
+    from ..creative import news
+    from ..youtube import doctor, experiments, growth
     resp = page(request, "channel.html", ch=ch, counts=channels.counts(cid), connected=oauth.connected(cid), tiers=growth.TIERS,
                 oauth_ready=oauth.configured(), characters=chars, productions=recent, tab=tab,
                 workflows=channels.WORKFLOWS, styles=channels.STYLES, languages=channels.LANGUAGES,
@@ -1918,6 +1930,7 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
                 ideas_n=db.q1("SELECT COUNT(*) AS n FROM topics WHERE channel_id=? AND status IN ('idea','approved')",
                               (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid),
                 ypp_status=growth.status(ch), readiness=growth.policy_readiness(cid), ypp_rules=growth.RULES,
+                diagnosis=doctor.diagnose(cid), experiments=experiments.results(cid, news.is_news(ch)),
                 weekly=learning.latest_weekly(cid), **_social_ctx(cid))
     return _with_cookie(resp, cid)
 
@@ -1934,6 +1947,15 @@ async def api_channel_ypp_status(request: Request, cid: int):
     except ValueError as e:
         return bad(str(e))
     return ok(detail="Saved")
+
+
+@app.post("/api/channels/{cid}/growth-doctor")
+def api_channel_doctor(request: Request, cid: int):
+    from ..youtube import doctor
+    if not auth.owns(ws_id(request), "channels", cid):
+        return bad("not found", 404)
+    res = doctor.apply(cid)
+    return ok(detail=f"{len(res['findings'])} finding(s); applied: {', '.join(res['applied']) or 'nothing needed'}")
 
 
 @app.post("/api/channels/{cid}/weekly-review")
@@ -2055,6 +2077,10 @@ def api_channel_growth(cid: int):
     try:
         m = growth.refresh(cid)
     except Exception as e:
+        from ..youtube.analytics import offline_error
+        if offline_error(e):
+            return bad("No internet connection right now — connect and click Refresh again. (Automatic refreshes "
+                       "retry every 15 minutes while offline.)")
         return bad(f"Couldn't read this channel's numbers: {e}")
     return ok(detail=f"{m['subscribers']} subscribers · {m['watch_hours_12m']} watch hours · "
                      f"{m['shorts_views_90d']:,} Shorts views (90 days)")

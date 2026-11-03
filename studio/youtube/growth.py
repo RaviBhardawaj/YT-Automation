@@ -232,4 +232,7 @@ def refresh_all() -> dict[str, Any]:
                 done.append(ch["id"])
             except Exception as e:                  # one channel's problem never stops the others
                 failed[ch["id"]] = str(e)[:200]
+    from .analytics import NoInternet, offline_error
+    if failed and not done and all(offline_error(e) for e in failed.values()):
+        raise NoInternet("No internet connection — growth numbers will be refreshed again in 15 minutes")
     return {"refreshed": done, "failed": failed}

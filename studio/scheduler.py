@@ -26,6 +26,8 @@ DEFAULT_SCHEDULES = [
      "time_of_day": "06:30"},
     {"name": "Read and sort viewers' comments (reply drafts on request, never posted)", "task_type": "comments_daily",
      "kind": "daily", "time_of_day": "06:45"},
+    {"name": "Growth doctor (diagnose each channel from its numbers, apply safe fixes)", "task_type": "growth_doctor",
+     "kind": "daily", "time_of_day": "06:40"},
     {"name": "Weekly channel review (continue / improve / repackage / test)", "task_type": "weekly_review",
      "kind": "daily", "time_of_day": "07:15", "days": [0]},
     {"name": "Trend research for every channel (original ideas, never copies)", "task_type": "trend_research",

@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from .. import ai, channels, config, db, logs, profile, settings
 from ..ai import prompts
+from ..creative import mascot
 from ..media import graphics
 from . import analysis, audit, charts, gate, i18n, lint, marketdata
 
@@ -208,6 +209,7 @@ def _script_prompt(facts: dict[str, Any], words: int, sections: list[str] | None
     lines = [
         f"EPISODE TYPE: {analysis.MODES[facts['mode']]}",
         HINDI_RULES if facts.get("lang") == "hi" else "LANGUAGE: Clear, conversational English.",
+        facts.get("mascot_rule") or "",
         "",
         "FACT SHEET — the ONLY numbers you may use; write them exactly as shown (commas, two decimals):",
         ("- The data source gives NO opening prices: never mention an open price or an opening gap.\n"
@@ -505,7 +507,8 @@ def stage_script(p: dict[str, Any]) -> None:
                 if problems:
                     raise ValueError("; ".join(problems[:12]))
             got, meta = ai.generate("script", prompts.system("an educational scriptwriter for a stock-market education channel"),
-                                    _script_prompt(facts, part_words, part, previous), EpisodeScript, max_tokens=12000,
+                                    _script_prompt({**facts, "mascot_rule": mascot.script_rule(p)}, part_words, part,
+                                                   previous), EpisodeScript, max_tokens=12000,
                                     validate=check)
             merged += got.scenes
             concept_title = concept_title or got.concept_title

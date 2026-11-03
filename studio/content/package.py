@@ -21,7 +21,9 @@ from ..research import dedup
 DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 LATIN = re.compile(r"[A-Za-z]")
 VISUAL_QUERY_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ,'&\-]{1,79}$")
-WORDS_PER_SECOND = {"hi": 2.5, "en": 2.7}
+# measured from this studio's own videos (Nov 2026): Kokoro Hindi voices ≈2.2–2.35 words/s, the English anchor
+# voice ≈1.7 at normal speed (1.85 at 1.08×) — planning with faster rates made every video run long
+WORDS_PER_SECOND = {"hi": 2.25, "en": 1.85}
 
 
 # ------------------------------------------------------------------ schemas
@@ -231,8 +233,12 @@ def _clean(text: str) -> str:
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿️‍⬀-⯿]")
 
 
+# evidence ids the writer cites, e.g. "(2134, 2160)" or "[2134]" — for the editor, never to be read aloud or shown
+_CITATIONS = re.compile(r"\s*[\(\[]\s*\d{3,6}(?:\s*[,;]\s*\d{3,6})*\s*[\)\]]")
+
+
 def _spoken(text: str) -> str:
-    return _clean(_EMOJI.sub("", text))
+    return _clean(_CITATIONS.sub("", _EMOJI.sub("", text)))
 
 
 def sanitize(pkg: dict[str, Any]) -> dict[str, Any]:

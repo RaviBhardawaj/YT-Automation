@@ -62,6 +62,13 @@ class NumberTests(unittest.TestCase):
         self.assertNotRegex(spoken[0], r"\d")
 
 
+class CitationTests(unittest.TestCase):
+    def test_evidence_ids_are_never_spoken_or_shown(self):
+        self.assertEqual(content._spoken("As reported by ESPN (2134, 2160). Fans cheered [2135]!"),
+                         "As reported by ESPN. Fans cheered!")
+        self.assertEqual(content._spoken("Gold fell 2.5% (to ₹50,000) in 2026."), "Gold fell 2.5% (to ₹50,000) in 2026.")
+
+
 class StyleTests(unittest.TestCase):
     def test_hindi_and_hinglish_rules_ask_for_spoken_style_and_digits(self):
         for lang in ("Hindi", "Hinglish"):

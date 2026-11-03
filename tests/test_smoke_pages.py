@@ -36,7 +36,7 @@ class PageTests(unittest.TestCase):
                                         "qa": json.dumps({"passed": True, "checks": []}), "timeline": "{}",
                                         "created_at": db.iso(), "updated_at": db.iso()})
         c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False,
-                       raise_server_exceptions=False)
+                       raise_server_exceptions=True)
         c.cookies.set("sid", tok)
         ids = {"pid": pid, "cid": cid, "channel_id": cid, "id": pid}
         broken, opened = [], 0
@@ -50,12 +50,17 @@ class PageTests(unittest.TestCase):
                 url = url.replace("{%s}" % k, str(v)).replace("{%s:int}" % k, str(v))
             if "{" in url:
                 continue                                    # an id kind this smoke test has no row for
-            r = c.get(url)
+            try:
+                r = c.get(url)
+            except Exception as e:  # noqa: BLE001 - name the page and the error instead of a bare 500
+                import traceback
+                broken.append(f"{url} → {type(e).__name__}: {e} | {traceback.format_exc(limit=-3)[-600:]}")
+                continue
             opened += 1
             if r.status_code >= 500:
                 broken.append(f"{url} → {r.status_code}")
         self.assertGreater(opened, 30)
-        self.assertEqual(broken, [], "pages that crash")
+        self.assertEqual(broken, [], "pages that crash: " + " || ".join(broken))
 
 
 if __name__ == "__main__":

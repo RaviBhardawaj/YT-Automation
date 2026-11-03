@@ -124,6 +124,14 @@ def stage_script(p: dict[str, Any]) -> str | None:
     topic, evidence = _topic(p), _evidence(p)
     old = p["package"]
     feedback = old.get("_revise_feedback", "")
+    from .creative import mascot
+    from .youtube import experiments
+    if mascot.script_rule(p):                       # the channel's mascot presents: its voice and manner
+        feedback += "\n\n" + mascot.script_rule(p)
+    style = experiments.instructions((p.get("request") or {}).get("experiment") if isinstance(p.get("request"), dict)
+                                     else (db.loads(p.get("request"), {}) or {}).get("experiment"))
+    if style:                                       # today's experiment: one new hook/title/angle to compare
+        feedback += "\n\n" + style
 
     def gen(fb: str, resume: bool):
         if p["format"] == "short":
@@ -293,7 +301,8 @@ def video_voice(p: dict[str, Any]) -> dict[str, Any] | None:
     if want.get("engine") and want.get("engine") != "clone" and want.get("voice_id"):   # a chosen built-in voice
         match = next((v for v in tts.all_voices() if v["engine"] == want["engine"] and v["id"] == want["voice_id"]), None)
         if match:
-            return {**match, "voice_id": match["id"], "speed": float(want.get("speed") or 1.0), "installed": True}
+            return {**match, "voice_id": match["id"], "speed": float(want.get("speed") or 1.0), "installed": True,
+                    "pitch": float(want.get("pitch") or 1.0)}
         return None
     if want.get("engine") != "clone":
         return None
@@ -314,6 +323,9 @@ def stage_voice(p: dict[str, Any]) -> str | None:
     work.mkdir(exist_ok=True)
     scenes = tl.get("scenes") or []
     key = f"{voice['engine']}:{voice['voice_id']}:{1.0 if own else settings.get('voice').get('speed')}"
+    pitch = float((own or {}).get("pitch") or 1.0)
+    if pitch != 1.0:
+        key += f":pitch{pitch}"                     # a mascot's voice (same words, same timing, higher pitch)
     if voice["engine"] == "sarvam" and not tts.sarvam_status().get("ok", True):
         key += ":fallback"                          # audio made with the free voice is redone once Sarvam is back
     if tl.get("voice_key") != key:
@@ -326,6 +338,9 @@ def stage_voice(p: dict[str, Any]) -> str | None:
                     if idx < len(scenes) and wav.exists() and scenes[idx].get("text") == scene["narration"]:
                         continue
                     info = tts.synthesize_scene(scene["narration"], wav, voice=own)
+                    if pitch != 1.0:
+                        from .creative import mascot
+                        mascot.pitch_voice(wav, pitch)
                     entry = {"index": idx, "wav": str(wav), "duration": info["duration"],
                              "sentences": info["sentences"], "text": scene["narration"]}
                     if idx < len(scenes):
@@ -488,6 +503,12 @@ def stage_render(p: dict[str, Any]) -> str | None:
     total = content_total + pad
     final_tmp = work / "final.tmp.mp4"
     render.mix_audio_and_mux(joined, Path(tl["narration"]), total, final_tmp)
+    from .creative import mascot
+    m = mascot.for_production(p)
+    if m:                                           # the channel's presenter mascot speaks the narration
+        with_mascot = work / "final.mascot.tmp.mp4"
+        mascot.overlay(final_tmp, Path(tl["narration"]), with_mascot, fmt, total, m.get("variant", "classic"))
+        with_mascot.replace(final_tmp)
     final = work / "final.mp4"
     final_tmp.replace(final)
     srt = work / "captions.srt"

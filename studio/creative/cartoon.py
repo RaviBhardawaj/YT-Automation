@@ -219,6 +219,10 @@ def shadows(bg: Image.Image, xs: list[float], ground: float, char_h: float) -> I
 def draw_character(img: Image.Image, design: dict[str, Any], x: float, ground: float, height: float,
                    state: dict[str, Any]) -> None:
     """Draw one character. state: t, amp (0-1 mouth from audio), emotion, talking, blink, look (-1..1)."""
+    if (design or {}).get("mascot"):
+        from . import mascot
+        mascot.draw_in_scene(img, design, x, ground, height, state)
+        return
     dsg = normalise_design(design)
     d = ImageDraw.Draw(img)
     t = state.get("t", 0.0)

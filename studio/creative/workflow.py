@@ -157,6 +157,10 @@ def stage_voice(p: dict[str, Any]) -> None:
                                 w.setsampwidth(2)
                                 w.setframerate(SR)
                                 w.writeframes(audio.tobytes())
+                            pitch = float(((cast.get(ln["speaker"]) or {}).get("voice") or {}).get("pitch") or 1.0)
+                            if pitch != 1.0:                    # e.g. Fibbu's squeaky voice, same length
+                                from . import mascot
+                                mascot.pitch_voice(wav, pitch)
                         with wave.open(str(wav), "rb") as w:
                             dur = w.getnframes() / w.getframerate()
                         lines_out.append({"scene": si, "line": li, "wav": str(wav), "duration": round(dur, 3)})

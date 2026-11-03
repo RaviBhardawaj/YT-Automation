@@ -59,8 +59,13 @@ def _comments_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
 
 @worker.handler("weekly_review")
 def _weekly_review(payload: dict[str, Any], task: dict[str, Any]) -> Any:
-    from . import learning
-    return learning.weekly_all()
+    from . import capacity, learning
+    out = learning.weekly_all()
+    try:                                     # re-time the channels from this week's real making times and internet hours
+        out["timing_changes"] = capacity.apply(actor="weekly smart timing")
+    except Exception as e:  # noqa: BLE001 - timing stays as it was
+        logs.event("warning", "planner", f"Smart timing skipped: {str(e)[:160]}")
+    return out
 
 
 @worker.handler("learning_review")
@@ -250,6 +255,32 @@ def _channel_stats(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     return growth.refresh_all()
 
 
+def _pick_idea(channel_id: int) -> dict[str, Any] | None:
+    """The day's idea: one you approved; else a fresh trend idea (what's getting views in the niche now) or one
+    close to this channel's own best videos (growth doctor 'winners'); else saved and best-scored ideas."""
+    from .research import dedup
+    from .youtube import doctor
+    rows = db.q("SELECT id, title, status, saved, score, why_now, created_at FROM topics WHERE channel_id=? "
+                "AND status IN ('approved','idea') ORDER BY id DESC LIMIT 200", (channel_id,))
+    if not rows:
+        return None
+    wins = [w["title"] for w in doctor.winners(channel_id)]
+    fresh = db.iso_in(-2 * 86400)
+
+    def rank(t: dict[str, Any]) -> tuple:
+        trend = (t["why_now"] or "").startswith("this week's popular theme") and t["created_at"] >= fresh
+        close = max((dedup.similarity(t["title"], w) for w in wins), default=0.0)
+        return (t["status"] == "approved", trend or close >= 0.35, round(close, 2), bool(t["saved"]),
+                t["score"] or 0, t["id"])
+    return max(rows, key=rank)
+
+
+@worker.handler("growth_doctor")
+def _growth_doctor(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from .youtube import doctor
+    return doctor.apply(int(payload["channel_id"])) if payload.get("channel_id") else doctor.apply_all()
+
+
 @worker.handler("channel_daily")
 def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     """A channel's scheduled video: its best saved/approved idea, else a fresh idea, else its own brief."""
@@ -271,25 +302,38 @@ def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     if done:
         return {"skipped": f"today's video already exists (#{done['id']})"}
     from .creative import news
+    from .youtube import experiments
+    # one long video a day: the first slot (unless a long already started today) makes it; every other slot a Short
+    fmt = "short" if slot or channels.long_made_today(ch["id"]) else None
+    exp = experiments.assign(ch["id"], news=news.is_news(ch))        # this video tries one new thing
     if news.is_news(ch):                     # news: today's trending story — never an idea saved days ago
-        story = news.pick(ch)
+        regions = news.regions(ch)
+        geo = exp["arms"].get("region") or regions[slot % len(regions)]
+        if geo not in regions:
+            geo = regions[slot % len(regions)]
+        exp["arms"]["region"] = geo
+        story = news.pick(ch, geo=geo) or next((s for g in regions if g != geo for s in [news.pick(ch, geo=g)] if s),
+                                               None)
         if not story:
             logs.event("warning", "news", f"'{ch['name']}': no new trending story reported by 2+ outlets right now")
             return {"skipped": "no new trending story right now"}
-        res = jobs.create(ch["id"], "", idea_id=news.create_topic(ch, story), actor="schedule", scheduled_for=day)
-        logs.event("info", "news", f"'{ch['name']}' news video started on “{story['keyword']}”: {res.get('production_ids')}")
-        return {**res, "story": story["keyword"]}
+        exp["arms"]["region"] = story.get("geo") or geo
+        res = jobs.create(ch["id"], "", idea_id=news.create_topic(ch, story), actor="schedule", scheduled_for=day,
+                          fmt=fmt)
+        experiments.record(res.get("production_ids"), exp)
+        logs.event("info", "news", f"'{ch['name']}' news video started on “{story['keyword']}” "
+                   f"({story.get('geo') or geo}; testing {exp['test']}): {res.get('production_ids')}")
+        return {**res, "story": story["keyword"], "experiment": exp}
     # what you approved first; then an idea from the last two days' trend scan (themes getting the most views in
     # this niche right now — original ideas, never copies); then saved and best-scored ideas
-    idea = db.q1("SELECT id FROM topics WHERE channel_id=? AND status IN ('approved','idea') "
-                 "ORDER BY (status='approved') DESC, (why_now LIKE 'this week''s popular theme%' AND created_at>=?) DESC, "
-                 "saved DESC, score DESC, id DESC LIMIT 1", (ch["id"], db.iso_in(-2 * 86400)))
+    idea = _pick_idea(ch["id"])
     if idea:
-        res = jobs.create(ch["id"], "", idea_id=idea["id"], actor="schedule", scheduled_for=day)
+        res = jobs.create(ch["id"], "", idea_id=idea["id"], actor="schedule", scheduled_for=day, fmt=fmt)
     else:
         brief = f"A new {', '.join(channels.styles(ch)[:2]) or ''} episode for this channel: {ch['niche']}. " \
                 f"{ch['instructions'] or ''}".strip()
-        res = jobs.create(ch["id"], brief, actor="schedule", scheduled_for=day)
+        res = jobs.create(ch["id"], brief, actor="schedule", scheduled_for=day, fmt=fmt)
+    experiments.record(res.get("production_ids"), exp)
     # keep the idea list topped up for the coming days
     if db.q1("SELECT COUNT(*) AS n FROM topics WHERE channel_id=? AND status IN ('approved','idea')",
              (ch["id"],))["n"] < 4:
@@ -308,7 +352,12 @@ def _fib_lesson_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
         db.ex("UPDATE schedules SET enabled=0 WHERE task_type='fib_lesson_daily'")
         logs.event("info", "planner", f"Fibonacci series complete ({lessons.TOTAL} lessons) — daily lesson schedule switched off")
         return {"complete": True}
-    pid = lessons.create(n, audience=audience, fmt=payload.get("format", "long"))
+    from . import channels
+    fmt = payload.get("format", "long")
+    if fmt == "long" and channels.long_made_today((channels.finance_channel() or {}).get("id")):
+        # the finance channel's long video today is already the daily episode
+        fmt = "short"
+    pid = lessons.create(n, audience=audience, fmt=fmt)
     return {"production_id": pid, "lesson": n}
 
 

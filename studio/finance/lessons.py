@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from .. import ai, config, db, logs, profile
 from ..ai import prompts
+from ..creative import mascot
 from ..media import graphics
 from . import analysis, audit, charts, i18n, lint, pivots
 
@@ -280,7 +281,8 @@ def stage_script(p: dict[str, Any]) -> None:
 
     try:
         script, meta = ai.generate("script", prompts.system("a warm, precise stock-market educator writing a beginner course"),
-                                   _prompt(facts, words), LessonScript, max_tokens=6000, validate=check)
+                                   _prompt(facts, words) + "\n" + mascot.script_rule(p), LessonScript, max_tokens=6000,
+                                   validate=check)
     except ai.AllProvidersFailed as e:
         if "invalid output" not in str(e):
             raise
