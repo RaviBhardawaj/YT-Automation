@@ -19,6 +19,23 @@ SYSTEM = ("You are the head writer of an animated YouTube series. Invent origina
           "stated audience. Output exactly one JSON object matching the schema, no commentary.")
 
 
+KIDS_BRIEF = (
+    "This is a KIDS channel (made for kids, COPPA). Mix the formats young children rewatch most: "
+    "1) nursery rhymes / action songs starring the recurring characters (simple, repetitive, singable chorus); "
+    "2) learning songs and stories (colours, numbers, shapes, animals, fruits, body parts, good habits); "
+    "3) short moral stories with a clear, gentle lesson at the end; 4) festival and season episodes "
+    "(Diwali, Holi, rain, winter, school days); 5) bedtime / calm stories; and for Shorts, one visual surprise or "
+    "guessing game ('kaun hai?') shown in the first second, with an ending that loops back to the start. "
+    "Titles: plain words a parent would search (rhyme, kahani, cartoon, song) plus the character's name — no "
+    "clickbait, no ALL CAPS, no fake urgency. Never ask viewers to comment, like, subscribe or press the bell "
+    "(those features are off for kids videos), never collect or ask for personal information, never show "
+    "dangerous acts children could copy, scary or violent scenes, brands, or real people. Age 2–8, warm and safe.")
+
+
+def is_kids(ch: dict | None) -> bool:
+    return bool((ch or {}).get("made_for_kids")) or "kids" in channels.styles(ch)
+
+
 class StoryIdea(BaseModel):
     title: str = Field(description="working title in the channel language, specific and catchy")
     logline: str = Field(description="one or two sentences: who wants what, what goes wrong, the payoff")
@@ -44,6 +61,7 @@ def generate(channel_id: int, count: int = 10, formats: list[str] | None = None,
         "SELECT id, title FROM topics WHERE channel_id=? UNION ALL SELECT id, title FROM productions WHERE channel_id=? "
         "AND kind='story'", (channel_id, channel_id))]
     styles = channels.styles(ch) or ["comedy"]
+    kids = is_kids(ch)
     prompt = (f"CHANNEL: {ch['name']}\nNICHE: {ch['niche']} {('— ' + ch['sub_niche']) if ch['sub_niche'] else ''}\n"
               f"AUDIENCE: {ch['audience'] or 'general YouTube audience'}\nLANGUAGE: {ch['language']}\n"
               f"TONE: {ch['tone'] or '-'}\nSTYLES: {', '.join(styles)}\n"
@@ -55,7 +73,7 @@ def generate(channel_id: int, count: int = 10, formats: list[str] | None = None,
               f"{'; '.join(t for _, t in existing[-80:]) or 'nothing yet'}\n\n"
               f"Propose {count} original episode ideas for this channel. Allowed formats: {', '.join(fmts)} "
               f"(short = one punchy situation under a minute; long = a full story with a beginning, twist and payoff). "
-              f"This is ENTERTAINMENT: stories, situations and characters — not lessons, tips or explainers. "
+              f"{KIDS_BRIEF if kids else 'This is ENTERTAINMENT: stories, situations and characters — not lessons, tips or explainers.'} "
               f"Use the recurring characters where they fit. Titles and loglines in {ch['language']}.")
 
     def check(out: StoryIdeas) -> None:
