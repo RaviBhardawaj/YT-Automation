@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="head"><div><h1>Publishing</h1><div class="muted">Videos ready to publish, uploading, scheduled and published. A video only shows as published after YouTube returns its video ID.</div></div></div>
+<div class="head"><div><h1>Publishing</h1><div class="muted">Videos ready to publish, uploading, scheduled and published. A video only shows as published after YouTube returns its video ID.</div></div>
+  {% if retry_count %}<div class="row"><button class="primary" data-post="/api/publishing/upload-now" data-confirm="Start uploading all {{ retry_count }} waiting or failed video(s) to YouTube now, on every channel? Interrupted uploads continue where they stopped.">Upload all now ({{ retry_count }})</button></div>{% endif %}</div>
 <div class="card" style="margin-bottom:14px">
   <h2>Connected channels</h2>
   {% for c in channels %}<div class="spread small" style="padding:3px 0"><span><a href="/channels/{{ c.id }}">{{ c.name }}</a></span>
@@ -12,13 +13,13 @@
   <table>
     <tr><th>#</th><th>Video</th><th>Channel</th><th>State</th><th>YouTube</th><th>Facebook / Instagram</th><th></th></tr>
     {% for p in rows %}
-    <tr><td>{{ p.id }}</td><td><a href="/productions/{{ p.id }}">{{ p.title }}</a> <span class="chip">{{ p.format }}</span>{% if p.error and p.status in ('approved','uploading') %}<div class="small" style="color:var(--warn)">{{ p.error[:160] }}</div>{% endif %}</td>
+    <tr><td>{{ p.id }}</td><td><a href="/productions/{{ p.id }}">{{ p.title }}</a> <span class="chip">{{ p.format }}</span>{% if p.error and (p.status in ('approved','uploading') or p.can_upload_now) %}<div class="small" style="color:var(--warn)">{{ p.error[:160] }}</div>{% endif %}</td>
       <td class="small">{{ p.channel_name or '—' }}</td>
-      <td>{% if p.status == 'awaiting_approval' %}<span class="chip">READY TO PUBLISH</span>{% elif p.status == 'approved' %}<span class="chip warn">UPLOAD PENDING</span>{% elif p.status == 'uploading' %}<span class="chip info">UPLOADING</span>
+      <td>{% if p.status == 'awaiting_approval' %}<span class="chip">READY TO PUBLISH</span>{% elif p.status == 'approved' %}<span class="chip warn">UPLOAD PENDING</span>{% elif p.status == 'uploading' %}<span class="chip info">UPLOADING</span>{% elif p.can_upload_now %}<span class="chip err">UPLOAD FAILED</span>
         {% elif p.status == 'uploaded' and p.privacy == 'scheduled' %}<span class="chip info">SCHEDULED {{ p.publish_at|dt }}</span>{% elif p.status == 'uploaded' %}<span class="chip ok">{{ 'PUBLISHED' if p.privacy == 'public' else 'UPLOADED · ' ~ (p.privacy or 'private')|upper }}</span>{% else %}{% include "_status.html" %}{% endif %}</td>
       <td class="small">{% if p.youtube_video_id %}<a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a>{% else %}—{% endif %}</td>
       <td class="small">{% for pl, s in (social.get(p.id) or {}).items() %}{% if s.status == 'published' and s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener">{{ pl|capitalize }}</a>{% else %}{{ pl|capitalize }}: {{ s.status }}{% endif %}{{ ' · ' if not loop.last }}{% else %}—{% endfor %}</td>
-      <td>{% if p.status == 'awaiting_approval' %}<a class="btn sm primary" href="/productions/{{ p.id }}">Review &amp; publish</a>{% elif p.status == 'approved' and p.error %}<button class="sm" data-post="/api/productions/{{ p.id }}/retry" data-done="Upload re-queued">Retry upload</button>{% endif %}</td></tr>
+      <td>{% if p.status == 'awaiting_approval' %}<a class="btn sm primary" href="/productions/{{ p.id }}">Review &amp; publish</a>{% elif p.can_upload_now %}<button class="sm{{ ' primary' if p.error or p.status not in ('approved','uploading') }}" data-post="/api/productions/{{ p.id }}/upload-now" data-done="Upload started">{{ 'Retry upload now' if p.error or p.status not in ('approved','uploading') else 'Upload now' }}</button>{% endif %}</td></tr>
     {% else %}<tr><td colspan="7" class="empty">Nothing to publish yet.</td></tr>{% endfor %}
   </table>
 </div>

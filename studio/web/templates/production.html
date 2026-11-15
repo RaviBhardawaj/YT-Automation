@@ -191,7 +191,7 @@
       </div>
       {% if not audit %}<div class="note small">YouTube locks videos uploaded through unaudited API projects as private. Once Google approves your project's audit, tick “audit passed” in Settings › YouTube to unlock public and scheduled uploads.</div>{% endif %}
     {% elif p.status in ('approved','uploading') %}<div class="note">Approved — upload {{ 'in progress' if p.status == 'uploading' else 'queued' }}.</div>
-      {% if p.status == 'approved' %}<button data-post="/api/productions/{{ p.id }}/retry" data-done="Upload re-queued">Retry upload</button>{% endif %}
+      {% if not p.youtube_video_id %}<button class="primary" data-post="/api/productions/{{ p.id }}/upload-now" data-done="Upload started">{{ 'Retry upload now' if p.error else 'Upload now' }}</button>{% endif %}
     {% elif p.status == 'uploaded' %}<div class="note ok">Uploaded: <a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a> · visibility requested: {{ p.privacy }}{% if p.publish_at %} at {{ p.publish_at|dt }}{% endif %}</div>
       {% include "_audience.html" %}
     {% elif p.status == 'test_passed' %}<div class="note ok">Self-test passed. Test videos are never uploaded.</div>

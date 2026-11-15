@@ -190,8 +190,72 @@ def retry(pid: int) -> int:
         return worker.enqueue("production", {"production_id": job}, production_id=job, max_attempts=3, dedupe=True)
     last = db.q1("SELECT type, payload FROM tasks WHERE production_id=? ORDER BY id DESC LIMIT 1", (pid,))
     kind, payload = (last["type"], db.loads(last["payload"], {})) if last else ("production", {"production_id": pid})
+    if kind == "upload":                        # a failed YouTube upload: send it again now (resumes where it stopped)
+        return upload_now(pid)
     db.ex("UPDATE tasks SET status='cancelled', updated_at=? WHERE production_id=? AND status IN ('pending','paused','failed')",
           (db.iso(), pid))
     db.update("productions", pid, {"status": "approved" if kind == "upload" else "queued", "error": None,
                                    "updated_at": db.iso()})
     return worker.enqueue(kind, payload, production_id=pid, max_attempts=3)
+
+
+# ------------------------------------------------------------------ YouTube upload: retry / upload now
+
+UPLOAD_WAITING = ("approved", "uploading")          # approved for YouTube, not on it yet
+UPLOAD_FAILED = ("failed", "needs_attention", "paused")   # stopped; counts only when the upload (not the making) did
+
+
+def upload_retryable(p: dict[str, Any]) -> bool:
+    """This video was approved for YouTube, isn't on YouTube yet, and its upload can be started again."""
+    if not p or p.get("youtube_video_id"):
+        return False
+    if p["status"] in UPLOAD_WAITING:
+        return True
+    if p["status"] in UPLOAD_FAILED:
+        last = db.q1("SELECT type FROM tasks WHERE production_id=? ORDER BY id DESC LIMIT 1", (p["id"],))
+        return bool(last and last["type"] == "upload")
+    return False
+
+
+def upload_now(pid: int) -> int:
+    """Start this video's YouTube upload right away, skipping any wait (e.g. after the internet dropped).
+
+    Any queued, paused or failed upload for it is replaced by one that runs now, ahead of other work. A started
+    upload resumes from the last byte YouTube received (the resumable session is kept), so nothing is sent twice
+    and the video is never uploaded twice."""
+    from pathlib import Path
+    p = db.q1("SELECT * FROM productions WHERE id=?", (pid,))
+    if not p:
+        raise ValueError("not found")
+    if p.get("youtube_video_id"):
+        raise ValueError(f"Already on YouTube: https://youtu.be/{p['youtube_video_id']}")
+    if db.q1("SELECT 1 FROM tasks WHERE production_id=? AND type='upload' AND status='running'", (pid,)):
+        raise ValueError("It is uploading right now.")
+    if not upload_retryable(p):
+        raise ValueError("This video hasn't been approved for YouTube yet — use Review & publish first.")
+    if not p.get("video_path") or not Path(p["video_path"]).is_file():
+        raise ValueError("The video file is no longer on disk — render it again before uploading.")
+    db.ex("UPDATE tasks SET status='cancelled', updated_at=? WHERE production_id=? AND type='upload' "
+          "AND status IN ('pending','paused','failed')", (db.iso(), pid))
+    db.update("productions", pid, {"status": "approved", "error": None, "updated_at": db.iso()})
+    tid = worker.enqueue("upload", {"production_id": pid}, production_id=pid, max_attempts=8, priority=USER_PRIORITY)
+    logs.event("info", "youtube", "Upload started now by the user" +
+               (" (resuming the interrupted upload)" if p.get("youtube_upload_uri") else ""), production_id=pid)
+    return tid
+
+
+def upload_all_now(ws_id: int) -> dict[str, Any]:
+    """Upload now every video of this workspace (all channels) whose YouTube upload is waiting or failed."""
+    started, skipped = [], []
+    rows = db.q("SELECT * FROM productions WHERE workspace_id=? AND youtube_video_id IS NULL AND status IN "
+                f"({','.join('?' * len(UPLOAD_WAITING + UPLOAD_FAILED))}) ORDER BY id",
+                (ws_id, *UPLOAD_WAITING, *UPLOAD_FAILED))
+    for p in rows:
+        if not upload_retryable(p):
+            continue
+        try:
+            upload_now(p["id"])
+            started.append(p["id"])
+        except ValueError as e:
+            skipped.append({"id": p["id"], "reason": str(e)})
+    return {"started": started, "skipped": skipped}
