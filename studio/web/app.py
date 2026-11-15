@@ -1433,13 +1433,35 @@ async def api_retry(request: Request, pid: int):
     data = await body(request)
     stage = data.get("stage")
     p = pipeline.load(pid)
-    if p["status"] in ("uploading",):
+    if p["status"] in ("approved", "uploading") and not stage:
+        return api_upload_now(pid)            # "Retry upload": start it now, don't wait for the queued retry
+    if p["status"] == "uploading":
         return bad("Upload in progress.")
-    if p["status"] in ("approved",) and not stage:
-        worker.enqueue("upload", {"production_id": pid}, production_id=pid, max_attempts=8, dedupe=True)
-        return ok()
     pipeline.reset_to_stage(pid, stage if stage in pipeline.STAGES else (p["stage"] or "research"))
     return ok()
+
+
+@app.post("/api/productions/{pid}/upload-now")
+def api_upload_now(pid: int):
+    """Start (or resume) this video's YouTube upload immediately — e.g. after it failed because the internet dropped."""
+    from .. import jobs
+    try:
+        jobs.upload_now(pid)
+    except ValueError as e:
+        return bad(str(e))
+    return ok(detail="Upload started — it continues where it stopped if it was interrupted.")
+
+
+@app.post("/api/publishing/upload-now")
+def api_upload_all_now(request: Request):
+    """Upload now every waiting or failed YouTube upload, on all of this account's channels."""
+    from .. import jobs
+    res = jobs.upload_all_now(ws_id(request))
+    n, k = len(res["started"]), len(res["skipped"])
+    if not n and not k:
+        return ok(detail="No failed or waiting uploads.")
+    msg = f"Started {n} upload(s)" + (f"; {k} skipped ({res['skipped'][0]['reason']})" if k else "")
+    return ok(detail=msg, started=res["started"], skipped=res["skipped"])
 
 
 @app.post("/api/productions/{pid}/metadata")
@@ -2761,8 +2783,15 @@ def publishing_page(request: Request):
     ws = ws_id(request)
     rows = db.q("SELECT p.*, c.name AS channel_name FROM productions p LEFT JOIN channels c ON c.id=p.channel_id "
                 "WHERE p.workspace_id=? AND (p.status IN ('approved','uploading','uploaded','awaiting_approval') "
-                "OR p.youtube_video_id IS NOT NULL) ORDER BY CASE p.status WHEN 'uploading' THEN 0 WHEN 'approved' THEN 1 "
+                "OR p.youtube_video_id IS NOT NULL OR (p.status IN ('failed','needs_attention','paused') "
+                "AND p.approved_at IS NOT NULL)) ORDER BY CASE p.status WHEN 'uploading' THEN 0 WHEN 'approved' THEN 1 "
+                "WHEN 'failed' THEN 1 WHEN 'needs_attention' THEN 1 WHEN 'paused' THEN 1 "
                 "WHEN 'awaiting_approval' THEN 2 ELSE 3 END, p.updated_at DESC LIMIT 150", (ws,))
+    from .. import jobs
+    running = {r["production_id"] for r in db.q("SELECT production_id FROM tasks WHERE type='upload' AND status='running'")}
+    rows = [r for r in rows if r["status"] not in ("failed", "needs_attention", "paused") or jobs.upload_retryable(r)]
+    for r in rows:
+        r["can_upload_now"] = r["id"] not in running and jobs.upload_retryable(r)
     chans = chmod.all_channels(ws)
     for c in chans:
         c["connected"] = oauth.connected(c["id"])
@@ -2771,7 +2800,8 @@ def publishing_page(request: Request):
     for s in db.q("SELECT s.* FROM social_posts s JOIN productions p ON p.id=s.production_id WHERE p.workspace_id=?",
                   (ws,)):
         social.setdefault(s["production_id"], {})[s["platform"]] = s
-    return page(request, "publishing.html", rows=rows, channels=chans, social=social)
+    return page(request, "publishing.html", rows=rows, channels=chans, social=social,
+                retry_count=sum(1 for r in rows if r["can_upload_now"]))
 
 
 @app.get("/billing", response_class=HTMLResponse)

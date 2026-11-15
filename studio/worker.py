@@ -150,6 +150,17 @@ def _run(task: dict[str, Any]) -> None:
                                             **({"attempts": max(0, task["attempts"] - 1)} if temporary else {})})
             logs.event("warning", "worker", f"{task['type']} failed (attempt {task['attempts']}/{task['max_attempts']}), "
                        f"retrying in {delay // 60} min: {detail[:300]}", production_id=pid, task_id=task["id"])
+            if pid and task["type"] == "upload":
+                # Not stuck "uploading" while it waits: show why, and let the owner press "Upload now"
+                from . import pipeline
+                p = db.q1("SELECT status FROM productions WHERE id=?", (pid,))
+                if p and p["status"] in ("approved", "uploading"):
+                    why = "the internet connection dropped" if isinstance(e, (httpx.TransportError, OSError)) \
+                        else str(e)[:200]
+                    pipeline.save(pid, status="approved",
+                                  error=f"Upload didn't finish ({why}). It tries again automatically in about "
+                                        f"{max(1, round(delay / 60))} min and continues where it stopped — or click "
+                                        f"“Upload now”.")
         else:
             _finish(task["id"], "failed", last_error=detail[:2000])
             if pid:

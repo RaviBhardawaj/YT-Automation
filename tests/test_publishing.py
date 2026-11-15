@@ -73,6 +73,98 @@ class PublishingTests(unittest.TestCase):
         self.assertEqual(t["attempts"], 1)
         self.assertNotEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "failed")
 
+    def test_network_drop_during_upload_shows_why_and_upload_now_starts_it_at_once(self):
+        import httpx
+        cid = channels.create({"name": "Offline"}, 1)
+        video = os.path.join(tempfile.mkdtemp(), "final.mp4")
+        open(video, "wb").write(b"x")
+        pid = prod(cid, status="uploading", video_path=video, approved_at=db.iso(), youtube_upload_uri="https://up/1")
+        tid = worker.enqueue("upload", {"production_id": pid}, production_id=pid, max_attempts=8)
+        task = db.q1("SELECT * FROM tasks WHERE id=?", (tid,))
+        task["payload"] = {"production_id": pid}
+
+        def offline(*_):
+            raise httpx.ConnectError("no internet")
+        with mock.patch.dict(worker._handlers, {"upload": offline}):
+            worker._run(task)
+        p = db.q1("SELECT status, error, youtube_upload_uri FROM productions WHERE id=?", (pid,))
+        self.assertEqual(p["status"], "approved")                       # not stuck on "uploading"
+        self.assertIn("internet", p["error"])
+        self.assertEqual(p["youtube_upload_uri"], "https://up/1")      # resumes, never restarts from zero
+        self.assertGreater(db.q1("SELECT run_after FROM tasks WHERE id=?", (tid,))["run_after"], db.iso())
+        new = jobs.upload_now(pid)                                      # "Upload now": no waiting for the retry
+        self.assertEqual(db.q1("SELECT status FROM tasks WHERE id=?", (tid,))["status"], "cancelled")
+        t = db.q1("SELECT status, run_after, priority FROM tasks WHERE id=?", (new,))
+        self.assertEqual(t["status"], "pending")
+        self.assertLessEqual(t["run_after"], db.iso())
+        self.assertEqual(t["priority"], jobs.USER_PRIORITY)
+        self.assertIsNone(db.q1("SELECT error FROM productions WHERE id=?", (pid,))["error"])
+
+    def test_a_failed_upload_can_be_retried_on_every_channel_but_never_twice(self):
+        video = os.path.join(tempfile.mkdtemp(), "final.mp4")
+        open(video, "wb").write(b"x")
+        ids = []
+        for name in ("Failed A", "Failed B"):
+            cid = channels.create({"name": name}, 1)
+            pid = prod(cid, status="failed", video_path=video, approved_at=db.iso(), error="ConnectError")
+            tid = worker.enqueue("upload", {"production_id": pid}, production_id=pid)
+            db.ex("UPDATE tasks SET status='failed' WHERE id=?", (tid,))
+            ids.append(pid)
+        done = prod(cid, status="uploaded", youtube_video_id="live1", video_path=video)
+        making = prod(cid, status="failed", video_path=video)          # failed while being made: not an upload
+        worker.enqueue("production", {"production_id": making}, production_id=making)
+        res = jobs.upload_all_now(1)
+        for pid in ids:
+            self.assertIn(pid, res["started"])
+            self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "approved")
+        self.assertNotIn(done, res["started"])
+        self.assertNotIn(making, res["started"])
+        with self.assertRaises(ValueError):
+            jobs.upload_now(done)                                       # already on YouTube: never uploaded again
+        db.ex("UPDATE tasks SET status='running' WHERE production_id=? AND status='pending'", (ids[0],))
+        with self.assertRaises(ValueError):
+            jobs.upload_now(ids[0])                                     # a running upload is never doubled
+
+    def test_retry_failed_step_on_an_upload_uploads_again(self):
+        video = os.path.join(tempfile.mkdtemp(), "final.mp4")
+        open(video, "wb").write(b"x")
+        cid = channels.create({"name": "Retry step"}, 1)
+        pid = prod(cid, status="needs_attention", video_path=video, approved_at=db.iso())
+        tid = worker.enqueue("upload", {"production_id": pid}, production_id=pid)
+        db.ex("UPDATE tasks SET status='failed' WHERE id=?", (tid,))
+        new = jobs.retry(pid)
+        self.assertEqual(db.q1("SELECT type, status FROM tasks WHERE id=?", (new,))["type"], "upload")
+        self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "approved")
+
+    def test_publishing_page_offers_upload_now_for_failed_uploads(self):
+        from fastapi.testclient import TestClient
+        from studio.web import app as webapp
+        if not db.q1("SELECT id FROM users WHERE email='uploadnow@test.local'"):
+            auth.approve(auth.register("uploadnow@test.local", "a long enough password")["user_id"], 1)
+        tok, _ = auth.login("uploadnow@test.local", "a long enough password")
+        ws = auth.session(tok)["workspace"]["id"]
+        video = os.path.join(tempfile.mkdtemp(), "final.mp4")
+        open(video, "wb").write(b"x")
+        cid = channels.create({"name": "Page"}, ws)
+        pid = prod(cid, status="failed", video_path=video, approved_at=db.iso(), title="Lost connection video",
+                   workspace_id=ws)
+        tid = worker.enqueue("upload", {"production_id": pid}, production_id=pid)
+        db.ex("UPDATE tasks SET status='failed' WHERE id=?", (tid,))
+        c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False)
+        c.cookies.set("sid", tok)
+        c.headers["X-CSRF-Token"] = webapp.csrf_for_seed(tok)
+        html = c.get("/publishing").text
+        self.assertIn("Lost connection video", html)
+        self.assertIn("UPLOAD FAILED", html)
+        self.assertIn(f"/api/productions/{pid}/upload-now", html)
+        self.assertIn("Upload all now (", html)
+        self.assertTrue(c.post(f"/api/productions/{pid}/upload-now").json()["ok"])
+        self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (pid,))["status"], "approved")
+        r = c.post("/api/publishing/upload-now").json()
+        self.assertTrue(r["ok"])
+        self.assertEqual(db.q1("SELECT COUNT(*) AS n FROM tasks WHERE production_id=? AND type='upload' "
+                               "AND status='pending'", (pid,))["n"], 1)        # pressed twice: still one upload
+
     def test_dashboard_lists_paused_and_deleted_daily_video(self):
         from studio.web import app as webapp
         cid = channels.create({"name": "Dash"}, 1)
