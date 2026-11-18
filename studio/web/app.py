@@ -1967,12 +1967,8 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
                               (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid),
                 ypp_status=growth.status(ch), readiness=growth.policy_readiness(cid), ypp_rules=growth.RULES,
                 diagnosis=doctor.diagnose(cid), experiments=experiments.results(cid, news.is_news(ch)),
-<<<<<<< Updated upstream
-                weekly=learning.latest_weekly(cid), remake_offer=_remake_offer(ch), **_social_ctx(cid))
-=======
-                weekly=learning.latest_weekly(cid), kv=kahaani_pages.section(ch) if tab == 'settings' else None,
-                **_social_ctx(cid))
->>>>>>> Stashed changes
+                weekly=learning.latest_weekly(cid), remake_offer=_remake_offer(ch),
+                kv=kahaani_pages.section(ch) if tab == 'settings' else None, **_social_ctx(cid))
     return _with_cookie(resp, cid)
 
 
