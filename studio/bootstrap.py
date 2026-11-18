@@ -32,6 +32,11 @@ def init(start_background: bool = False) -> None:
             logging.getLogger(__name__).exception("could not prepare espeak data")
         scheduler.ensure_defaults()
         scheduler.sync_channels()
+        try:                                # kids/comedy story channels: daily trending-story remakes, on by default
+            from .creative import remake
+            remake.auto_enable()
+        except Exception:
+            logging.getLogger(__name__).exception("could not switch on trending-story remakes")
         _done = True
     if start_background:
         from . import scheduler, worker

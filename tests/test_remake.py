@@ -128,6 +128,18 @@ class RemakeTests(unittest.TestCase):
                          [("long", 100, False), ("short", 101, False)])
         self.assertIn("one long video and one Short", third["skipped"])
 
+    def test_first_start_switches_on_kids_and_comedy_story_channels_once(self):
+        settings.set("remake.auto_enabled_once", False)
+        comedy = channels.create({"name": "Fun", "workflow": "animated_story", "styles": ["comedy"], "niche": "fun"}, 1)
+        facts = channels.create({"name": "Facts2", "workflow": "factual", "niche": "tech"}, 1)
+        done = remake.auto_enable()
+        self.assertIn(comedy, done)
+        self.assertIn(self.ch, done)
+        self.assertNotIn(facts, done)
+        remake.enable(comedy, False)
+        self.assertEqual(remake.auto_enable(), [])                        # never again: switching off sticks
+        self.assertFalse(remake.enabled(channels.get(comedy)))
+
 
 if __name__ == "__main__":
     unittest.main()

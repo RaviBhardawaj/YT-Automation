@@ -259,3 +259,23 @@ def topic_for(channel_id: int, fmt: str) -> tuple[int | None, bool]:
     if tid and db.q1("SELECT status FROM topics WHERE id=?", (tid,))["status"] == "producing":
         return None, True                                   # already made today
     return tid, bool(today.get("use_cast", True))
+
+
+def auto_enable() -> list[int]:
+    """One time, on the first start after this feature arrives: switch remakes on for every active kids or comedy
+    story channel that never chose either way. Switching it off later sticks (this never runs again)."""
+    if settings.get("remake.auto_enabled_once"):
+        return []
+    settings.set("remake.auto_enabled_once", True)
+    done = []
+    for ch in channels.all_channels():
+        if "trend_remake" in (ch.get("meta") or {}) or ch.get("status") != "active":
+            continue
+        if not (ch.get("made_for_kids") or {"kids", "comedy"} & set(channels.styles(ch))):
+            continue
+        try:
+            enable(ch["id"], True, actor="first start: trending-story remakes")
+            done.append(ch["id"])
+        except ValueError:
+            continue
+    return done
