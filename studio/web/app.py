@@ -1307,6 +1307,25 @@ async def api_channel_trends(request: Request, cid: int):
     return ok(task_id=tid, detail=f"Looking at what's popular for {ch['name']}…")
 
 
+@app.post("/api/channels/{cid}/clear-queue")
+def api_channel_clear_queue(request: Request, cid: int):
+    """Remove every video of this channel that is approved and still WAITING to upload (never anything already on
+    YouTube, uploading right now, or in review): pending upload jobs are cancelled and the videos marked rejected."""
+    rows = db.q("SELECT id FROM productions WHERE channel_id=? AND status='approved' AND youtube_video_id IS NULL",
+                (cid,))
+    ids = [r["id"] for r in rows]
+    if ids:
+        marks = ",".join("?" * len(ids))
+        db.ex(f"UPDATE tasks SET status='cancelled', updated_at=? WHERE type IN ('upload','social_upload') AND "
+              f"status IN ('pending','paused','failed') AND production_id IN ({marks})", (db.iso(), *ids))
+        db.ex(f"UPDATE productions SET status='rejected', error='removed from the upload queue', updated_at=? "
+              f"WHERE id IN ({marks})", (db.iso(), *ids))
+    from .. import ops
+    ops.audit(actor(request), "upload_queue_cleared", channel_id=cid, detail={"productions": ids})
+    logs.event("info", "publishing", f"Upload queue cleared for channel #{cid}: {len(ids)} waiting video(s) removed")
+    return ok(detail=f"Removed {len(ids)} waiting video(s) from the upload queue")
+
+
 @app.post("/api/channels/{cid}/remake")
 async def api_channel_remake(request: Request, cid: int):
     """Trending-story remakes on/off (one long + one Short a day, each retelling today's most-viewed story idea), or
@@ -1974,7 +1993,7 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
                               (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid),
                 ypp_status=growth.status(ch), readiness=growth.policy_readiness(cid), ypp_rules=growth.RULES,
                 diagnosis=doctor.diagnose(cid), experiments=experiments.results(cid, news.is_news(ch)),
-                weekly=learning.latest_weekly(cid), remake_offer=_remake_offer(ch), remake=_remake_status(ch), yt_key=settings.has_secret("youtube_api_key"),
+                weekly=learning.latest_weekly(cid), remake_offer=_remake_offer(ch), queued_n=db.q1("SELECT COUNT(*) AS n FROM productions WHERE channel_id=? AND status='approved' AND youtube_video_id IS NULL", (cid,))["n"], remake=_remake_status(ch), yt_key=settings.has_secret("youtube_api_key"),
                 kv=kahaani_pages.section(ch) if tab == 'settings' else None, **_social_ctx(cid))
     return _with_cookie(resp, cid)
 

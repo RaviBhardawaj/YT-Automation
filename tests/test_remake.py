@@ -47,6 +47,7 @@ class RemakeTests(unittest.TestCase):
     def setUp(self):
         self.ch = channels.create({"name": "Remake kids", "workflow": "animated_story", "made_for_kids": True,
                                    "language": "Hindi", "niche": "kids cartoons", "styles": ["kids", "comedy"]}, 1)
+        db.update("channels", self.ch, {"meta": db.dumps({"fresh_cast": False})})   # recurring-cast mode by default here
 
     def test_enable_sets_one_long_and_one_short_a_day(self):
         res = remake.enable(self.ch, True, times="08:30, 19:00")
@@ -197,6 +198,61 @@ class RemakeTests(unittest.TestCase):
         html = c.get(f"/channels/{cid}").text
         self.assertIn("Make today&#39;s videos now", html.replace("'", "&#39;"))
         self.assertIn("Settings → Credentials", html)                      # no key yet: step 1 is shown
+
+    def test_kids_and_comedy_get_a_brand_new_cast_every_story(self):
+        cid = channels.create({"name": "Fresh", "workflow": "animated_story", "made_for_kids": True,
+                               "niche": "kids", "styles": ["kids"]}, 1)
+        self.assertTrue(remake.fresh_cast(channels.get(cid)))
+        self.assertFalse(remake.fresh_cast(channels.get(
+            channels.create({"name": "Drama", "workflow": "animated_story", "styles": ["drama"], "niche": "d"}, 1))))
+        cands = [{"title": "Billi ne kiya homework", "views_per_day": 10, "seconds": 60, "description": ""}] * 2
+        seen = {}
+
+        def fake(task, system, prompt, schema, **kw):
+            seen["prompt"] = prompt
+            with self.assertRaises(ValueError):                              # the old cast is refused
+                kw["validate"](good_plan())
+            out = good_plan(use_cast=False, new_characters=["Gauri, a brave goat", "Tinni, a robot girl"])
+            kw["validate"](out)
+            return out, {}
+        with mock.patch.object(remake.ai, "generate", fake):
+            plan = remake.adapt(channels.get(cid), cands)
+        self.assertFalse(plan.use_cast)
+        self.assertIn("BRAND-NEW CAST", seen["prompt"])
+        self.assertNotIn("RECURRING CHARACTERS", seen["prompt"])
+        tid = db.insert("topics", {"channel_id": cid, "title": "x", "status": "approved", "format": "long",
+                                   "workspace_id": 1, "created_at": db.iso(), "updated_at": db.iso()})
+        with mock.patch.object(remake, "make_today", lambda c: {"long": tid, "use_cast": True}):
+            self.assertEqual(remake.topic_for(cid, "long"), (tid, False))    # never the old cast on this channel
+
+    def test_clear_queue_removes_only_waiting_uploads(self):
+        from fastapi.testclient import TestClient
+        from studio import config
+        from studio.web import app as webapp
+        if not db.q1("SELECT id FROM users WHERE email='queue@test.local'"):
+            auth.approve(auth.register("queue@test.local", "a long enough password")["user_id"], 1)
+        tok, _ = auth.login("queue@test.local", "a long enough password")
+        ws = auth.session(tok)["workspace"]["id"]
+        cid = channels.create({"name": "Queue", "workflow": "animated_story", "niche": "k"}, ws)
+
+        def prod(status, yt=None):
+            return db.insert("productions", {"format": "short", "title": "t", "status": status, "stage": "review",
+                                             "kind": "story", "channel_id": cid, "workspace_id": ws, "language": "Hindi",
+                                             "request": "{}", "package": "{}", "timeline": "{}", "episode": "{}",
+                                             "test_mode": 0, "youtube_video_id": yt, "created_at": db.iso(),
+                                             "updated_at": db.iso()})
+        waiting, live, review = prod("approved"), prod("uploaded", "abc"), prod("awaiting_approval")
+        up = db.insert("tasks", {"type": "upload", "lane": "general", "payload": "{}", "status": "pending",
+                                 "priority": 0, "attempts": 0, "max_attempts": 3, "run_after": db.iso(),
+                                 "production_id": waiting, "created_at": db.iso(), "updated_at": db.iso()})
+        c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False)
+        c.cookies.set("sid", tok)
+        c.headers["X-CSRF-Token"] = webapp.csrf_for_seed(tok)
+        self.assertIn("Clear 1 waiting upload", c.get(f"/channels/{cid}").text)
+        self.assertTrue(c.post(f"/api/channels/{cid}/clear-queue").json()["ok"])
+        st = {r["id"]: r["status"] for r in db.q("SELECT id, status FROM productions WHERE channel_id=?", (cid,))}
+        self.assertEqual((st[waiting], st[live], st[review]), ("rejected", "uploaded", "awaiting_approval"))
+        self.assertEqual(db.q1("SELECT status FROM tasks WHERE id=?", (up,))["status"], "cancelled")
 
 
 if __name__ == "__main__":
