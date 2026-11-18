@@ -21,8 +21,10 @@ SAFE_DURING_STOP = ("analytics_sync", "channel_stats", "housekeeping", "learning
 
 
 def stopped() -> dict[str, Any] | None:
-    """The emergency stop record when it is on, else None."""
-    s = settings.get("ops.emergency_stop") or {}
+    """The emergency stop record when it is on, else None. Read from the database every time (not the settings
+    cache), so a stop switched on by another process — a script, a second app instance — halts this one too."""
+    row = db.q1("SELECT value FROM settings WHERE key='ops.emergency_stop'")
+    s = (db.loads(row["value"]) if row else None) or {}
     return s if s.get("on") else None
 
 

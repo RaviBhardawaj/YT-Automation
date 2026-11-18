@@ -20,6 +20,8 @@ from typing import Any
 from .. import db, logs, settings
 from . import providers, sadtalker, store, talking, zerogpu
 
+SHOT = (896, 504)                 # keyframe size: 16:9 in two 512-px tiles (half the free-allowance cost of 1024×576)
+
 KEY_PRIORITY = {"insert": 0, "establishing": 1, "reaction": 2, "close_up": 3, "wide": 4, "over_shoulder": 5,
                 "medium": 6, "cutaway": 7}
 TYPE_LABEL = {"establishing": "wide establishing shot", "wide": "wide shot", "medium": "medium shot",
@@ -51,6 +53,11 @@ def _who(film: dict[str, Any], keys: list[str]) -> str:
 
 
 def keyframe_prompt(film: dict[str, Any], shot: dict[str, Any]) -> str:
+    if shot["camera"].get("image_prompt"):           # a storyboarded film: the cinematographer's frame, as written
+        cam = shot["camera"]
+        return (f"{cam['image_prompt']} Camera: {cam.get('angle', 'eye level')}, {cam.get('composition', '')}, "
+                f"{cam.get('depth_of_field', 'shallow')} depth of field. {shot.get('lighting', '')}. "
+                f"Avoid: {cam.get('negative_prompt', '')}")[:1800]
     place = re.sub(r"(?i)^the entire film takes place primarily in one\s*", "", film.get("location") or "")[:200]
     who = _who(film, shot["characters"])
     angle = shot["camera"].get("angle", "eye level")
@@ -71,6 +78,17 @@ def motion_prompt(shot: dict[str, Any], film: dict[str, Any] | None = None) -> s
     camera only when the shot calls for it, and what must stay the same. No generic stock adjectives."""
     film = film or {}
     cam = shot.get("camera") or {}
+    if cam.get("video_prompt"):
+        a = cam.get("animation") or {}
+        acting = " ".join(x for x in (
+            f"Starts: {a['start_pose']}." if a.get("start_pose") else "",
+            f"Action: {a['body_action']}." if a.get("body_action") else "",
+            f"Head: {a['head']}." if a.get("head") else "", f"Hands: {a['hands']}." if a.get("hands") else "",
+            f"Ends: {a['end_pose']}." if a.get("end_pose") else "",
+            f"Around them: {a['environment_motion']}." if a.get("environment_motion") else "") if x)
+        return (f"{cam['video_prompt']} {acting} Camera: {cam.get('movement', 'static')}, smooth. Feet on the ground, "
+                "natural weight and balance, hands with five fingers. Keep the same faces, hair, clothes, proportions "
+                "and place as in the first frame; 3D animated film style; no new people, no cut.")[:1200]
     ph = cam.get("phases") or {}
     who = _names(film, shot.get("characters") or []) or "the people in frame"
     action = (shot.get("action") or "").strip().rstrip(".")
@@ -105,8 +123,9 @@ def motion_prompt(shot: dict[str, Any], film: dict[str, Any] | None = None) -> s
 def _refs(film: dict[str, Any], shot: dict[str, Any]) -> list[Path]:
     by = {c["key"]: c for c in film.get("cast") or []}
     refs = [Path(by[k]["portrait"]) for k in shot["characters"] if k in by and by[k].get("portrait")][:3]
-    if film.get("location_ref"):
-        refs.append(Path(film["location_ref"]))
+    env = (film.get("environments") or {}).get((shot.get("camera") or {}).get("environment") or "") or {}
+    if env.get("ref") or film.get("location_ref"):
+        refs.append(Path(env.get("ref") or film["location_ref"]))
     return [r for r in refs if r.exists()][:4]
 
 
@@ -306,7 +325,7 @@ def run(p: dict[str, Any], gen_image, work: Path) -> dict[str, Any]:
             prompt = keyframe_prompt(film, shot)
             if retry:
                 prompt = "Show exactly this, faithfully: " + prompt
-            gen_image(prompt, key, refs=_refs(film, shot), size=(1024, 576))
+            gen_image(prompt, key, refs=_refs(film, shot), size=SHOT)
             made["keyframes"] += 1
         note = ""
         line = (shot.get("dialogue") or [{}])[0]

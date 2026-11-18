@@ -711,6 +711,10 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE niches ADD COLUMN channel_id INTEGER;
     """,
+    # v23 — published videos can be archived: files removed from the Mac, the record and YouTube link kept.
+    """
+    ALTER TABLE productions ADD COLUMN archived_at TEXT;
+    """,
 ]
 
 

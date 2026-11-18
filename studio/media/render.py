@@ -80,6 +80,7 @@ GRADES = {
     "real": "eq=contrast=1.06:saturation=0.94:gamma=0.98,colorbalance=rs=0.02:bs=-0.02:rh=0.015:bh=-0.02,"
             "vignette=angle=PI/5,noise=alls=5:allf=t,",
     "cartoon": "eq=contrast=1.03:saturation=1.10,",           # bright and clean for children: no grain, no vignette
+    "animated3d": "eq=contrast=1.05:saturation=1.04,colorbalance=rs=0.015:bs=-0.015,vignette=angle=PI/6,",
 }
 
 

@@ -26,9 +26,18 @@ def _bible(c: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in b.items() if v}
 
 
+def _look() -> str:
+    from ..creative import film
+    return film.current_look()
+
+
 def character_prompt(name: str, bible: dict[str, Any], notes: str = "") -> str:
     who = "man" if bible.get("gender", "male") == "male" else "woman"
     looks = "; ".join(str(bible[k]) for k in ("age", "appearance", "clothing") if bible.get(k))
+    if _look() == "animated3d":
+        from ..creative.kahaani import STYLE_3D
+        return (f"Character portrait, waist-up, of {name}, an original Indian {who}: {looks}. {notes} Neutral "
+                f"expression, looking at the camera, plain softly lit studio background. {STYLE_3D}").replace("  ", " ")
     return (f"Photorealistic waist-up portrait photograph of {name}, an ordinary North Indian {who}"
             + (f" ({bible['age']} years)" if str(bible.get("age", "")).rstrip(".").isdigit() else "")
             + f": {looks}. {notes} Real skin texture and natural imperfections, neutral expression, looking at the "
@@ -37,6 +46,10 @@ def character_prompt(name: str, bible: dict[str, Any], notes: str = "") -> str:
 
 def location_prompt(description: str, notes: str = "") -> str:
     loc = re.sub(r"(?i)^the entire film takes place primarily in one\s*", "", description or "").strip()
+    if _look() == "animated3d":
+        return (f"Establishing wide shot from a 3D animated feature film, no people: {loc[:420] or 'an old Indian '
+                f'town lane at dusk'}. {notes} Cinematic lighting, atmospheric depth, rich detail, no captions, "
+                "no readable lettering").replace("  ", " ")
     return (f"Cinematic wide establishing shot, no people: {loc[:420] or 'a village courtyard in North India'}. "
             f"{notes} Natural afternoon sunlight, real place, lived-in details, no speech bubbles, no captions, "
             "no readable lettering").replace("  ", " ")
@@ -48,13 +61,19 @@ def propose(production_id: int, ws: int, film: dict[str, Any]) -> int:
     added = 0
     for c in film.get("cast") or []:
         if ("character", c["key"]) not in have:
-            store.add_ref(production_id, ws, "character", c["key"], c["name"], c.get("look", ""),
-                          meta={"bible": _bible(c)})
+            lib = c.get("library_ref")                # a recurring character: its approved library picture, as is
+            rid = store.add_ref(production_id, ws, "character", c["key"], c["name"], c.get("look", ""),
+                                file_path=lib if lib and Path(lib).exists() else None,
+                                meta={"bible": _bible(c), "library": bool(lib)})
+            if lib and Path(lib).exists():
+                store.set_ref_status(rid, ws, "approved")
             added += 1
-    if ("location", "LOC") not in have:
-        store.add_ref(production_id, ws, "location", "LOC", "Main location", film.get("location", ""),
-                      meta={"lighting": film.get("lighting", "")})
-        added += 1
+    envs = film.get("environments") or {"LOC": {"description": film.get("location", "")}}
+    for key, env in envs.items():                      # one reference per place (a film may have several)
+        if ("location", key) not in have:
+            store.add_ref(production_id, ws, "location", key, "Main location" if key == "LOC" else f"Location {key}",
+                          env.get("description", ""), meta={"lighting": film.get("lighting", "")})
+            added += 1
     return added
 
 
@@ -128,6 +147,11 @@ def apply_to_film(production_id: int, ws: int, film: dict[str, Any]) -> None:
     loc = (refs.get(("location", "LOC")) or {}).get("approved")
     if loc:
         film["location_ref"] = loc["file_path"]
+    for key, env in (film.get("environments") or {}).items():
+        a = (refs.get(("location", key)) or {}).get("approved")
+        if a:
+            env["ref"] = a["file_path"]
+            film.setdefault("location_ref", a["file_path"])
 
 
 def log(production_id: int, msg: str) -> None:

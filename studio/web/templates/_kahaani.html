@@ -1,0 +1,26 @@
+{# KahaaniVerse section of the channel settings tab (channel with the cinematic_film workflow) #}
+<div class="head" id="kahaaniverse" style="margin-top:20px"><div><h2>KahaaniVerse</h2><div class="muted">{{ tagline }} — original cinematic 3D-animated stories in Hindi and Hinglish.</div></div>
+  <div class="row">{% if ch %}<button data-post="/api/kahaaniverse/library" data-done="Making the missing pictures">Make missing pictures</button>
+  <button class="primary" data-post="/api/kahaaniverse/film" data-confirm="Research (if needed), pick the strongest story and start today's film?">Start today's film</button>{% endif %}</div></div>
+
+<div class="card"><h2>Character library</h2>
+  <div class="muted small">Every film draws its recurring characters from these approved pictures; the front view is drawn first and every other sheet is made from it, so faces and proportions stay the same.</div>
+  {% for c in lib %}<div style="margin-top:14px"><h3>{{ c.name }} <span class="muted small">{{ c.role }} · voice {{ c.voice.voice_id }} (pitch {{ c.voice.pitch }}){% if c.missing %} · {{ c.missing|length }} pictures still to make{% endif %}</span></h3>
+    <div class="small muted">{{ c.identity.appearance }} · {{ c.identity.clothing }} · {{ c.identity.accessories }}</div>
+    <div class="small">{{ c.personality }}</div>
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:8px">{% for s, url, prov in c.pictures %}
+      <figure style="margin:0;width:130px">{% if url %}<a href="{{ url }}" target="_blank"><img src="{{ url }}" alt="{{ c.name }} {{ s }}" style="width:130px;height:130px;object-fit:cover;border-radius:8px"></a>{% else %}<div style="width:130px;height:130px;border-radius:8px;background:var(--panel-2,#eee)" class="muted small">not yet</div>{% endif %}
+      <figcaption class="small muted">{{ s }}{% if prov %} · {{ prov }}{% endif %}</figcaption></figure>{% endfor %}</div></div>{% endfor %}</div>
+<div class="card" style="margin-top:16px"><h2>Genre mix</h2>
+  <div class="muted small">Share of films per genre (must total 100%). Today's genre is drawn from this mix; the analytics nudge the story scores toward genres your viewers reward.</div>
+  <form id="mix" class="row" style="flex-wrap:wrap;gap:10px">{% for g, v in genres.items() %}<label class="small">{{ v.label }} <input name="{{ g }}" type="number" min="0" max="100" value="{{ mix[g] }}" style="width:70px">%</label>{% endfor %}</form>
+  <button data-post="/api/kahaaniverse/mix" data-collect="#mix" data-done="Saved">Save mix</button></div>
+<div class="card" style="margin-top:16px"><h2>Story backlog</h2>
+  <table><tr><th>Score</th><th>Genre</th><th>Story</th><th></th></tr>
+  {% for b in backlog %}<tr><td><b>{{ b.score }}</b></td><td class="small">{{ (genres.get(b.genre) or {}).get('label', b.genre) }}</td>
+    <td><b>{{ b.title }}</b><div class="small">{{ b.logline }}</div><div class="small muted">Hook: {{ b.hook_5s }} · Twist: {{ b.twist }}</div></td>
+    <td><button data-post="/api/kahaaniverse/film" data-body='{"topic_id": {{ b.id }}}' data-confirm="Start a film of this story?">Make this film</button></td></tr>
+  {% else %}<tr><td colspan="4" class="muted">No stories yet — "Start today's film" researches and fills the backlog first.</td></tr>{% endfor %}</table></div>
+<div class="card" style="margin-top:16px"><h2>Films</h2>
+  <table>{% for f in films %}<tr><td><a href="/productions/{{ f.id }}">#{{ f.id }} {{ f.title }}</a></td><td class="small">{{ f.status }} · {{ f.stage }}</td><td class="small muted">{{ f.created_at[:16] }}</td></tr>
+  {% else %}<tr><td class="muted">No films yet.</td></tr>{% endfor %}</table></div>
