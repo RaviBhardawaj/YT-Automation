@@ -188,6 +188,10 @@ def _lint(script: LessonScript, facts: dict[str, Any]) -> list[str]:
     bad = lint.unverified_numbers(text, facts)
     if bad:
         problems.append("numbers not in the lesson example (use the given numbers or words): " + ", ".join(sorted(set(bad))[:10]))
+    from .gate import INTRADAY_WORDS, _affirmative_mentions
+    if _affirmative_mentions(INTRADAY_WORDS, text):        # the gate blocks it: lessons carry no intraday data
+        problems.append("don't mention intraday / hourly / 15-minute charts or data — this lesson has only daily "
+                        "candles (say 'smaller timeframes' only if needed, without promising them)")
     ids = {o["id"] for o in facts["observations"]}
     used = {k for s in script.scenes for k in s.key_point_ids}
     if ids - used:

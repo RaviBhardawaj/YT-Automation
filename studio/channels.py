@@ -20,6 +20,8 @@ WORKFLOWS = {
     "animated_story": "Animated stories: comedy, horror, drama, kids, motivation (characters, dialogue, animation)",
     "factual": "Researched videos: explainers, tech, documentary, news, finance concepts (sources, visuals, narration)",
     "nifty_daily": "NIFTY 50 daily levels (verified market data, levels, disclosures)",
+    "cinematic_film": "Cinematic 3D-animated films: researched original stories, recurring characters, storyboard, "
+                      "shots, voices, sound, long film + its own Short (KahaaniVerse)",
 }
 STYLES = ["comedy", "drama", "horror", "storytelling", "documentary", "education", "satire", "news", "motivation",
           "kids", "thriller", "romance", "mystery", "tech", "finance"]

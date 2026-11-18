@@ -230,6 +230,9 @@ CF_FREE_NEURONS = 10_000                      # Workers AI free allowance per da
 LOOK_PROMPT = {
     "real": ("Photorealistic cinematic film still, natural lighting, realistic textures, shot on a 35mm lens, "
              "shallow depth of field, true-to-life colours. No text, no letters, no logos, no watermark."),
+    "animated3d": ("Frame from a premium stylised 3D animated feature film, high-end CG render, cinematic lighting "
+                   "and depth of field, expressive faces, detailed hair and fabric. No text, no letters, no logos, "
+                   "no watermark."),
     "cartoon": ("Bright, friendly 2D cartoon illustration for young children, clean outlines, soft shading, "
                 "cheerful colours, simple uncluttered background. No text, no letters, no logos, no watermark."),
 }
@@ -248,16 +251,20 @@ def cloudflare_ready() -> bool:
 
 def cloudflare_used_today() -> int:
     day = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
-    return int(db.q1("SELECT COALESCE(SUM(output_tokens),0) AS n FROM ai_usage WHERE provider='cloudflare' AND ok=1 "
-                     "AND created_at>=?", (day,))["n"])
+    return int(db.q1("SELECT COALESCE(SUM(output_tokens),0) AS n FROM ai_usage WHERE provider='cloudflare' AND "
+                     "(ok=1 OR error LIKE 'charged%') AND created_at>=?", (day,))["n"])
 
 
 class AllowanceUsedUp(net.FetchError):
     """Today's free image allowance is spent; it resets at 00:00 UTC (05:30 IST)."""
 
 
+CF_COST_FACTOR = 1.9   # measured: on 29 Oct Cloudflare refused after 5,208 neurons by the published per-tile price
+
+
 def cf_neurons(w: int, h: int, refs: int = 0) -> int:
-    return int(-(-w // 512) * -(-h // 512) * 26.05 + refs * 5.37)
+    """Neurons one picture really takes from the daily allowance (published per-512-px-tile price × measured factor)."""
+    return int((-(-w // 512) * -(-h // 512) * 26.05 + refs * 5.37) * CF_COST_FACTOR)
 
 
 def generate_cloudflare(prompt: str, fmt: str, out: Path, look: str = "real", *, refs: list[Path] | None = None,
@@ -285,16 +292,37 @@ def generate_cloudflare(prompt: str, fmt: str, out: Path, look: str = "real", *,
             im = im.convert("RGB")
             im.thumbnail((504, 504))
             buf = io.BytesIO()
-            im.save(buf, "PNG")
-        files[f"input_image_{i}"] = (f"ref{i}.png", buf.getvalue(), "image/png")
-    form = {k: (None, v) for k, v in {"prompt": f"{prompt}. {LOOK_PROMPT.get(look, LOOK_PROMPT['real'])}"[:2400],
-                                      "width": str(w), "height": str(h), "seed": str(seed)}.items()} | files
+            im.save(buf, "JPEG", quality=90)        # ~25 KB: big PNG uploads break on the phone-hotspot link
+        files[f"input_image_{i}"] = (f"ref{i}.jpg", buf.getvalue(), "image/jpeg")
     account = settings.get("visuals.cloudflare_account_id").strip()
-    # IPv4 only: this network advertises IPv6 it can't carry reliably, which made each image take minutes
-    with httpx.Client(transport=httpx.HTTPTransport(local_address="0.0.0.0", retries=1),
-                      timeout=httpx.Timeout(180, connect=15)) as client:
-        r = client.post(f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{CF_MODEL}", files=form,
-                        headers={"Authorization": f"Bearer {settings.secret('cloudflare_api_token')}"})
+    # Cloudflare's output filter sometimes flags an ordinary picture (code 3030); the flag is about that one
+    # output, so the same prompt with a different seed is tried up to twice more before giving up
+    for variant in range(3):
+        form = {k: (None, v) for k, v in {"prompt": f"{prompt}. {LOOK_PROMPT.get(look, LOOK_PROMPT['real'])}"[:2400],
+                                          "width": str(w), "height": str(h),
+                                          "seed": str(seed + 7919 * variant)}.items()} | files
+        # IPv4 only: this network advertises IPv6 it can't carry reliably, which made each image take minutes
+        for attempt in range(4):          # the hotspot link sometimes corrupts an upload (SSL 'bad record mac')
+            try:
+                with httpx.Client(transport=httpx.HTTPTransport(local_address="0.0.0.0", retries=1),
+                                  timeout=httpx.Timeout(180, connect=15)) as client:
+                    r = client.post(f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{CF_MODEL}",
+                                    files=form,
+                                    headers={"Authorization": f"Bearer {settings.secret('cloudflare_api_token')}"})
+                break
+            except (httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError) as e:
+                if isinstance(e, httpx.ReadError):  # the upload went through: Cloudflare made (and charged) it
+                    try:
+                        db.insert("ai_usage", {"provider": "cloudflare", "model": CF_MODEL, "task": "scene_image",
+                                               "input_tokens": 0, "output_tokens": neurons, "cost_usd": 0.0, "ok": 0,
+                                               "error": "charged — picture lost in download", "created_at": db.iso()})
+                    except Exception:  # usage logging must never stop a video
+                        pass
+                if attempt == 3:
+                    raise
+                time.sleep(2 + 3 * attempt)
+        if not (r.status_code == 400 and "flagged" in r.text):
+            break
     ok = r.status_code == 200
     try:
         db.insert("ai_usage", {"provider": "cloudflare", "model": CF_MODEL, "task": "scene_image", "input_tokens": 0,

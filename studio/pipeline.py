@@ -824,6 +824,12 @@ def _run_upload(payload: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]
         save(pid, status="approved", error=f"Upload waiting: {hold} (checks again every 30 minutes).")
         worker.enqueue("upload", {"production_id": pid}, production_id=pid, delay=1800, max_attempts=48)
         return {"held": hold}
+    from . import capacity
+    wait, why = capacity.upload_wait(p.get("channel_id"))
+    if wait:                                         # paced: under YouTube's daily limit, spaced, in online hours
+        save(pid, status="approved", error=f"Upload waiting: {why}.")
+        worker.enqueue("upload", {"production_id": pid}, production_id=pid, delay=wait, max_attempts=48)
+        return {"held": why}
     if not oauth.connected():
         save(pid, status="approved", error="This channel's YouTube account is not connected — connect it on the "
                                             "Channels page, then retry the upload.")

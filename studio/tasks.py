@@ -283,6 +283,12 @@ def _pick_idea(channel_id: int) -> dict[str, Any] | None:
     return max(rows, key=rank)
 
 
+@worker.handler("self_review")
+def _self_review(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    from . import selfreview
+    return selfreview.review(int(payload["production_id"])) if payload.get("production_id") else selfreview.run_all()
+
+
 @worker.handler("growth_doctor")
 def _growth_doctor(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     from .youtube import doctor
@@ -302,6 +308,13 @@ def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     from . import plans
     if not plans.can(ch["workspace_id"], "schedules"):
         return {"skipped": "automatic daily videos aren't enabled for this account"}
+    if ch["workflow"] == "cinematic_film":       # a film channel's daily slot makes its film (one a day), not a talk video
+        from .creative import director
+        if db.q1("SELECT id FROM productions WHERE channel_id=? AND kind='film' AND created_at>=? AND status NOT IN "
+                 "('rejected','failed')", (ch["id"], db.iso_in(-20 * 3600))):
+            return {"skipped": "today's film is already in production"}
+        return {"film": director.start_film(ch["id"], minutes=float(ch.get("long_minutes") or 3),
+                                            youtube=bool(payload.get("youtube", True)))}
     from datetime import datetime
     slot = int(payload.get("slot") or 0)
     day = datetime.now().astimezone().date().isoformat() + (f"#{slot + 1}" if slot else "")   # one video per slot
@@ -461,6 +474,13 @@ def _housekeeping(payload: dict[str, Any], task: dict[str, Any]) -> Any:
                 deleted += 1
             except ValueError:
                 pass
+    archived = 0
+    adays = int(settings.get("storage.archive_after_days") or 0)
+    if adays:                         # published videos: files off the Mac, record + YouTube link kept
+        for pid in storage.archivable(adays):
+            freed += storage.archive(pid)
+            archived += 1
     if freed:
-        logs.event("info", "storage", f"Housekeeping freed {freed / 1e6:.0f} MB ({deleted} rejected video(s) deleted)")
-    return {"freed_mb": round(freed / 1e6, 1), "deleted": deleted}
+        logs.event("info", "storage", f"Housekeeping freed {freed / 1e6:.0f} MB ({deleted} rejected video(s) deleted, "
+                   f"{archived} published video(s) archived)")
+    return {"freed_mb": round(freed / 1e6, 1), "deleted": deleted, "archived": archived}

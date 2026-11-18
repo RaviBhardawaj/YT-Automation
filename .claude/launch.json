@@ -5,6 +5,12 @@
       "name": "studio",
       "port": 8765,
       "url": "http://127.0.0.1:8765"
+    },
+    {
+      "name": "studio-dev",
+      "runtimeExecutable": "/usr/bin/env",
+      "runtimeArgs": ["STUDIO_DATA_DIR=/Users/RaviBhardawaj/yt-film-studio-devdata", "STUDIO_PORT=8790", "STUDIO_SCHEDULES=off", "STUDIO_KEYRING_SERVICE=yt-automation-studio-tests", "STUDIO_NO_BROWSER=1", "STUDIO_OFFLINE=1", "/Users/RaviBhardawaj/yt-automation-studio/.venv/bin/python", "-m", "studio"],
+      "port": 8790
     }
   ]
 }

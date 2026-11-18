@@ -22,6 +22,7 @@
     {% if p.status != 'uploading' %}<button class="danger" data-post="/api/productions/{{ p.id }}/delete" data-confirm="Permanently delete this video{{ ' and its Shorts/outputs' if not p.parent_id }} and all its files from the studio?{{ ' It stays on YouTube.' if p.youtube_video_id }}">Delete</button>{% endif %}
     {% if p.status == 'paused' %}<button data-post="/api/productions/{{ p.id }}/job/resume">Resume</button>
     {% elif active %}<button data-post="/api/productions/{{ p.id }}/job/pause">Pause</button>{% endif %}
+    {% if p.status in ('needs_review','awaiting_approval') and not p.youtube_video_id %}<button class="primary" data-post="/api/productions/{{ p.id }}/self-review" data-done="Self-review started — it fixes, re-checks and publishes when every check passes">Self-review &amp; publish</button>{% endif %}
     {% if p.status in ('failed','needs_attention','paused_budget') %}<button class="primary" data-post="/api/productions/{{ p.id }}/job/retry">Retry failed step</button>{% endif %}
     {% if p.kind == 'story' and p.format == 'long' and p.video_path %}<button data-post="/api/productions/{{ p.id }}/job/shorts">Make Shorts</button>{% endif %}
   </div>
@@ -109,8 +110,9 @@
   <div class="card">
     {% set has_video = files|selectattr('variant', 'equalto', 'video')|list %}
     <div class="spread"><h2>Download</h2>
-      {% if has_video %}<span class="chip ok">READY TO DOWNLOAD</span>{% elif active %}<span class="chip info">PROCESSING</span>{% elif p.video_path %}<span class="chip err">VIDEO FILE MISSING</span>{% else %}<span class="chip">NOT AVAILABLE</span>{% endif %}</div>
-    {% if p.video_path and not has_video and not active %}<div class="note err small">The rendered video file is no longer on disk. Use “Retry” on the job{{ ' #' ~ p.parent_id if p.parent_id }} to render it again.</div>{% endif %}
+      {% if has_video %}<span class="chip ok">READY TO DOWNLOAD</span>{% elif p.archived_at %}<span class="chip">ARCHIVED</span>{% elif active %}<span class="chip info">PROCESSING</span>{% elif p.video_path %}<span class="chip err">VIDEO FILE MISSING</span>{% else %}<span class="chip">NOT AVAILABLE</span>{% endif %}</div>
+    {% if p.archived_at %}<div class="note small">Archived {{ p.archived_at[:10] }} to free space on this Mac — the video lives on YouTube: <a href="https://youtu.be/{{ p.youtube_video_id }}" target="_blank" rel="noopener">youtu.be/{{ p.youtube_video_id }}</a>. Its details, thumbnail and subtitles are kept here.</div>
+    {% elif p.video_path and not has_video and not active %}<div class="note err small">The rendered video file is no longer on disk. Use “Retry” on the job{{ ' #' ~ p.parent_id if p.parent_id }} to render it again.</div>{% endif %}
     {% if info %}<div class="small muted" style="margin-bottom:8px">{{ '%d:%02d' % (info.duration // 60, info.duration % 60) if info.duration }} · {{ info.width }}×{{ info.height }} ({{ '9:16 vertical' if info.height > info.width else '16:9' if info.width * 9 == info.height * 16 else 'custom' }}) · {{ '%.1f' % (info.size_bytes / 1e6) }} MB · {{ info.vcodec }}/{{ info.acodec }}</div>{% endif %}
     {% for f in files %}<div class="spread small" style="padding:4px 0;border-bottom:1px dashed var(--line)"><span>{{ f.label }} <span class="muted">{{ '%.1f' % (f.size / 1e6) }} MB</span></span>
       <a class="btn sm primary" href="/download/{{ p.id }}/{{ f.variant }}">Download</a></div>

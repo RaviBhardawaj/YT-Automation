@@ -115,6 +115,7 @@
   <div class="small muted">Disconnects YouTube and deletes this studio channel's schedule, characters and open ideas. Its videos stay in your library. Nothing is deleted on YouTube.</div>
   <button class="danger" style="margin-top:8px" data-post="/api/channels/{{ ch.id }}/delete" data-confirm="Remove the studio channel '{{ ch.name }}'?{{ ' Its daily NIFTY automation stops.' if ch.workflow == 'nifty_daily' }} Videos are kept; YouTube is not touched.">Remove channel</button></div>
 
+{% if kv %}{% with ch=ch, lib=kv.lib, mix=kv.mix, genres=kv.genres, backlog=kv.backlog, films=kv.films, tagline=kv.tagline %}{% include '_kahaani.html' %}{% endwith %}{% endif %}
 {% elif tab == 'characters' %}
 <div class="grid g3">
   {% for c in characters if c.status != 'oneoff' %}

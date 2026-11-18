@@ -88,6 +88,46 @@ def clear_working_files(pid: int) -> int:
     return freed
 
 
+KEEP_ON_ARCHIVE = {".srt", ".md", ".txt"}            # small records worth keeping after the video file is gone
+
+
+def _keep_when_archived(f: Path) -> bool:
+    if f.suffix in KEEP_ON_ARCHIVE or (f.suffix == ".jpg" and f.name.startswith("thumbnail")):
+        return True
+    return f.suffix == ".json" and f.stat().st_size < 1_000_000     # reports, manifests, licences
+
+
+def archivable(days: int) -> list[int]:
+    """Published videos older than `days` whose files can go: on YouTube, not archived yet, not being worked on,
+    and every Short made from them is finished too (a Short is cut from its long video's files)."""
+    rows = db.q("SELECT id FROM productions p WHERE status='uploaded' AND youtube_video_id IS NOT NULL AND "
+                "archived_at IS NULL AND uploaded_at < ? AND NOT EXISTS (SELECT 1 FROM productions c WHERE "
+                "c.parent_id=p.id AND c.status NOT IN ('uploaded','rejected','failed')) ORDER BY id",
+                (db.iso_in(-days * 86400),))
+    return [r["id"] for r in rows if not _running(r["id"])]
+
+
+def archive(pid: int) -> int:
+    """Remove a published video's files from this Mac; the record, YouTube link, metadata, thumbnail, subtitles
+    and reports stay, so the website keeps everything but the video file. Returns bytes freed."""
+    p = db.q1("SELECT status, youtube_video_id, archived_at, title FROM productions WHERE id=?", (pid,))
+    if not p or p["status"] != "uploaded" or not p["youtube_video_id"] or p["archived_at"] or _running(pid):
+        return 0
+    d, freed = folder(pid), 0
+    if d.exists():
+        for f in sorted(d.rglob("*"), reverse=True):
+            if f.is_file() and not _keep_when_archived(f):
+                freed += f.stat().st_size
+                f.unlink()
+            elif f.is_dir() and not any(f.iterdir()):
+                f.rmdir()
+    db.ex("DELETE FROM assets WHERE production_id=?", (pid,))
+    db.update("productions", pid, {"archived_at": db.iso()})
+    logs.event("info", "storage", f"Archived #{pid} '{(p['title'] or '')[:60]}': {freed / 1e6:.0f} MB freed — "
+               f"it stays on YouTube (youtu.be/{p['youtube_video_id']})", production_id=pid)
+    return freed
+
+
 def report(workspace_id: int | None = None) -> dict[str, Any]:
     where, args = ("WHERE workspace_id=?", (workspace_id,)) if workspace_id else ("", ())
     rows = db.q(f"SELECT id, title, status, format, kind, parent_id, youtube_video_id, created_at FROM productions "

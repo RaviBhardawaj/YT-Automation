@@ -64,6 +64,34 @@ def _inspect(path: Path) -> dict[str, Any]:
             "duration": float((d.get("format") or {}).get("duration") or 0)}
 
 
+PAD = 0.25                      # border added on every side, as a share of the picture's size
+
+
+def _pad(image: Path, out: Path) -> tuple[Path, tuple[int, int, int, int]]:
+    """The picture with an edge-extended border; returns it and the original frame's box (w, h, x, y)."""
+    import numpy as np
+    from PIL import Image
+    with Image.open(image) as im:
+        a = np.asarray(im.convert("RGB"))
+    h, w = a.shape[:2]
+    px, py = int(w * PAD) // 2 * 2, int(h * PAD) // 2 * 2         # even numbers keep the video encoder happy
+    Image.fromarray(np.pad(a, ((py, py), (px, px), (0, 0)), mode="edge")).save(out)
+    return out, (w, h, px, py)
+
+
+DRIVE_DB = -16.0      # loudness of the copy the face is animated from
+
+
+def _drive(audio: Path, out: Path) -> Path:
+    """The face is animated from a full-level copy of the line: SadTalker opens the mouth in proportion to how
+    loud the voice is, so a whispered or quiet line (played softly in the mix on purpose) would barely move the
+    lips. The clip itself keeps the original audio."""
+    r = subprocess.run([config.FFMPEG, "-v", "error", "-y", "-i", str(audio), "-af",
+                        f"dynaudnorm=f=150:g=5:p=0.9,loudnorm=I={DRIVE_DB}:TP=-1.5", "-ar", "16000", "-ac", "1",
+                        str(out)], capture_output=True, timeout=120)
+    return out if r.returncode == 0 and out.exists() else audio
+
+
 def talk(image: Path, audio: Path, out: Path, *, size: tuple[int, int], hold: float = 0.0) -> dict[str, Any]:
     """A clip of the picture's person speaking `audio`, at `size`, with `hold` seconds of the last frame and the
     original voice laid over it. Raises NotInstalled / RuntimeError — never fakes a clip."""
@@ -82,7 +110,11 @@ def talk(image: Path, audio: Path, out: Path, *, size: tuple[int, int], hold: fl
         # folder of the ffmpeg this app uses
         path = os.pathsep.join([str(Path(config.FFMPEG).parent), os.environ.get("PATH", "/usr/bin:/bin")])
         env = {**os.environ, "PATH": path, "PYTORCH_ENABLE_MPS_FALLBACK": "1", "PYTHONUNBUFFERED": "1"}
-        r = subprocess.run([str(python()), "inference.py", "--driven_audio", str(audio), "--source_image", str(image),
+        # Close-ups: the face crop reaches the picture's edge and SadTalker's paste-back (cv2.seamlessClone) fails.
+        # Give it room — an edge-extended border — and cut the result back to the original frame afterwards.
+        padded, box = _pad(image, tmp / "source.png")
+        drive = _drive(audio, tmp / "drive.wav")
+        r = subprocess.run([str(python()), "inference.py", "--driven_audio", str(drive), "--source_image", str(padded),
                             "--result_dir", str(tmp), "--still", "--preprocess", "full", "--size", "256"],
                            cwd=home(), env=env, capture_output=True, text=True, timeout=TIMEOUT)
         clips = sorted(tmp.rglob("*.mp4"), key=lambda f: f.stat().st_size)
@@ -91,7 +123,9 @@ def talk(image: Path, audio: Path, out: Path, *, size: tuple[int, int], hold: fl
             raise RuntimeError(f"SadTalker failed: {tail[0][:200]}")
         raw = clips[-1]
         w, h = size
-        vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=bicubic,crop={w}:{h},setsar=1,"
+        cw, ch, cx, cy = box
+        vf = (f"crop={cw}:{ch}:{cx}:{cy},"
+              f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=bicubic,crop={w}:{h},setsar=1,"
               f"fps={config.FPS},tpad=stop_mode=clone:stop_duration={max(0.0, hold):.3f},format=yuv420p")
         ff = subprocess.run([config.FFMPEG, "-v", "error", "-y", "-i", str(raw), "-i", str(audio), "-vf", vf,
                              "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",

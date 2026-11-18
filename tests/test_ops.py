@@ -56,6 +56,17 @@ class StopTests(unittest.TestCase):
         self.assertIn("held", pipeline._run_upload({"production_id": up}, {}))
         self.assertEqual(db.q1("SELECT status FROM productions WHERE id=?", (up,))["status"], "approved")
 
+    def test_a_stop_switched_on_by_another_process_is_seen(self):
+        from studio import settings
+        settings.set("ops.emergency_stop", {"on": False})       # this process has "off" cached
+        self.assertIsNone(ops.stopped())
+        db.ex("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES('ops.emergency_stop',?,?)",
+              (json.dumps({"on": True}), db.iso()))
+        self.assertFalse((settings.get("ops.emergency_stop") or {}).get("on"))
+        self.assertIsNotNone(ops.stopped())
+        worker.enqueue("production", {"stoptest": 3})
+        self.assertNotIn("production", {t["type"] for t in (worker.claim(lane) for lane in worker.LANES) if t})
+
     def test_stop_and_its_reason_are_on_the_audit_trail(self):
         ops.set_stop(True, "owner@test", "bad thumbnail batch")
         last = ops.recent(5)

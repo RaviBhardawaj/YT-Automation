@@ -18,7 +18,7 @@ import numpy as np
 
 from .. import config, db, logs
 from ..media import render, visuals
-from . import providers, store
+from . import performance, providers, store
 
 TITLE_SEC, END_SEC = 3.5, 4.5
 
@@ -45,6 +45,9 @@ def timeline(p: dict[str, Any]) -> list[dict[str, Any]]:
                     "provider": (take or {}).get("provider"),
                     "subtitle": d["text"] if d else None, "speech": (d or {}).get("seconds"),
                     "wav": (d or {}).get("wav"), "speaker": (d or {}).get("name"),
+                    "speaker_key": (d or {}).get("speaker"), "characters": sh["characters"],
+                    "emotion": performance.emotion_of((d or {}).get("manner", "")) if d else None,
+                    "animation": (sh["camera"] or {}).get("animation"),
                     "transition_out": sh["continuity"].get("transition_out")})
     out.append({"kind": "end", "seconds": END_SEC})
     t = 0.0
@@ -89,7 +92,7 @@ def _clip_for(c: dict[str, Any], i: int, work: Path, film: dict[str, Any], seed:
         img = filmmod._card(film["title"], film.get("closing_line", "") if c["kind"] == "end" else "", w, h,
                             work / f"{c['kind']}.jpg")
         render.scene_clip(i, {"kind": "image", "local_path": str(img), "is_card": True}, c["seconds"], 0.0, [],
-                          "long", work, out, seed, look="real")
+                          "long", work, out, seed, look=filmmod.current_look())
     elif c["motion_type"] in ("video", "dialogue_video", "lipsync_verified") and c.get("source") \
             and Path(c["source"]).exists():
         clip_len = float(visuals.probe_video(Path(c["source"])).get("duration") or 0)
@@ -99,7 +102,7 @@ def _clip_for(c: dict[str, Any], i: int, work: Path, film: dict[str, Any], seed:
             return _still(c, i, work, overlays, out, seed)
         part_a = work / f"c{i:04d}_a.mp4"
         render.scene_clip(i, {"kind": "video", "local_path": c["source"]}, play, 0.0,
-                          [o for o in overlays if o["start"] < play], "long", work, part_a, seed, look="real")
+                          [o for o in overlays if o["start"] < play], "long", work, part_a, seed, look=filmmod.current_look())
         if rest > 0.2:
             # finish the shot from where the motion ended (its last frame) with a gentle camera move — never jump
             # back to the key picture the motion started from, and never stretch the clip
@@ -107,7 +110,7 @@ def _clip_for(c: dict[str, Any], i: int, work: Path, film: dict[str, Any], seed:
             end_pic = render.last_frame(Path(c["source"]), work / f"c{i:04d}_last.jpg")
             shifted = [{**o, "start": 0.0, "end": max(0.0, o["end"] - play)} for o in overlays if o["end"] > play]
             render.scene_clip(i, {"kind": "image", "local_path": str(end_pic)}, rest, 0.0, shifted, "long", work,
-                              part_b, seed, look="real")
+                              part_b, seed, look=filmmod.current_look())
             render.concat([part_a, part_b], out, w=w, h=h)
         else:
             part_a.replace(out)
@@ -118,11 +121,12 @@ def _clip_for(c: dict[str, Any], i: int, work: Path, film: dict[str, Any], seed:
 
 
 def _still(c, i, work, overlays, out, seed) -> Path:
+    from ..creative import film as filmmod
     src = c.get("keyframe") or c.get("source")
     if not src or not Path(src).exists():
         raise FileNotFoundError(f"shot {c.get('scene')}.{c.get('shot')} has no picture")
     render.scene_clip(i, {"kind": "image", "local_path": src}, c["seconds"], 0.0, overlays, "long", work, out, seed,
-                      look="real")
+                      look=filmmod.current_look())
     return out
 
 
@@ -133,7 +137,6 @@ def _ts(t: float) -> str:
 
 def assemble(p: dict[str, Any]) -> dict[str, Any]:
     from ..creative import film as filmmod
-    from ..creative import music
     film, pid = p["package"], p["id"]
     work = filmmod.workdir(pid) / "edit"
     work.mkdir(exist_ok=True)
@@ -146,29 +149,46 @@ def assemble(p: dict[str, Any]) -> dict[str, Any]:
     video = work / "video.mp4"
     w, h = config.frame_size("long")
     joined = render.concat(clips, video, w=w, h=h)            # copy only when every clip's format matches
-    sr = filmmod.SR
-    track = np.zeros(int((total + 1) * sr), dtype=np.int32)
+    # ONE clock for everything: dialogue, music, ambience and subtitles are all placed from the timeline's times
+    sr = performance.SR
+    track = np.zeros(int((total + 1) * sr), dtype=np.float64)
+    speech: list[tuple[float, float]] = []
     for c in tl:
         if c.get("wav") and Path(c["wav"]).exists():
-            a = filmmod._read(Path(c["wav"])).astype(np.int32)
+            a, a_sr = performance._read(c["wav"])
+            if a_sr != sr:
+                a = np.interp(np.linspace(0, len(a) - 1, int(len(a) * sr / a_sr)), np.arange(len(a)), a)
             at = int(c["start"] * sr)
-            track[at:at + len(a)] += a[:max(0, len(track) - at)]
+            track[at:at + len(a)] += a[:max(0, len(track) - at)] / 32768
+            speech.append((c["start"], c["start"] + len(a) / sr))
     dialogue = work / "dialogue.wav"
-    filmmod._write(dialogue, np.clip(track, -32768, 32767))
-    bed = music.bed("funny", total + 1, work / "music.wav")
+    performance._write(dialogue, track)
+    plan = performance.music_plan(film, tl)
+    music_wav = performance.render_music(plan, total + 1, speech, work / "music.wav")
+    amb_wav, amb_used = performance.render_ambience(film, tl, total + 1, work / "ambience.wav")
+    mixed = work / "mix.wav"
+    mix_report = performance.mix(dialogue, music_wav, amb_wav, mixed)
     exp = export_dir(pid)
     final = exp / "film.mp4"
-    graph = (f"[1:a]aresample=48000[d];[2:a]aresample=48000,volume=0.07,afade=t=out:st={max(0, total - 3):.2f}:d=3[m];"
-             f"anoisesrc=color=pink:amplitude=0.012:r=48000,lowpass=f=900,highpass=f=120,atrim=0:{total:.3f}[air];"
-             f"[d][m][air]amix=inputs=3:duration=first:normalize=0,loudnorm=I=-15:TP=-1.5:LRA=11[a]")
-    render.ffmpeg(["-i", str(video), "-i", str(dialogue), "-i", str(bed), "-filter_complex", graph, "-map", "0:v",
-                   "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-                   "-t", f"{total:.3f}", str(final)])
+    render.ffmpeg(["-i", str(video), "-i", str(mixed), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
+                   "-b:a", "192k", "-movflags", "+faststart", "-t", f"{total:.3f}", str(final)])
     srt = [(c["start"], c["start"] + (c.get("speech") or c["seconds"]), c["subtitle"]) for c in tl if c.get("subtitle")]
     (exp / "film.srt").write_text("".join(f"{i + 1}\n{_ts(a)} --> {_ts(b)}\n{t}\n\n" for i, (a, b, t) in enumerate(srt)),
                                   encoding="utf-8")
     _manifests(p, tl, exp, total)
     _render_manifest(exp, tl, film, (w, h), joined, final, srt_count=len(srt))
+    dlg = performance.dialogue_timeline(tl)
+    for d in dlg:                                       # the talking clip each line plays over (for lip-sync QC)
+        d["clip"] = next((c.get("source") for c in tl if c.get("shot_id") == d["shot_id"]), None)
+    master = {"clock": "seconds from the first frame of film.mp4", "duration": round(total, 3),
+              "shots": [{k: c.get(k) for k in ("scene", "shot", "start", "end", "shot_type", "characters",
+                                               "motion_type", "provider", "animation")}
+                        for c in tl if c["kind"] == "shot"],
+              "dialogue": dlg, "music": plan, "ambience": amb_used,
+              "subtitles": [{"start": a, "end": b, "text": t} for a, b, t in srt],
+              "mix": {**mix_report, "dialogue_over_music": performance.dialogue_vs_music(dialogue, music_wav, speech)}}
+    (exp / "master_timeline.json").write_text(json.dumps(master, ensure_ascii=False, indent=1,
+                                                        default=performance.jsonable))
     logs.event("info", "film", f"Edited {total / 60:.1f} min from {len(tl) - 2} shots", production_id=pid)
     return {"video": str(final), "srt": str(exp / "film.srt"), "seconds": round(total, 2), "timeline": tl}
 

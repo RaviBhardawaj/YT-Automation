@@ -934,6 +934,8 @@ def media_owner_ok(request: Request, target: Path) -> bool:
         return p.isdigit() and auth.owns(ws, "productions", int(p))
     if (p := first_part(config.DATA_DIR / "channels")) is not None:
         return p.isdigit() and auth.owns(ws, "channels", int(p))
+    if (p := first_part(config.DATA_DIR / "characters")) is not None:      # a channel's character library
+        return p.startswith("channel_") and p[8:].isdigit() and auth.owns(ws, "channels", int(p[8:]))
     if (p := first_part(config.DATA_DIR / "workspaces")) is not None:
         return p == f"{ws:05d}"
     if first_part(config.SAMPLES_DIR) is not None:
@@ -1462,6 +1464,15 @@ async def api_retry(request: Request, pid: int):
     return ok()
 
 
+@app.post("/api/productions/{pid}/self-review")
+async def api_self_review(request: Request, pid: int):
+    from .. import selfreview
+    r = selfreview.review(pid)
+    if r["result"] in ("skipped", "waiting", "error"):
+        return bad(f"Still waiting: {r.get('why')}")
+    return ok(**r)
+
+
 @app.post("/api/productions/{pid}/metadata")
 async def api_metadata(request: Request, pid: int):
     data = await body(request)
@@ -1956,7 +1967,8 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
                               (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid),
                 ypp_status=growth.status(ch), readiness=growth.policy_readiness(cid), ypp_rules=growth.RULES,
                 diagnosis=doctor.diagnose(cid), experiments=experiments.results(cid, news.is_news(ch)),
-                weekly=learning.latest_weekly(cid), remake_offer=_remake_offer(ch), **_social_ctx(cid))
+                weekly=learning.latest_weekly(cid), remake_offer=_remake_offer(ch),
+                kv=kahaani_pages.section(ch) if tab == 'settings' else None, **_social_ctx(cid))
     return _with_cookie(resp, cid)
 
 
@@ -2997,7 +3009,10 @@ def storage_page(request: Request):
     parts = storage.components() if is_admin(request) else []
     return page(request, "storage.html", rep=rep, lim=plans.limits(ws_id(request)), mac=mac, parts=parts, backups=backups,
                 auto_clean=settings.get("storage.auto_clean_days"),
-                auto_delete=settings.get("storage.auto_delete_rejected_days"))
+                auto_delete=settings.get("storage.auto_delete_rejected_days"),
+                archive_days=settings.get("storage.archive_after_days") or 0,
+                housekeeping_on=bool(db.q1("SELECT 1 FROM schedules WHERE task_type='housekeeping' AND enabled=1")),
+                archived_n=db.q1("SELECT COUNT(*) AS n FROM productions WHERE archived_at IS NOT NULL")["n"])
 
 
 @app.post("/api/productions/{pid}/delete")
@@ -3043,7 +3058,17 @@ async def api_storage(request: Request, action: str):
     if action == "settings" and is_admin(request):
         settings.set("storage.auto_clean_days", max(0, min(365, int(data.get("auto_clean_days") or 0))))
         settings.set("storage.auto_delete_rejected_days", max(0, min(365, int(data.get("auto_delete_days") or 0))))
+        settings.set("storage.archive_after_days", max(0, min(365, int(data.get("archive_days") or 0))))
+        if any(int(data.get(k) or 0) for k in ("auto_clean_days", "auto_delete_days", "archive_days")):
+            db.ex("UPDATE schedules SET enabled=1 WHERE task_type='housekeeping'")     # the nightly run does it
         return ok()
+    if action == "archive" and is_admin(request):
+        days = int(settings.get("storage.archive_after_days") or 0)
+        if not days:
+            return bad("Set 'Archive published videos after' to a number of days first.")
+        ids = storage.archivable(days)
+        freed = sum(storage.archive(i) for i in ids)
+        return ok(detail=f"{len(ids)} published video(s) archived, {freed / 1e6:.0f} MB freed — they stay on YouTube")
     if action == "cache" and is_admin(request):
         freed = storage.clear_cache(int(data.get("older_than_days") or 0))
         return ok(detail=f"Download cache: {freed / 1e6:.0f} MB freed")
@@ -3250,3 +3275,6 @@ async def api_admin_meta(request: Request):
     if str(data.get("app_secret") or "").strip():
         settings.set_secret("meta_app_secret", str(data["app_secret"]).strip())
     return ok(detail="Meta app saved")
+
+
+from . import kahaani_pages  # noqa: E402,F401  (KahaaniVerse page and API)

@@ -15,6 +15,8 @@ allowance runs out, the job waits and continues by itself after it resets (00:00
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import re
 import subprocess
@@ -37,7 +39,10 @@ STATUS = {"script": "reading the script", "plan": "planning the shots", "cast": 
           "voice": "recording the voices", "sync": "syncing dialogue to shots",
           "shots": "filming the shots", "render": "editing the film", "qa": "quality check"}
 SR = 24000
-SHOT = (1024, 576)                                     # generated size; upscaled to 1080p in the edit
+_LOOK: contextvars.ContextVar[str] = contextvars.ContextVar("film_look", default="real")
+# generated size; upscaled to 1080p in the edit. 896×504 is 16:9 in two 512-px tiles — Cloudflare charges its free
+# allowance per tile, so this costs half of 1024×576 (four tiles) and fits twice as many shots in a day
+SHOT = (896, 504)
 REALISM = re.compile(r"\b(photo-?realistic|live[- ]action|realistic|real (human|people|actors?|movie|film)|"
                      r"cinematic realism)\b", re.I)
 MALE = [("hm_omega", 1.0), ("hm_psi", 1.0), ("hm_omega", 0.90), ("hm_psi", 1.08), ("hm_omega", 1.07),
@@ -64,6 +69,20 @@ class NetworkHiccup(Exception):
     retry_after = 180
 
 
+@contextlib.contextmanager
+def look_as(look: str):
+    """Pictures and grade for this block use `look` ('real' photo-real films, 'animated3d' KahaaniVerse)."""
+    token = _LOOK.set(look or "real")
+    try:
+        yield
+    finally:
+        _LOOK.reset(token)
+
+
+def current_look() -> str:
+    return _LOOK.get()
+
+
 def wants_film(request: str) -> bool:
     """A request for a real-looking film (not a cartoon)."""
     return bool(REALISM.search(request or ""))
@@ -80,14 +99,14 @@ def create(channel_id: int, request: str, *, plan: dict[str, Any], actor: str = 
     ch = channels.get(channel_id)
     title = (script_import.parse(request)["title"] if script_import.looks_like_screenplay(request)
              else request.strip().splitlines()[0])[:90] or "Film"
-    plan = {**plan, "workflow": "film", "look": "real", "actor": actor}
+    plan = {**plan, "workflow": "film", "look": plan.get("look") or "real", "actor": actor}
     pid = db.insert("productions", {
         "format": "long", "title": title, "status": "queued", "stage": "script", "kind": "film",
         "channel_id": channel_id, "workspace_id": ch["workspace_id"], "language": plan.get("language") or "Hinglish",
         "request": json.dumps(plan, ensure_ascii=False), "package": "{}", "timeline": "{}", "episode": "{}",
         "test_mode": 0, "created_at": db.iso(), "updated_at": db.iso()})
     worker.enqueue("production", {"production_id": pid}, production_id=pid, max_attempts=3)
-    logs.event("info", "film", f"Photo-real film queued: '{title}'", production_id=pid)
+    logs.event("info", "film", f"{'3D-animated' if plan['look'] == 'animated3d' else 'Photo-real'} film queued: '{title}'", production_id=pid)
     return pid
 
 
@@ -149,6 +168,8 @@ def stage_script(p: dict[str, Any]) -> None:
     from .. import pipeline
     plan = _plan(p)
     text = plan.get("request") or ""
+    if plan.get("kahaani"):
+        return _kahaani_script(p, plan)
     film = script_import.parse(text) if script_import.looks_like_screenplay(text) else \
         _from_ai(plan, channels.get(p["channel_id"]))
     if not film["scenes"] or not film["cast"]:
@@ -166,6 +187,34 @@ def stage_script(p: dict[str, Any]) -> None:
                f"{len(film['cast'])} characters ({', '.join(c['name'] for c in film['cast'])})", production_id=p["id"])
 
 
+def _kahaani_script(p: dict[str, Any], plan: dict[str, Any]) -> None:
+    """KahaaniVerse: the director's concept → screenplay → story QC (the storyboard is the next stage)."""
+    from .. import pipeline
+    from . import director
+    concept = plan.get("concept") or {}
+    minutes = float(plan.get("minutes") or 10)
+    work = workdir(p["id"]) / "screenplay.json"         # a screenplay that passed is kept: a rerun never rewrites it
+    for attempt in range(2):
+        sp = json.loads(work.read_text()) if work.exists() else director.screenplay(p["channel_id"], concept, minutes)
+        roman = [ln for s in sp["scenes"] for ln in s["lines"] if director._devanagari_ratio(ln["text"]) < 0.5]
+        if roman:                                   # a few lines came back in Roman letters: the voices need Devanagari
+            for ln, t in zip(roman, _devanagari([ln["text"] for ln in roman])):
+                ln["text"] = t
+        problems = director.check_story(sp, minutes)
+        if not problems:
+            work.write_text(json.dumps(sp, ensure_ascii=False))
+            break
+        work.unlink(missing_ok=True)                # a weak screenplay is written again, never reused
+        logs.event("warning", "film", f"Screenplay failed the story check ({'; '.join(problems)[:200]}) — "
+                   + ("writing it again" if attempt == 0 else "stopping"), production_id=p["id"])
+    if problems:
+        raise pipeline.NeedsAttention("NEEDS REVIEW — story check: " + "; ".join(problems))
+    film = director.to_film(p["channel_id"], sp, [])
+    pipeline.save(p["id"], package={**film, "kind": "film", "screenplay": sp}, title=film["title"])
+    logs.event("info", "film", f"Screenplay: {len(sp['scenes'])} scenes, {sp['words']} words, cast "
+               f"{', '.join(c['name'] for c in film['cast'])} ({sp['generated_by']['provider']})", production_id=p["id"])
+
+
 # ------------------------------------------------------------------ shot list
 
 def stage_plan(p: dict[str, Any]) -> None:
@@ -173,7 +222,17 @@ def stage_plan(p: dict[str, Any]) -> None:
     from .. import pipeline
     from ..film_studio import shotlist
     film = p["package"]
-    planned = shotlist.plan(film)
+    if film.get("screenplay"):                     # storyboarded by the cinematographer, shot by shot
+        from . import director
+        shots = film.get("storyboard") or director.storyboard(film["screenplay"], cache=workdir(p["id"]))
+        film["storyboard"] = shots
+        counts: dict[str, int] = {}
+        for sh in shots:
+            counts[sh["camera"]["board_type"]] = counts.get(sh["camera"]["board_type"], 0) + 1
+        planned = {"shots": shots, "runtime": round(sum(s["target_seconds"] for s in shots), 1), "counts": counts,
+                   "coverage": None}
+    else:
+        planned = shotlist.plan(film)
     n = shotlist.save(p["id"], p["workspace_id"], planned)
     film["shot_plan"] = {"shots": n, "runtime": planned["runtime"], "counts": planned["counts"],
                          "coverage": planned["coverage"]}
@@ -199,13 +258,13 @@ def _gen(prompt: str, out: Path, *, refs: list[Path] | None = None, size: tuple[
         providers.guard(pick["provider"])
         try:
             if pick["provider"] == "cloudflare_flux":
-                visuals.generate_cloudflare(prompt, "long", out, look="real", refs=refs, size=size)
+                visuals.generate_cloudflare(prompt, "long", out, look=_LOOK.get(), refs=refs, size=size)
             elif pick["provider"] == "hf_flux":
-                visuals.generate_hf_flux(prompt, "long", out, look="real", size=size)
+                visuals.generate_hf_flux(prompt, "long", out, look=_LOOK.get(), size=size)
             elif pick["provider"] == "local_flux":
-                visuals.generate_local_flux(prompt, "long", out, look="real", size=size)
+                visuals.generate_local_flux(prompt, "long", out, look=_LOOK.get(), size=size)
             elif pick["provider"] == "local_sd":
-                visuals.generate_local_sd(f"{prompt}. {visuals.LOOK_PROMPT['real']}", size[0], size[1], out)
+                visuals.generate_local_sd(f"{prompt}. {visuals.LOOK_PROMPT[_LOOK.get()]}", size[0], size[1], out)
             else:
                 continue
         except visuals.AllowanceUsedUp:
@@ -237,6 +296,7 @@ def stage_cast(p: dict[str, Any]) -> None:
     """Propose a picture for every character and the location; continue only with approved pictures."""
     from .. import pipeline
     from ..film_studio import casting
+    from ..film_studio import store as store_mod
     film, ws = p["package"], p["workspace_id"]
     work = workdir(p["id"]) / "cast"
     work.mkdir(exist_ok=True)
@@ -246,6 +306,10 @@ def stage_cast(p: dict[str, Any]) -> None:
         if not r.get("file_path") and r["status"] != "rejected":
             casting.generate(r["id"], ws, work, _gen)
             made += 1
+    if _plan(p).get("kahaani"):                     # daily films: proposed pictures are used (checked again in QA)
+        for r in casting.latest(p["id"], ws).values():
+            if r.get("file_path") and not r.get("approved") and r["status"] == "proposed":
+                store_mod.set_ref_status(r["id"], ws, "approved")
     still = casting.missing(p["id"], ws)
     if still:
         pipeline.save(p["id"], status="needs_review",
@@ -260,9 +324,13 @@ def stage_cast(p: dict[str, Any]) -> None:
 # ------------------------------------------------------------------ voices
 
 def _assign_voices(cast: list[dict[str, Any]]) -> None:
-    pools = {"male": list(MALE), "female": list(FEMALE)}
+    """A voice for every character that has none (recurring characters keep their fixed library voice)."""
+    taken = {(c["voice"]["voice_id"], c["voice"]["pitch"]) for c in cast if c.get("voice")}
+    pools = {"male": [v for v in MALE if v not in taken], "female": [v for v in FEMALE if v not in taken]}
     for c in cast:
-        pool = pools[c["gender"]]
+        if c.get("voice"):
+            continue
+        pool = pools[c["gender"]] or list(MALE if c["gender"] == "male" else FEMALE)
         deep = re.search(r"\b(deep|mature|heavy)\b", c.get("voice_note", ""), re.I)
         pick = next((v for v in pool if deep and v[1] < 1.0), None) or pool[0]
         pool.remove(pick)
@@ -307,22 +375,27 @@ def stage_voice(p: dict[str, Any]) -> None:
     if not all(c.get("voice") for c in film["cast"]):
         _assign_voices(film["cast"])
     voices = {c["key"]: c["voice"] for c in film["cast"]}
+    profiles = {c["key"]: c["performance"] for c in film["cast"] if c.get("performance")}
+    from ..film_studio import performance
     work = workdir(p["id"]) / "voice"
     work.mkdir(exist_ok=True)
     for si, s in enumerate(film["scenes"]):
         for li, ln in enumerate(s["lines"]):
             out = work / f"s{si:02d}_l{li:02d}.wav"
+            v = voices[ln["speaker"]]
+            # Voice Director: the character's one fixed voice; the line's emotion shapes speed, pitch and level
+            prof = profiles.get(ln["speaker"]) or {"voice_id": v["voice_id"], "pitch": v.get("pitch", 1.0),
+                                                   "speed": v.get("speed", 1.0), "logical_id": ln["speaker"]}
+            dl = performance.deliver(ln, prof)
+            ln["delivery"] = {k: dl[k] for k in ("logical_id", "voice_id", "emotion", "speed", "pitch", "gain")}
             if not out.exists():
-                v = voices[ln["speaker"]]
-                speed = 0.94 if "whisper" in (ln.get("manner") or "") else 1.0
-                audio, sr = tts._synth_sentence(ln.get("tts") or ln["text"], "kokoro", v["voice_id"], "hi", speed)
+                audio, sr = tts._synth_sentence(dl["text"], "kokoro", dl["voice_id"], "hi", dl["speed"])
                 if sr != SR:
                     audio = np.interp(np.linspace(0, len(audio) - 1, int(len(audio) * SR / sr)),
                                       np.arange(len(audio)), audio).astype(np.int16)
-                audio = _pitch(audio, v["pitch"], work)
-                if "whisper" in (ln.get("manner") or ""):
-                    audio = (audio * 0.55).astype(np.int16)
-                _write(out, audio)
+                audio = _pitch(np.asarray(audio, dtype=np.int16), dl["pitch"], work)
+                gain_db = 20 * np.log10(max(dl["gain"], 0.05))
+                _write(out, performance.level(audio, performance.LINE_RMS_DB + gain_db))
             with wave.open(str(out), "rb") as w:
                 ln["seconds"] = round(w.getnframes() / w.getframerate(), 3)
             ln["wav"] = str(out)
@@ -441,9 +514,14 @@ def stage_qa(p: dict[str, Any]) -> str | None:
                        production_id=p["id"])
             return "shots"                                  # redo only those shots, then re-edit
     hard = [c for c in checks if c["severity"] == "fail" and c["ok"] is False]
+    from ..film_studio import edit, performance
+    master_path = edit.export_dir(p["id"]) / "master_timeline.json"
+    perf = performance.film_qc(json.loads(master_path.read_text()), film.get("cast") or []) \
+        if master_path.exists() else {"overall": "unverified", "note": "no master timeline (edited before v2)"}
+    perf = json.loads(json.dumps(perf, default=performance.jsonable))
+    (edit.export_dir(p["id"]) / "performance_report.json").write_text(json.dumps(perf, ensure_ascii=False, indent=1))
     report = {"passed": not hard, "auto_publish_ok": False, "checks": checks, "shot_counts": counts,
-              "unverified": [c["name"] for c in checks if c["ok"] is None]}
-    from ..film_studio import edit
+              "unverified": [c["name"] for c in checks if c["ok"] is None], "performance": perf}
     (edit.export_dir(p["id"]) / "quality_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
     pipeline.save(p["id"], qa=report)
     if hard:
@@ -457,6 +535,15 @@ def stage_qa(p: dict[str, Any]) -> str | None:
     return None
 
 
-STAGE_FN = {"script": stage_script, "plan": stage_plan, "cast": stage_cast, "voice": stage_voice, "sync": stage_sync,
-            "shots": stage_shots,
-            "render": stage_render, "qa": stage_qa}
+def _in_look(fn):
+    """Every stage runs in its film's look (photo-real unless the film asked for another)."""
+    def run(p: dict[str, Any]):
+        with look_as(_plan(p).get("look") or "real"):
+            return fn(p)
+    run.__name__ = fn.__name__
+    return run
+
+
+STAGE_FN = {name: _in_look(fn) for name, fn in {
+    "script": stage_script, "plan": stage_plan, "cast": stage_cast, "voice": stage_voice, "sync": stage_sync,
+    "shots": stage_shots, "render": stage_render, "qa": stage_qa}.items()}

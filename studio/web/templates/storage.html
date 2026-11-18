@@ -43,7 +43,9 @@
     <h2>Automatic clean-up</h2>
     <label class="f"><span>Clear working files of finished videos after (days, 0 = never)</span><input name="auto_clean_days" data-type="number" type="number" min="0" max="365" value="{{ auto_clean }}"></label>
     <label class="f"><span>Delete rejected / cancelled videos after (days, 0 = never)</span><input name="auto_delete_days" data-type="number" type="number" min="0" max="365" value="{{ auto_delete }}"></label>
-    <button type="submit">Save</button><div class="muted small">Runs every night at 3:30.</div>
+    <label class="f"><span>Archive published videos after (days, 0 = never) — the video file leaves this Mac; its YouTube link, details, thumbnail and subtitles stay here</span><input name="archive_days" data-type="number" type="number" min="0" max="365" value="{{ archive_days }}"></label>
+    <button type="submit">Save</button> <button type="button" data-post="/api/storage/archive" data-confirm="Archive every published video older than the days above now? Their video files are deleted from this Mac; they stay on YouTube.">Archive now</button>
+    <div class="muted small">Runs every night at 3:30{% if not housekeeping_on %} — <b>switched off</b>: saving a number above 0 switches it on{% endif %}.{% if archived_n %} {{ archived_n }} video(s) archived so far.{% endif %}</div>
   </form>
   <div class="card"><h2>This computer</h2>
     <div class="kv"><div>Free disk space</div><div>{{ '%.0f' % (rep.disk_free_bytes / 1e9) }} GB</div><div>Download cache</div><div>{{ '%.2f' % (rep.cache_bytes / 1e9) }} GB (stock clips &amp; images; re-downloaded if needed)</div></div>

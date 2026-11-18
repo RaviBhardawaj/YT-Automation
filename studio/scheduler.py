@@ -14,6 +14,8 @@ _stop = threading.Event()
 _thread: threading.Thread | None = None
 
 DEFAULT_SCHEDULES = [
+    {"name": "Self-review held videos (fix, re-check, publish when every gate passes)", "task_type": "self_review",
+     "kind": "interval", "interval_minutes": 30},
     {"name": "Topic research refill", "task_type": "ideation_refill", "kind": "daily", "time_of_day": "07:30"},
     {"name": "Daily production plan", "task_type": "daily_plan", "kind": "daily", "time_of_day": "08:00"},
     {"name": "YouTube analytics sync", "task_type": "analytics_sync", "kind": "interval", "interval_minutes": 360},

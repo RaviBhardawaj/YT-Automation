@@ -53,8 +53,12 @@ TEXT = {
     "hook_mtf": {"en": "Daily, 15-minute and 1-hour Fibonacci levels from the {basis} close: how do they differ?",
                  "hi": "{basis} के क्लोज़ से डेली, 15-मिनट और 1-घंटे के फिबोनाची लेवल्स — इनमें फ़र्क क्या है?"},
     "zones": {"en": "The main zones for {ndate}: S2 at {s2}, the pivot at {p} and R2 at {r2}. The {rdate} close of {close} "
-                    "is {d} points {side} that pivot.",
-              "hi": "{ndate} के मेन ज़ोन: S2 {s2}, पिवट {p} और R2 {r2}। {rdate} का क्लोज़ {close} है — पिवट से {d} पॉइंट्स {side}।"},
+                    "is {d} points {side} that pivot. The pivot is the average of the {rdate} high, low and close, and S2 and R2 "
+                    "come from that session's range with a Fibonacci ratio. They are reference zones that show where "
+                    "the price sits, not predictions.",
+              "hi": "{ndate} के मेन ज़ोन: S2 {s2}, पिवट {p} और R2 {r2}। {rdate} का क्लोज़ {close} है — पिवट से {d} पॉइंट्स {side}। "
+                    "पिवट {rdate} के हाई, लो और क्लोज़ का एवरेज है, और S2 व R2 उसी सेशन की रेंज पर फिबोनाची रेशियो लगाकर "
+                    "निकलते हैं। ये सिर्फ़ रेफरेंस ज़ोन हैं, जो बताते हैं कि प्राइस कहाँ है — कोई प्रेडिक्शन नहीं।"},
     "hook_next_levels": {"en":"NIFTY 50 Fibonacci reference levels for {ndate}, calculated from the {rdate} session.",
                          "hi": "{ndate} के NIFTY 50 फिबोनाची लेवल्स — {rdate} के सेशन से निकले हुए। ध्यान से देखिए।"},
     "title_next_levels": {"en": "NIFTY 50 Levels for {ndate} | Fibonacci Pivots #Shorts",
@@ -144,7 +148,8 @@ def _fact_sheet_scene(facts: dict[str, Any], purpose: str) -> dict[str, Any]:
     nx, f = facts["next"]["levels"], episode.analysis.fmt
     close = facts["review"]["close"]
     side = i18n.t("above" if close > nx["P"] else "below", L)
-    # Only the three main zones: long prices read slowly, and a Short has about 40 seconds for its segment
+    # Only the three main zones (long prices read slowly) plus one line on where they come from: the gate needs
+    # 40+ words of teaching in a Short, and the bare levels are ~26
     text = tx("zones", L, ndate=facts["next"]["label"], s2=f(nx["S2"]), p=f(nx["P"]), r2=f(nx["R2"]),
               rdate=facts["review_label"], close=f(close), d=f(abs(round(close - nx["P"], 2))), side=side)
     return {"purpose": purpose, "narration": text, "on_screen_text": "", "visual": "next_levels",
