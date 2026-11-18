@@ -65,6 +65,13 @@ class RemakeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             remake.enable(cid, True)
 
+    def test_kids_channel_set_up_for_research_becomes_a_story_channel(self):
+        cid = channels.create({"name": "Kids facts", "workflow": "factual", "niche": "kids", "made_for_kids": True}, 1)
+        self.assertTrue(remake.can_offer(channels.get(cid)))
+        remake.enable(cid, True)
+        self.assertEqual(channels.get(cid)["workflow"], "animated_story")
+        self.assertTrue(remake.enabled(channels.get(cid)))
+
     def test_candidates_skip_clickbait_old_and_used_videos(self):
         with mock.patch.object(remake.sources, "youtube_most_popular", chart):
             got = remake.candidates(channels.get(self.ch))
@@ -129,7 +136,7 @@ class RemakeTests(unittest.TestCase):
         self.assertIn("one long video and one Short", third["skipped"])
 
     def test_first_start_switches_on_kids_and_comedy_story_channels_once(self):
-        settings.set("remake.auto_enabled_once", False)
+        settings.set("remake.auto_enabled_v2", False)
         comedy = channels.create({"name": "Fun", "workflow": "animated_story", "styles": ["comedy"], "niche": "fun"}, 1)
         facts = channels.create({"name": "Facts2", "workflow": "factual", "niche": "tech"}, 1)
         done = remake.auto_enable()

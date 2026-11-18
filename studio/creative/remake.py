@@ -37,6 +37,16 @@ def enabled(ch: dict[str, Any] | None) -> bool:
             and ch["workflow"] in ("animated_story", "auto") and not news.is_news(ch))
 
 
+def can_offer(ch: dict[str, Any] | None) -> bool:
+    """Remakes can run here: a story channel, or any kids / comedy channel (switching on makes it a story channel).
+    Never the NIFTY data channel or a news channel."""
+    from . import news
+    if not ch or not trends.eligible(ch) or news.is_news(ch):
+        return False
+    return ch["workflow"] in ("animated_story", "auto") or bool(ch.get("made_for_kids")) or \
+        bool({"kids", "comedy"} & set(channels.styles(ch)))
+
+
 def regions(ch: dict[str, Any]) -> list[str]:
     r = (ch.get("meta") or {}).get("remake_regions")
     if r:
@@ -50,8 +60,10 @@ def enable(channel_id: int, on: bool = True, times: str | None = None, actor: st
     ch = channels.get(channel_id)
     if not ch:
         raise ValueError("channel not found")
-    if on and (ch["workflow"] not in ("animated_story", "auto") or not trends.eligible(ch)):
-        raise ValueError("trending-story remakes are for animated story channels (kids, comedy …)")
+    if on and not can_offer(ch):
+        raise ValueError("trending-story remakes are for kids, comedy and other story channels")
+    if on and ch["workflow"] == "factual":                # a kids/comedy channel set up for researched videos
+        channels.update(channel_id, {"workflow": "animated_story"}, actor=actor)
     db.update("channels", channel_id, {"meta": db.dumps({**(ch.get("meta") or {}), "trend_remake": bool(on)}),
                                        "updated_at": db.iso()})
     if on:
@@ -264,14 +276,14 @@ def topic_for(channel_id: int, fmt: str) -> tuple[int | None, bool]:
 def auto_enable() -> list[int]:
     """One time, on the first start after this feature arrives: switch remakes on for every active kids or comedy
     story channel that never chose either way. Switching it off later sticks (this never runs again)."""
-    if settings.get("remake.auto_enabled_once"):
+    if settings.get("remake.auto_enabled_v2"):
         return []
-    settings.set("remake.auto_enabled_once", True)
+    settings.set("remake.auto_enabled_v2", True)
     done = []
     for ch in channels.all_channels():
         if "trend_remake" in (ch.get("meta") or {}) or ch.get("status") != "active":
             continue
-        if not (ch.get("made_for_kids") or {"kids", "comedy"} & set(channels.styles(ch))):
+        if not (ch.get("made_for_kids") or {"kids", "comedy"} & set(channels.styles(ch))) or not can_offer(ch):
             continue
         try:
             enable(ch["id"], True, actor="first start: trending-story remakes")

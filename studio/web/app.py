@@ -1930,6 +1930,11 @@ def channel_checklist(ch: dict[str, Any]) -> list[dict[str, Any]]:
     return steps
 
 
+def _remake_offer(ch: dict) -> bool:
+    from ..creative import remake
+    return remake.can_offer(ch)
+
+
 @app.get("/channels/{cid:int}", response_class=HTMLResponse)
 def channel_page(request: Request, cid: int, tab: str = "overview"):
     from .. import channels
@@ -1951,7 +1956,7 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
                               (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid),
                 ypp_status=growth.status(ch), readiness=growth.policy_readiness(cid), ypp_rules=growth.RULES,
                 diagnosis=doctor.diagnose(cid), experiments=experiments.results(cid, news.is_news(ch)),
-                weekly=learning.latest_weekly(cid), **_social_ctx(cid))
+                weekly=learning.latest_weekly(cid), remake_offer=_remake_offer(ch), **_social_ctx(cid))
     return _with_cookie(resp, cid)
 
 

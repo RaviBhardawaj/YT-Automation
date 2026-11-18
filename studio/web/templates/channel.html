@@ -45,16 +45,16 @@
   </div>
 </form>
 
-{% if ch.workflow in ('animated_story', 'auto') %}
+{% if remake_offer %}
 <div class="card" style="margin-top:16px">
   <div class="spread"><h2>Trending-story remakes</h2>
-    {% if ch.meta.trend_remake %}<span class="chip ok">on</span>{% else %}<span class="chip">off</span>{% endif %}</div>
+    {% if ch.meta.trend_remake and ch.workflow != 'factual' %}<span class="chip ok">on</span>{% else %}<span class="chip">off</span>{% endif %}</div>
   <div class="muted small" style="margin-bottom:8px">Every day the studio reads YouTube's most-popular list (titles and
     descriptions only, nothing is downloaded), picks the fastest-growing story, and writes its own version of that
     story idea with this channel's characters — or new characters just for that video. Exactly one long video and one
     Short a day. Titles, characters, scenes and endings are always our own, so the channel stays clear of copyright
     claims and YouTube's reused-content rule.</div>
-  {% if ch.meta.trend_remake %}
+  {% if ch.meta.trend_remake and ch.workflow != 'factual' %}
   <div class="row"><span class="small">Long video and Short at {{ ch.schedule_time }}</span>
     <button data-post="/api/channels/{{ ch.id }}/remake" data-body='{"action":"find"}' data-reload="no">Find today's story now</button>
     <button class="danger" data-post="/api/channels/{{ ch.id }}/remake" data-body='{"on":false}'>Switch off</button></div>
