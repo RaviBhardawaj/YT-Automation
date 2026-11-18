@@ -190,6 +190,23 @@ def youtube_search(query: str, language: str, region: str, *, days: int = 365, l
     return out
 
 
+def youtube_most_popular(region: str, category_id: str, *, limit: int = 25) -> list[dict[str, Any]]:
+    """YouTube's own 'most popular right now' chart for one region and category (videos.list chart=mostPopular,
+    1 API unit). Metadata only: title, description, channel, views, length — nothing is downloaded."""
+    found = _yt("videos", {"part": "snippet,statistics,contentDetails", "chart": "mostPopular", "regionCode": region,
+                           "videoCategoryId": category_id, "maxResults": min(limit, 50)}, 1)
+    out = []
+    for v in found.get("items", []):
+        sn, st = v.get("snippet", {}), v.get("statistics", {})
+        out.append({
+            "id": v["id"], "url": f"https://www.youtube.com/watch?v={v['id']}", "title": sn.get("title", ""),
+            "description": (sn.get("description") or "")[:800], "channel": sn.get("channelTitle", ""),
+            "published_at": _iso_from_any(sn.get("publishedAt")), "views": int(st.get("viewCount", 0) or 0),
+            "seconds": _iso_duration_seconds(v.get("contentDetails", {}).get("duration", "")),
+            "category": category_id, "region": region, "tags": (sn.get("tags") or [])[:12]})
+    return out
+
+
 # ------------------------------------------------------------------ Ollama web search
 
 def ollama_web_search(query: str, limit: int = 8) -> list[Evidence]:
