@@ -291,3 +291,50 @@ def auto_enable() -> list[int]:
         except ValueError:
             continue
     return done
+
+
+def make_videos_now(channel_id: int) -> dict[str, Any]:
+    """One click: find today's trending story, write our long episode + Short, and start making both right away.
+    They count as today's scheduled long and Short, so the timed slots don't make them again."""
+    from .. import jobs
+    ch = channels.get(channel_id)
+    if not can_offer(ch):
+        raise ValueError("trending-story remakes are for kids, comedy and other story channels")
+    if not enabled(ch):
+        enable(channel_id, True, actor="make today's videos now")
+    today = make_today(channel_id)
+    day = datetime.now().astimezone().date().isoformat()
+    started = []
+    for fmt, slot_key in (("long", day), ("short", day + "#2")):
+        tid = today.get(fmt)
+        if not tid or db.q1("SELECT status FROM topics WHERE id=?", (tid,))["status"] == "producing":
+            continue
+        if db.q1("SELECT id FROM productions WHERE channel_id=? AND json_extract(request, '$.scheduled_for')=? "
+                 "AND status<>'rejected'", (channel_id, slot_key)):
+            continue                                        # today's slot already has its video
+        res = jobs.create(channel_id, "", idea_id=tid, actor="user", fmt=fmt, scheduled_for=slot_key,
+                          use_cast=bool(today.get("use_cast", True)))
+        started += res.get("production_ids") or []
+    logs.event("info", "planner", f"'{ch['name']}': today's trend remake videos started now: {started}")
+    return {**{k: today.get(k) for k in ("long", "short", "premise")}, "started": started}
+
+
+def status(channel_id: int) -> dict[str, Any] | None:
+    """What the channel card shows: today's story, where it came from, and today's two videos with their status."""
+    rows = _today(channel_id)
+    err = db.q1("SELECT last_error, status FROM tasks WHERE type='trend_remake' AND payload LIKE ? AND created_at>=? "
+                "ORDER BY id DESC LIMIT 1", (f'%"channel_id": {channel_id},%', db.iso_in(-12 * 3600)))
+    working = bool(err and err["status"] in ("pending", "running"))
+    failed = (err or {}).get("last_error") if err and err["status"] == "failed" else None
+    if not rows:
+        return {"story": None, "working": working, "error": failed}
+    rm = (db.loads(rows[0]["gap"], {}) or {}).get("remake") or {}
+    vids = []
+    for r in rows:
+        t = db.q1("SELECT id, title FROM topics WHERE id=?", (r["id"],))
+        p = db.q1("SELECT id, title, status, format FROM productions WHERE topic_id=? ORDER BY id DESC LIMIT 1",
+                  (r["id"],))
+        vids.append({"format": r["format"], "idea_title": t["title"], "production": p})
+    return {"story": {"premise": rm.get("premise"), "why": rm.get("why_it_trends"), "changes": rm.get("changes") or [],
+                      "source": rm.get("source") or {}, "use_cast": rm.get("use_cast", True)},
+            "videos": vids, "working": working, "error": failed}

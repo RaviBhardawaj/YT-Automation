@@ -1313,11 +1313,13 @@ async def api_channel_remake(request: Request, cid: int):
     'find' today's story now (adds today's long and Short ideas without starting the videos)."""
     from ..creative import remake
     data = await body(request)
-    if data.get("action") == "find":
+    if data.get("action") in ("find", "make"):
         if not settings.has_secret("youtube_api_key"):
-            return bad("Add a free YouTube Data API key under Settings → Credentials first.")
-        tid = worker.enqueue("trend_remake", {"channel_id": cid}, dedupe=True, max_attempts=2)
-        return ok(task_id=tid, detail="Finding today's most-viewed story…")
+            return bad("First add a free YouTube Data API key: Settings → Credentials → YouTube Data API key.")
+        tid = worker.enqueue("trend_remake", {"channel_id": cid, "make": data.get("action") == "make"},
+                             dedupe=True, max_attempts=1)
+        return ok(task_id=tid, detail="Finding today's top story and writing our version (about 1 minute). "
+                  "Both videos then start making by themselves — refresh this page to follow them.")
     try:
         res = remake.enable(cid, bool(data.get("on")), times=str(data.get("times") or "") or None,
                             actor=actor(request))
@@ -1946,6 +1948,11 @@ def _remake_offer(ch: dict) -> bool:
     return remake.can_offer(ch)
 
 
+def _remake_status(ch: dict) -> dict | None:
+    from ..creative import remake
+    return remake.status(ch["id"]) if remake.can_offer(ch) else None
+
+
 @app.get("/channels/{cid:int}", response_class=HTMLResponse)
 def channel_page(request: Request, cid: int, tab: str = "overview"):
     from .. import channels
@@ -1967,7 +1974,7 @@ def channel_page(request: Request, cid: int, tab: str = "overview"):
                               (cid,))["n"], checklist=channel_checklist(ch), art=_channel_art(cid),
                 ypp_status=growth.status(ch), readiness=growth.policy_readiness(cid), ypp_rules=growth.RULES,
                 diagnosis=doctor.diagnose(cid), experiments=experiments.results(cid, news.is_news(ch)),
-                weekly=learning.latest_weekly(cid), remake_offer=_remake_offer(ch),
+                weekly=learning.latest_weekly(cid), remake_offer=_remake_offer(ch), remake=_remake_status(ch), yt_key=settings.has_secret("youtube_api_key"),
                 kv=kahaani_pages.section(ch) if tab == 'settings' else None, **_social_ctx(cid))
     return _with_cookie(resp, cid)
 

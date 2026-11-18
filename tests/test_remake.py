@@ -147,6 +147,57 @@ class RemakeTests(unittest.TestCase):
         self.assertEqual(remake.auto_enable(), [])                        # never again: switching off sticks
         self.assertFalse(remake.enabled(channels.get(comedy)))
 
+    def test_one_click_makes_both_videos_now_and_slots_dont_repeat_them(self):
+        made = []
+
+        def fake_create(cid, request="", **kw):
+            pid = db.insert("productions", {"topic_id": kw["idea_id"], "format": kw["fmt"], "title": "t", "status": "queued",
+                                            "stage": "script", "kind": "story", "channel_id": cid, "workspace_id": 1,
+                                            "language": "Hindi", "request": db.dumps({"scheduled_for": kw["scheduled_for"]}),
+                                            "package": "{}", "timeline": "{}", "episode": "{}", "test_mode": 0,
+                                            "created_at": db.iso(), "updated_at": db.iso()})
+            db.update("topics", kw["idea_id"], {"status": "producing"})
+            made.append(kw)
+            return {"production_ids": [pid]}
+
+        def fake_ai(task, system, prompt, schema, **kw):
+            out = good_plan()
+            kw["validate"](out)
+            return out, {}
+        with mock.patch.object(settings, "has_secret", lambda n: True), \
+                mock.patch.object(remake.sources, "youtube_most_popular", chart), \
+                mock.patch.object(remake.ai, "generate", fake_ai), \
+                mock.patch.object(jobs, "create", fake_create):
+            res = remake.make_videos_now(self.ch)
+            again = remake.make_videos_now(self.ch)                         # a second click starts nothing new
+        self.assertEqual([m["fmt"] for m in made], ["long", "short"])
+        self.assertEqual(len(res["started"]), 2)
+        self.assertEqual(again["started"], [])
+        self.assertTrue(remake.enabled(channels.get(self.ch)))             # one click also switches daily on
+        st = remake.status(self.ch)
+        self.assertIn("chore", st["story"]["premise"])
+        self.assertEqual([v["production"]["format"] for v in st["videos"]], ["long", "short"])
+        with mock.patch.object(channels, "long_made_today", lambda cid: True), \
+                mock.patch("studio.plans.can", lambda *a: True):
+            r = tasks._channel_daily({"channel_id": self.ch, "slot": 1}, {})
+        self.assertIn("already exists", r["skipped"])                      # the 6 PM slot sees today's Short
+
+    def test_channel_page_shows_the_one_click_card(self):
+        from fastapi.testclient import TestClient
+        from studio import config
+        from studio.web import app as webapp
+        if not db.q1("SELECT id FROM users WHERE email='remake@test.local'"):
+            auth.approve(auth.register("remake@test.local", "a long enough password")["user_id"], 1)
+        tok, _ = auth.login("remake@test.local", "a long enough password")
+        ws = auth.session(tok)["workspace"]["id"]
+        cid = channels.create({"name": "Card kids", "workflow": "animated_story", "made_for_kids": True,
+                               "niche": "kids"}, ws)
+        c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False)
+        c.cookies.set("sid", tok)
+        html = c.get(f"/channels/{cid}").text
+        self.assertIn("Make today&#39;s videos now", html.replace("'", "&#39;"))
+        self.assertIn("Settings → Credentials", html)                      # no key yet: step 1 is shown
+
 
 if __name__ == "__main__":
     unittest.main()
