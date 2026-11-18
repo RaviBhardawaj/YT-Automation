@@ -56,7 +56,9 @@ class StoryIdeas(BaseModel):
 def generate(channel_id: int, count: int = 10, formats: list[str] | None = None, focus: str = "") -> dict:
     ch = channels.get(channel_id)
     fmts = formats or channels.formats(ch)
-    cast = characters.for_channel(channel_id, include_draft=False)
+    from . import remake
+    fresh = remake.fresh_cast(ch)                  # kids/comedy: every story gets its own brand-new characters
+    cast = [] if fresh else characters.for_channel(channel_id, include_draft=False)
     existing = [(r["id"], r["title"]) for r in db.q(
         "SELECT id, title FROM topics WHERE channel_id=? UNION ALL SELECT id, title FROM productions WHERE channel_id=? "
         "AND kind='story'", (channel_id, channel_id))]
@@ -74,7 +76,10 @@ def generate(channel_id: int, count: int = 10, formats: list[str] | None = None,
               f"Propose {count} original episode ideas for this channel. Allowed formats: {', '.join(fmts)} "
               f"(short = one punchy situation under a minute; long = a full story with a beginning, twist and payoff). "
               f"{KIDS_BRIEF if kids else 'This is ENTERTAINMENT: stories, situations and characters — not lessons, tips or explainers.'} "
-              f"Use the recurring characters where they fit. Titles and loglines in {ch['language']}.")
+              + ("Every idea needs its OWN brand-new characters (new names, new looks) — never the same cast twice; "
+                 "make each story a clearly different world (village, space, jungle, school, kitchen, ocean …). "
+                 if fresh else "Use the recurring characters where they fit. ")
+              + f"Titles and loglines in {ch['language']}.")
 
     def check(out: StoryIdeas) -> None:
         if [i.format for i in out.ideas if i.format not in fmts]:

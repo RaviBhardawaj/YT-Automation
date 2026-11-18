@@ -361,13 +361,15 @@ def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
             return {**res, "remake": True}
     # what you approved first; then an idea from the last two days' trend scan (themes getting the most views in
     # this niche right now — original ideas, never copies); then saved and best-scored ideas
+    fresh = False if remake.fresh_cast(ch) else None     # kids/comedy: a brand-new cast for every story
     idea = _pick_idea(ch["id"])
     if idea:
-        res = jobs.create(ch["id"], "", idea_id=idea["id"], actor="schedule", scheduled_for=day, fmt=fmt)
+        res = jobs.create(ch["id"], "", idea_id=idea["id"], actor="schedule", scheduled_for=day, fmt=fmt,
+                          use_cast=fresh)
     else:
         brief = f"A new {', '.join(channels.styles(ch)[:2]) or ''} episode for this channel: {ch['niche']}. " \
                 f"{ch['instructions'] or ''}".strip()
-        res = jobs.create(ch["id"], brief, actor="schedule", scheduled_for=day, fmt=fmt)
+        res = jobs.create(ch["id"], brief, actor="schedule", scheduled_for=day, fmt=fmt, use_cast=fresh)
     experiments.record(res.get("production_ids"), exp)
     # keep the idea list topped up for the coming days
     if db.q1("SELECT COUNT(*) AS n FROM topics WHERE channel_id=? AND status IN ('approved','idea')",

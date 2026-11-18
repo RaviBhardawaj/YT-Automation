@@ -140,7 +140,10 @@ def write(plan: dict[str, Any], channel: dict[str, Any], idea: dict[str, Any] | 
            and plan["content_type"] != "story" else "")
         + "This is ENTERTAINMENT, not a lesson: no explanations, tutorials or 'today we will learn'. Show, don't teach.\n"
         + ("CHARACTERS: this is a stand-alone video. Do NOT use the channel's recurring characters; create fresh, "
-           "original characters that fit the request (keys N1, N2 …).\n" if fresh else
+           "original characters that fit the request (keys N1, N2 …). Give each one a memorable new name and a look "
+           "that is clearly different from the others (body, outfit colours, hair, one accessory). Never reuse these "
+           f"recent names: {', '.join(r['name'] for r in db.q('SELECT name FROM characters WHERE channel_id=? ORDER BY id DESC LIMIT 40', (channel['id'],))) or '-'}.\n"
+           if fresh else
            f"CHARACTER BIBLE (recurring characters — keep their names, personalities and catchphrases exactly):\n"
            f"{charmod.bible_text(bible)}\n")
         + f"RECENT EPISODES (do not repeat these plots): {'; '.join(recent) or 'none yet'}\n"

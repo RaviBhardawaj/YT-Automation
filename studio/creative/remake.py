@@ -37,6 +37,19 @@ def enabled(ch: dict[str, Any] | None) -> bool:
             and ch["workflow"] in ("animated_story", "auto") and not news.is_news(ch))
 
 
+def fresh_cast(ch: dict[str, Any] | None) -> bool:
+    """A brand-new cast for every story (own names, looks and voices, used only in that video) instead of the
+    channel's recurring characters. On by default for kids and comedy story channels; the channel's
+    meta.fresh_cast switch overrides it."""
+    if not ch:
+        return False
+    m = ch.get("meta") or {}
+    if "fresh_cast" in m:
+        return bool(m["fresh_cast"])
+    return ch.get("workflow", "animated_story") in ("animated_story", "auto") and (
+        bool(ch.get("made_for_kids")) or bool({"kids", "comedy"} & set(channels.styles(ch))))
+
+
 def can_offer(ch: dict[str, Any] | None) -> bool:
     """Remakes can run here: a story channel, or any kids / comedy channel (switching on makes it a story channel).
     Never the NIFTY data channel or a news channel."""
@@ -159,6 +172,14 @@ SYSTEM = ("You are the head writer of an animated YouTube series. Each day you t
           "people, sports and anything unsafe for the audience. Output exactly one JSON object matching the schema.")
 
 
+FRESH_CAST_RULES = (
+    "CHARACTERS: this channel uses a BRAND-NEW CAST for every story — never the same faces twice. Set use_cast to "
+    "false and design 2-4 new characters made for THIS story: for each give a memorable new name, who they are "
+    "(child, grandparent, shopkeeper, talking animal, robot, ghost-friend …), a distinctive look (body, outfit "
+    "colours, hair, one accessory) and their voice/personality in a few words. Mix ages and genders; the hero should "
+    "be someone kids want to be. ")
+
+
 # YouTube's made-for-kids rules on top of trends.KIDS_RULES (COPPA: comments, notifications and personalised ads are
 # off for these videos; YouTube's quality principles for kids content)
 KIDS_EXTRA = ("KIDS CHANNEL RULES: ages 2-8; warm, safe, kind; a gentle lesson or a happy ending is welcome. Never ask "
@@ -170,7 +191,8 @@ KIDS_BANNED = re.compile(r"(?i)subscribe|comment|like karo|bell|सब्सक�
 
 
 def adapt(ch: dict[str, Any], cands: list[dict[str, Any]]) -> RemakePlan:
-    cast = characters.for_channel(ch["id"], include_draft=False)
+    fresh = fresh_cast(ch)
+    cast = [] if fresh else characters.for_channel(ch["id"], include_draft=False)
     listing = "\n".join(
         f"[{i}] {v['title']} — {v['views_per_day']:,} views/day, {v['seconds'] // 60}:{v['seconds'] % 60:02d}"
         + (f"\n    about: {' '.join(v['description'].split())[:300]}" if v.get("description") else "")
@@ -180,13 +202,16 @@ def adapt(ch: dict[str, Any], cands: list[dict[str, Any]]) -> RemakePlan:
               f"{ch.get('audience') or ('children' if kids else 'general')}; language: {ch['language']}; "
               f"styles: {', '.join(channels.styles(ch)) or 'comedy'}; tone: {ch.get('tone') or '-'}\n"
               f"CHANNEL INSTRUCTIONS: {ch.get('instructions') or '-'}\nRESTRICTIONS: {ch.get('restrictions') or '-'}\n"
-              f"RECURRING CHARACTERS:\n{characters.bible_text(cast)}\n\n"
-              f"TODAY'S MOST-VIEWED VIDEOS (titles and descriptions only):\n{listing}\n\n"
+              + (f"NEVER REUSE THESE CHARACTER NAMES (used recently): {', '.join(recent_names(ch['id'])) or '-'}\n\n"
+                 if fresh else f"RECURRING CHARACTERS:\n{characters.bible_text(cast)}\n\n")
+              + f"TODAY'S MOST-VIEWED VIDEOS (titles and descriptions only):\n{listing}\n\n"
               "Pick the ONE video whose story idea will get this channel the most views and that can be retold "
               "well as an animated story for this audience (prefer the highest views/day among the good fits). "
               "Write its premise in general words, then our own long episode and our own Short on that premise. "
-              "Use the recurring characters when they fit; if they don't, set use_cast to false and describe new "
-              f"characters. Titles and loglines in {ch['language']}."
+              + (FRESH_CAST_RULES if fresh else
+                 "Use the recurring characters when they fit; if they don't, set use_cast to false and describe new "
+                 "characters. ")
+              + f"Titles and loglines in {ch['language']}."
               + (f"\n\n{trends.KIDS_RULES}\n{KIDS_EXTRA}" if kids else ""))
 
     def check(out: RemakePlan) -> None:
@@ -202,6 +227,8 @@ def adapt(ch: dict[str, Any], cands: list[dict[str, Any]]) -> RemakePlan:
             raise ValueError("the Short needs its own title")
         if len([c for c in out.changes if c.strip()]) < 3:
             raise ValueError("list at least 3 concrete differences from the source")
+        if fresh and (out.use_cast or len(out.new_characters) < 2):
+            raise ValueError("set use_cast to false and design 2-4 brand-new characters for this story")
         if not out.use_cast and not out.new_characters:
             raise ValueError("describe the new characters (or use the recurring cast)")
 
@@ -228,6 +255,11 @@ def _topic(ch: dict[str, Any], plan: RemakePlan, ep: Episode, fmt: str, src: dic
                                     "changes": plan.changes, "use_cast": plan.use_cast}}),
         "idea_kind": KIND, "style": style, "language": ch["language"], "summary": summary[:2000],
         "workspace_id": ch["workspace_id"], "created_at": db.iso(), "updated_at": db.iso()})
+
+
+def recent_names(channel_id: int, limit: int = 40) -> list[str]:
+    return [r["name"] for r in db.q("SELECT name FROM characters WHERE channel_id=? ORDER BY id DESC LIMIT ?",
+                                      (channel_id, limit))]
 
 
 def _today(channel_id: int) -> list[dict[str, Any]]:
@@ -270,7 +302,7 @@ def topic_for(channel_id: int, fmt: str) -> tuple[int | None, bool]:
     tid = today.get(fmt)
     if tid and db.q1("SELECT status FROM topics WHERE id=?", (tid,))["status"] == "producing":
         return None, True                                   # already made today
-    return tid, bool(today.get("use_cast", True))
+    return tid, (False if fresh_cast(channels.get(channel_id)) else bool(today.get("use_cast", True)))
 
 
 def auto_enable() -> list[int]:
@@ -313,7 +345,7 @@ def make_videos_now(channel_id: int) -> dict[str, Any]:
                  "AND status<>'rejected'", (channel_id, slot_key)):
             continue                                        # today's slot already has its video
         res = jobs.create(channel_id, "", idea_id=tid, actor="user", fmt=fmt, scheduled_for=slot_key,
-                          use_cast=bool(today.get("use_cast", True)))
+                          use_cast=False if fresh_cast(ch) else bool(today.get("use_cast", True)))
         started += res.get("production_ids") or []
     logs.event("info", "planner", f"'{ch['name']}': today's trend remake videos started now: {started}")
     return {**{k: today.get(k) for k in ("long", "short", "premise")}, "started": started}

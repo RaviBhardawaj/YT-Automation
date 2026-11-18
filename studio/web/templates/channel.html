@@ -86,7 +86,9 @@
 
 
 <div class="card" style="margin-top:16px">
-  <div class="spread"><h2>Recent videos</h2><a class="small" href="/productions?channel={{ ch.id }}">Full library</a></div>
+  <div class="spread"><h2>Recent videos</h2><span class="row">
+    {% if queued_n %}<button class="sm danger" data-post="/api/channels/{{ ch.id }}/clear-queue" data-confirm="Remove the {{ queued_n }} approved video(s) still waiting to upload to YouTube? Videos already on YouTube, uploading now, or in review are not touched.">Clear {{ queued_n }} waiting upload(s)</button>{% endif %}
+    <a class="small" href="/productions?channel={{ ch.id }}">Full library</a></span></div>
   <table>
     <tr><th>#</th><th>Title</th><th>Format</th><th>Status</th><th>YouTube</th><th>Updated</th><th></th></tr>
     {% for p in productions %}
