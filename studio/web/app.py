@@ -1305,6 +1305,26 @@ async def api_channel_trends(request: Request, cid: int):
     return ok(task_id=tid, detail=f"Looking at what's popular for {ch['name']}…")
 
 
+@app.post("/api/channels/{cid}/remake")
+async def api_channel_remake(request: Request, cid: int):
+    """Trending-story remakes on/off (one long + one Short a day, each retelling today's most-viewed story idea), or
+    'find' today's story now (adds today's long and Short ideas without starting the videos)."""
+    from ..creative import remake
+    data = await body(request)
+    if data.get("action") == "find":
+        if not settings.has_secret("youtube_api_key"):
+            return bad("Add a free YouTube Data API key under Settings → Credentials first.")
+        tid = worker.enqueue("trend_remake", {"channel_id": cid}, dedupe=True, max_attempts=2)
+        return ok(task_id=tid, detail="Finding today's most-viewed story…")
+    try:
+        res = remake.enable(cid, bool(data.get("on")), times=str(data.get("times") or "") or None,
+                            actor=actor(request))
+    except ValueError as e:
+        return bad(str(e))
+    return ok(detail=("Trending-story remakes on: a long video at " + res["schedule_time"].replace(", ", " and its Short at ")
+                      if res["trend_remake"] else "Trending-story remakes off"))
+
+
 @app.post("/api/topics/{tid}/{action}")
 async def api_topic(request: Request, tid: int, action: str):
     t = db.q1("SELECT * FROM topics WHERE id=?", (tid,))

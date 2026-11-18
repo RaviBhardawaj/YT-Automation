@@ -247,6 +247,14 @@ def _trend_research(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     return trends.run_daily()
 
 
+@worker.handler("trend_remake")
+def _trend_remake(payload: dict[str, Any], task: dict[str, Any]) -> Any:
+    """Today's most-viewed story idea → our own long episode + Short ideas (videos start at the scheduled times)."""
+    from .creative import remake
+    res = remake.make_today(int(payload["channel_id"]))
+    return {k: res[k] for k in ("long", "short", "use_cast", "premise")}
+
+
 @worker.handler("channel_stats")
 def _channel_stats(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     from .youtube import growth
@@ -324,6 +332,18 @@ def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
         logs.event("info", "news", f"'{ch['name']}' news video started on “{story['keyword']}” "
                    f"({story.get('geo') or geo}; testing {exp['test']}): {res.get('production_ids')}")
         return {**res, "story": story["keyword"], "experiment": exp}
+    from .creative import remake
+    if remake.enabled(ch):                   # today's most-viewed story, retold: exactly one long + one Short a day
+        if slot >= 2:
+            return {"skipped": "trend remakes make one long video and one Short a day"}
+        fmt = "short" if slot or channels.long_made_today(ch["id"]) else "long"
+        tid, use_cast = remake.topic_for(ch["id"], fmt)
+        if tid:
+            res = jobs.create(ch["id"], "", idea_id=tid, actor="schedule", scheduled_for=day, fmt=fmt,
+                              use_cast=use_cast)
+            experiments.record(res.get("production_ids"), exp)
+            logs.event("info", "planner", f"'{ch['name']}' trend remake {fmt} started: {res.get('production_ids')}")
+            return {**res, "remake": True}
     # what you approved first; then an idea from the last two days' trend scan (themes getting the most views in
     # this niche right now — original ideas, never copies); then saved and best-scored ideas
     idea = _pick_idea(ch["id"])
