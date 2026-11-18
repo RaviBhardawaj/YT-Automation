@@ -251,6 +251,8 @@ def _trend_research(payload: dict[str, Any], task: dict[str, Any]) -> Any:
 def _trend_remake(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     """Today's most-viewed story idea → our own long episode + Short ideas (videos start at the scheduled times)."""
     from .creative import remake
+    if payload.get("make"):                  # the one-click button: write today's story AND start both videos
+        return remake.make_videos_now(int(payload["channel_id"]))
     res = remake.make_today(int(payload["channel_id"]))
     return {k: res[k] for k in ("long", "short", "use_cast", "premise")}
 

@@ -34,6 +34,45 @@
 </div>
 
 {% elif tab == 'overview' %}
+{% if remake_offer %}{% set on = ch.meta.trend_remake and ch.workflow != 'factual' %}
+<div class="card" style="margin-bottom:16px;border:2px solid var(--accent, #f0645a)">
+  <div class="spread"><h2>🔥 Today's trending story → our 2 videos</h2>
+    {% if on %}<span class="chip ok">automatic every day</span>{% else %}<span class="chip">automatic: off</span>{% endif %}</div>
+  <div class="small" style="margin:6px 0 10px">One click: the studio finds today's most-viewed story on YouTube, writes
+    <b>our own</b> version with this channel's characters, and makes <b>1 long video + 1 Short</b>.
+    Kids-safe and copyright-safe (our own titles, characters, scenes and ending).</div>
+  {% if not yt_key %}
+  <div class="note warn small" style="margin-bottom:10px">Step 1 (one time): add a free YouTube Data API key in
+    <a href="/settings?tab=keys">Settings → Credentials</a>. Without it the studio can't see what's trending.</div>
+  {% endif %}
+  <div class="row">
+    <button class="primary" data-post="/api/channels/{{ ch.id }}/remake" data-body='{"action":"make"}'
+      {% if remake and remake.working %}disabled{% endif %}>{% if remake and remake.working %}Working… refresh in a minute{% else %}▶ Make today's videos now{% endif %}</button>
+    {% if on %}<span class="small muted">Also runs by itself daily: long at {{ ch.schedule_time.split(',')[0] }}, Short at {{ (ch.schedule_time.split(',') + [''])[1] }}</span>
+    <button class="sm" data-post="/api/channels/{{ ch.id }}/remake" data-body='{"on":false}'>Turn off daily</button>
+    {% else %}<button class="sm" data-post="/api/channels/{{ ch.id }}/remake" data-body='{"on":true}'>Turn on daily (9 AM + 6 PM)</button>{% endif %}
+  </div>
+  {% if remake and remake.error %}<div class="note warn small" style="margin-top:10px">Last try didn't work: {{ remake.error[:300] }}</div>{% endif %}
+  {% if remake and remake.story %}
+  <div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--line)">
+    <div class="small muted">TODAY'S STORY IDEA</div>
+    <div style="margin:4px 0"><b>{{ remake.story.premise }}</b></div>
+    <div class="small muted">Inspired by a trending video ({{ '{:,}'.format(remake.story.source.views_per_day or 0) }} views/day):
+      <a href="{{ remake.story.source.url }}" target="_blank" rel="noopener">{{ remake.story.source.title }}</a>.
+      {{ 'Our recurring characters' if remake.story.use_cast else 'New characters made for this video' }}.</div>
+    {% if remake.story.changes %}<div class="small" style="margin-top:4px">How ours is different: {{ remake.story.changes|join(' · ') }}</div>{% endif %}
+    <table style="margin-top:10px"><tr><th>Video</th><th>Title</th><th>Status</th></tr>
+    {% for v in remake.videos %}<tr><td>{{ 'Long video' if v.format == 'long' else 'Short' }}</td>
+      <td>{% if v.production %}<a href="/productions/{{ v.production.id }}">{{ v.production.title }}</a>{% else %}{{ v.idea_title }}{% endif %}</td>
+      <td>{% if v.production %}{% set p = v.production %}{% include "_status.html" %}{% if p.status in ('awaiting_approval','needs_review','approved','uploaded') %} <a href="/productions/{{ p.id }}">▶ watch</a>{% endif %}{% else %}<span class="chip">waiting for its time slot</span>{% endif %}</td></tr>{% endfor %}
+    </table>
+  </div>
+  {% elif remake and remake.working %}
+  <div class="small muted" style="margin-top:10px">Finding today's story and writing our version…</div>
+  {% endif %}
+</div>
+{% endif %}
+
 <form class="card" data-form="/api/channels/{{ ch.id }}/create">
   <h2>Create a video</h2>
   <div class="muted small" style="margin-bottom:8px">Describe what you want. Your request decides the content; the channel settings fill in anything you don't say.</div>
@@ -45,25 +84,6 @@
   </div>
 </form>
 
-{% if remake_offer %}
-<div class="card" style="margin-top:16px">
-  <div class="spread"><h2>Trending-story remakes</h2>
-    {% if ch.meta.trend_remake and ch.workflow != 'factual' %}<span class="chip ok">on</span>{% else %}<span class="chip">off</span>{% endif %}</div>
-  <div class="muted small" style="margin-bottom:8px">Every day the studio reads YouTube's most-popular list (titles and
-    descriptions only, nothing is downloaded), picks the fastest-growing story, and writes its own version of that
-    story idea with this channel's characters — or new characters just for that video. Exactly one long video and one
-    Short a day. Titles, characters, scenes and endings are always our own, so the channel stays clear of copyright
-    claims and YouTube's reused-content rule.</div>
-  {% if ch.meta.trend_remake and ch.workflow != 'factual' %}
-  <div class="row"><span class="small">Long video and Short at {{ ch.schedule_time }}</span>
-    <button data-post="/api/channels/{{ ch.id }}/remake" data-body='{"action":"find"}' data-reload="no">Find today's story now</button>
-    <button class="danger" data-post="/api/channels/{{ ch.id }}/remake" data-body='{"on":false}'>Switch off</button></div>
-  {% else %}
-  <div class="row" id="remaketimes"><input name="times" value="09:00, 18:00" style="width:140px" aria-label="Long video time, Short time">
-    <button class="primary" data-post="/api/channels/{{ ch.id }}/remake" data-body='{"on":true}' data-collect="#remaketimes">Switch on</button></div>
-  {% endif %}
-</div>
-{% endif %}
 
 <div class="card" style="margin-top:16px">
   <div class="spread"><h2>Recent videos</h2><a class="small" href="/productions?channel={{ ch.id }}">Full library</a></div>
