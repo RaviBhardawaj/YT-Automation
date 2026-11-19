@@ -125,6 +125,10 @@ DEFAULTS: dict[str, Any] = {
     },
     "render.preset": "veryfast",
     "render.crf": 20,
+    # in-between clips that are re-encoded again by the join: a faster preset at higher quality (no visible loss)
+    "render.intermediate_preset": "superfast",
+    "render.intermediate_crf": 15,
+    "render.parallel_clips": 0,          # clip renders side by side; 0 = automatic from the core count
     "render.transition": 0.35,
     "render.music_file": "",
     "render.music_license": "",

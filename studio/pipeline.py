@@ -450,6 +450,7 @@ def stage_render(p: dict[str, Any]) -> str | None:
     all_caps: list[dict[str, Any]] = []
     srt_cues: list[dict[str, Any]] = []
     t0 = 0.0
+    jobs: list[Any] = []
     for idx, (scene, timing) in enumerate(zip(pkg["scenes"], tl["scenes"])):
         dur = timing["duration"]
         asset = dict(assets[idx])
@@ -482,10 +483,16 @@ def stage_render(p: dict[str, Any]) -> str | None:
                "ribbon": bool(ribbon), "look": look, "grade": settings.get("render.film_look")}
         sig_path = clip.with_suffix(".json")
         if not (clip.exists() and sig_path.exists() and json.loads(sig_path.read_text()) == json.loads(db.dumps(sig))):
-            render.scene_clip(idx, asset, dur, pad, overlays, fmt, work / "clips", clip, f"p{p['id']}", look=look)
-            sig_path.write_text(db.dumps(sig))
+            # scene clips are independent: collect them and render several side by side below; the join
+            # re-encodes them, so they use the fast in-between encode
+            def job(idx=idx, asset=asset, dur=dur, overlays=overlays, clip=clip, sig_path=sig_path, sig=sig):
+                render.scene_clip(idx, asset, dur, pad, overlays, fmt, work / "clips", clip, f"p{p['id']}",
+                                  look=look, intermediate=True)
+                sig_path.write_text(db.dumps(sig))     # written only after its clip finished
+            jobs.append(job)
         clips.append((clip, dur))
         t0 += dur
+    render.run_parallel(jobs)
     chapter_starts = set()
     chapter_times = []
     if fmt == "long" and pkg.get("chapters"):

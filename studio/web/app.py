@@ -1563,7 +1563,7 @@ SETTABLE = {
     "research.contact",
     "visuals.order", "visuals.enabled", "visuals.prefer_video", "visuals.local_sd_url", "visuals.gemini_image_model",
     "visuals.gemini_image_price", "visuals.cloudflare_account_id", "render.film_look", "film_studio.enabled",
-    "film_studio.max_retries_per_shot", "film_studio.video_shots", "film_studio.video_clips_per_run", "brand", "render.preset", "render.crf", "render.transition", "render.music_file",
+    "film_studio.max_retries_per_shot", "film_studio.video_shots", "film_studio.video_clips_per_run", "brand", "render.preset", "render.crf", "render.intermediate_preset", "render.intermediate_crf", "render.parallel_clips", "render.transition", "render.music_file",
     "render.music_license", "render.music_volume", "youtube.privacy_default", "youtube.category_id",
     "youtube.upload_captions", "youtube.made_for_kids", "youtube.audit_passed", "youtube.disclose_tts", "publish.mode",
     "publish.slots", "production.max_active", "production.short_seconds", "production.long_minutes",

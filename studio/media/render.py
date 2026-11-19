@@ -10,8 +10,10 @@ import logging
 import random
 import shutil
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image
 
@@ -40,10 +42,50 @@ def ffmpeg(args: list[str], *, timeout: int = 3600) -> str:
     return p.stderr
 
 
-def _encode_args() -> list[str]:
+PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow")
+_par = threading.local()          # set inside parallel renders: each FFmpeg gets its share of the core budget
+
+
+def _threads() -> str:
     from .. import resources
-    return ["-c:v", "libx264", "-preset", settings.get("render.preset"), "-crf", str(settings.get("render.crf")),
-            "-pix_fmt", "yuv420p", "-r", str(config.FPS), "-threads", resources.ffmpeg_threads()]
+    return str(getattr(_par, "threads", None) or resources.ffmpeg_threads())
+
+
+def _encode_args(intermediate: bool = False) -> list[str]:
+    """x264 settings. `intermediate` is for in-between files that a later step re-encodes anyway (scene clips
+    before the cross-fade join, join groups): a much faster preset at a higher quality, so nothing visible is lost
+    and the final encode still uses the channel's chosen preset and CRF."""
+    if intermediate:
+        preset = settings.get("render.intermediate_preset") or "superfast"
+        crf = settings.get("render.intermediate_crf") or 15
+    else:
+        preset, crf = settings.get("render.preset"), settings.get("render.crf")
+    if preset not in PRESETS:
+        preset = "veryfast"
+    return ["-c:v", "libx264", "-preset", preset, "-crf", str(int(float(crf))),
+            "-pix_fmt", "yuv420p", "-r", str(config.FPS), "-threads", _threads()]
+
+
+def run_parallel(jobs: list[Callable[[], Any]]) -> list[Any]:
+    """Run independent FFmpeg jobs side by side (results in job order). The core budget of one render is split
+    between the workers, so the Mac stays as usable as with one render. The first failure is raised after the
+    others have finished, so no half-written file is left behind by a still-running FFmpeg."""
+    from .. import resources
+    workers = min(resources.render_workers(), len(jobs))
+    if workers <= 1:
+        return [j() for j in jobs]
+    share = max(1, int(resources.ffmpeg_threads()) // workers)
+
+    def run(job: Callable[[], Any]) -> Any:
+        _par.threads = share
+        try:
+            return job()
+        finally:
+            _par.threads = None
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="render") as pool:
+        futures = [pool.submit(run, j) for j in jobs]
+    return [f.result() for f in futures]
 
 
 def prepare_still(src: Path, w: int, h: int, out: Path) -> Path:
@@ -97,7 +139,7 @@ def _grade(look: str, kind: str) -> str:
 
 
 def scene_clip(idx: int, asset: dict[str, Any], content: float, pad: float, overlays: list[dict[str, Any]],
-               fmt: str, work: Path, out: Path, seed: str, look: str = "real") -> Path:
+               fmt: str, work: Path, out: Path, seed: str, look: str = "real", intermediate: bool = False) -> Path:
     w, h = config.frame_size(fmt)
     total = content + pad
     frames = max(1, round(total * config.FPS))
@@ -127,12 +169,12 @@ def scene_clip(idx: int, asset: dict[str, Any], content: float, pad: float, over
                      f"enable='between(t,{start:.3f},{end:.3f})'[b{k}]")
     last = f"[b{len(overlays)}]"
     ffmpeg([*inputs, "-filter_complex", ";".join(graph), "-map", last, "-frames:v", str(frames), "-an",
-            *_encode_args(), str(out)], timeout=1800)
+            *_encode_args(intermediate), str(out)], timeout=1800)
     return out
 
 
 def _xfade_once(clips: list[tuple[Path, float]], pad: float, out: Path, transitions: list[str], seed: str,
-                hard_cuts: set[int]) -> None:
+                hard_cuts: set[int], intermediate: bool = False) -> None:
     if len(clips) == 1:
         shutil.copyfile(clips[0][0], out)
         return
@@ -146,7 +188,57 @@ def _xfade_once(clips: list[tuple[Path, float]], pad: float, out: Path, transiti
         tr = "fadeblack" if i in hard_cuts else rng.choice(transitions)
         graph.append(f"{prev}[{i}:v]xfade=transition={tr}:duration={pad:.3f}:offset={offset:.3f}[x{i}]")
         prev = f"[x{i}]"
-    ffmpeg([*inputs, "-filter_complex", ";".join(graph), "-map", prev, "-an", *_encode_args(), str(out)], timeout=3600)
+    ffmpeg([*inputs, "-filter_complex", ";".join(graph), "-map", prev, "-an", *_encode_args(intermediate), str(out)],
+           timeout=3600)
+
+
+def _segment(i: int, clips: list[tuple[Path, float]], cut: int, pf: int, pad: float, tr: str | None,
+             out: Path) -> None:
+    """One piece of the joined video: clip i's own part (after the previous cross-fade, up to frame `cut` of the
+    clip) followed by the `pf`-frame cross-fade into clip i+1 (`tr`; None for the last clip, which runs on for its
+    `pf` frames). Frame counts, not seconds, so the pieces meet exactly; a clip that is a frame short repeats its
+    last frame (the same as the chain's own padding)."""
+    start = pf if i > 0 else 0
+    clip = clips[i][0]
+    hold = f"tpad=stop_mode=clone:stop_duration={pad + 0.2:.3f}"
+    if tr is None:
+        end = cut + pf
+        graph = f"[0:v]{hold},trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS[v]"
+        ffmpeg(["-i", str(clip), "-filter_complex", graph, "-map", "[v]", "-frames:v", str(end - start), "-an",
+                *_encode_args(), str(out)], timeout=1800)
+        return
+    graph = (f"[0:v]{hold},split=2[a0][a1];[a0]trim=start_frame={start}:end_frame={cut},setpts=PTS-STARTPTS[body];"
+             f"[a1]trim=start_frame={cut}:end_frame={cut + pf},setpts=PTS-STARTPTS[tail];"
+             f"[1:v]{hold},trim=start_frame=0:end_frame={pf},setpts=PTS-STARTPTS[head];"
+             f"[tail][head]xfade=transition={tr}:duration={pf / config.FPS:.4f}:offset=0[x];"
+             f"[body][x]concat=n=2:v=1:a=0[v]")
+    ffmpeg(["-i", str(clip), "-i", str(clips[i + 1][0]), "-filter_complex", graph, "-map", "[v]",
+            "-frames:v", str(cut - start + pf), "-an", *_encode_args(), str(out)], timeout=1800)
+
+
+def _join_segments(clips: list[tuple[Path, float]], pad: float, out: Path, fmt: str, transitions: list[str],
+                   seed: str, hard_cuts: set[int]) -> None:
+    """Fast join: the same picture as one long cross-fade chain, but each clip is encoded once, in its own piece,
+    side by side, and the pieces are joined by stream copy. (The chain re-encoded the whole video in one FFmpeg,
+    and twice for long videos.) Cut points come from the running total, so the picture never drifts from the
+    narration however many scenes there are."""
+    fps = config.FPS
+    pf = max(1, round(pad * fps))
+    rng = random.Random(seed)
+    trs = ["fadeblack" if i in hard_cuts else rng.choice(transitions) for i in range(1, len(clips))]
+    bounds, t = [0], 0.0
+    for _, c in clips:
+        t += c
+        bounds.append(round(t * fps))
+    cuts = [bounds[i + 1] - bounds[i] for i in range(len(clips))]   # clip i starts at bounds[i] on the timeline
+    parts = [out.with_name(f"{out.stem}_s{i:03d}.mp4") for i in range(len(clips))]
+    run_parallel([lambda i=i: _segment(i, clips, cuts[i], pf, pad, trs[i] if i < len(trs) else None, parts[i])
+                  for i in range(len(clips))])
+    w, h = config.frame_size(fmt)
+    concat(parts, out, w=w, h=h)
+    for p in parts:
+        p.unlink(missing_ok=True)
+    out.with_suffix(".concat.txt").unlink(missing_ok=True)
 
 
 def join(clips: list[tuple[Path, float]], pad: float, out: Path, fmt: str, seed: str,
@@ -155,16 +247,23 @@ def join(clips: list[tuple[Path, float]], pad: float, out: Path, fmt: str, seed:
     Returns the content duration of the result (which itself lasts content+pad)."""
     transitions = TRANSITIONS_SHORT if fmt == "short" else TRANSITIONS_LONG
     chapter_starts = chapter_starts or set()
+    if len(clips) > 1 and pad > 0 and all(c >= 2 * pad + 0.1 for _, c in clips):
+        _join_segments(clips, pad, out, fmt, transitions, seed, {i for i in range(len(clips)) if i in chapter_starts})
+        return sum(c for _, c in clips)
     if len(clips) <= GROUP:
         _xfade_once(clips, pad, out, transitions, seed, {i for i in range(len(clips)) if i in chapter_starts})
         return sum(c for _, c in clips)
     groups: list[tuple[Path, float]] = []
+    jobs = []
     for g in range(0, len(clips), GROUP):
         part = clips[g:g + GROUP]
         gp = out.with_name(f"{out.stem}_g{g // GROUP:02d}.mp4")
         local_starts = {i - g for i in chapter_starts if g <= i < g + GROUP}
-        _xfade_once(part, pad, gp, transitions, f"{seed}:{g}", local_starts)
+        # groups are independent and re-encoded once more by the top-level join: render them side by side, fast
+        jobs.append(lambda part=part, gp=gp, g=g, ls=local_starts:
+                    _xfade_once(part, pad, gp, transitions, f"{seed}:{g}", ls, intermediate=True))
         groups.append((gp, sum(c for _, c in part)))
+    run_parallel(jobs)
     return join(groups, pad, out, fmt, seed + ":top")
 
 

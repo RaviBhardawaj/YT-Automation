@@ -60,3 +60,30 @@ def ensure(memory_gb: float, what: str) -> None:
 def ffmpeg_threads() -> str:
     """Leave two cores for you: FFmpeg would otherwise use every core."""
     return str(max(2, (os.cpu_count() or 4) - 2))
+
+
+def render_workers() -> int:
+    """How many FFmpeg clip renders run side by side. A single clip render (zoompan on a still, overlays) can't
+    keep many cores busy, so a few run at once and share the same core budget as one big render — the Mac keeps
+    its two free cores. Override with the `render.parallel_clips` setting (0 = automatic, 1 = one at a time)."""
+    from . import settings
+    try:
+        fixed = int(settings.get("render.parallel_clips") or 0)
+    except (TypeError, ValueError):
+        fixed = 0
+    budget = int(ffmpeg_threads())
+    auto = max(1, min(4, budget // 2))
+    return max(1, min(fixed, 8)) if fixed > 0 else auto
+
+
+def draw_workers() -> int:
+    """Worker processes for drawing cartoon frames (pure Python, one core each, plus a light encoder each). Uses
+    the same core budget as FFmpeg, so two cores stay free for you. `render.parallel_clips` overrides it too."""
+    from . import settings
+    try:
+        fixed = int(settings.get("render.parallel_clips") or 0)
+    except (TypeError, ValueError):
+        fixed = 0
+    if fixed > 0:
+        return max(1, min(fixed, 8))
+    return max(1, min(6, int(ffmpeg_threads()) - 1 if int(ffmpeg_threads()) > 2 else 1))
