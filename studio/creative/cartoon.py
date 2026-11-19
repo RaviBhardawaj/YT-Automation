@@ -473,6 +473,33 @@ def _subtitle(name: str, text: str, w: int, h: int, colour: tuple[int, int, int]
     return layer
 
 
+_SPLIT: dict[int, tuple[Image.Image, tuple[int, int], Image.Image | None, Image.Image | None]] = {}
+
+
+def _overlay(img: Image.Image, layer: Image.Image) -> Image.Image:
+    """Lay a full-frame RGBA layer (mostly transparent, e.g. a subtitle box) over an opaque frame. Only the layer's
+    visible box is blended, straight onto the RGB frame — the same picture as converting the whole frame to RGBA
+    and alpha-compositing, at a fraction of the cost per frame."""
+    hit = _SPLIT.get(id(layer))
+    if hit is None or hit[0] is not layer:
+        box = layer.getchannel("A").getbbox()
+        if box:
+            part = layer.crop(box)
+            hit = (layer, box[:2], part.convert("RGB"), part.getchannel("A"))
+        else:
+            hit = (layer, (0, 0), None, None)
+        if len(_SPLIT) > 400:
+            _SPLIT.clear()
+        _SPLIT[id(layer)] = hit
+    _, at, rgb, alpha = hit
+    if rgb is None:
+        return img
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    img.paste(rgb, at, alpha)
+    return img
+
+
 # ------------------------------------------------------------------ audio envelope
 
 def envelope(samples: np.ndarray, sr: int, frames: int) -> np.ndarray:
@@ -490,19 +517,22 @@ def envelope(samples: np.ndarray, sr: int, frames: int) -> np.ndarray:
 # ------------------------------------------------------------------ encoding
 
 class Encoder:
-    def __init__(self, out: Path, fmt: str):
+    def __init__(self, out: Path, fmt: str, grade: str | None = None, threads: int | None = None):
         self.w, self.h = SIZES[fmt]
         ow, oh = OUT[fmt]
-        from ..media.render import film_grade
+        if grade is None:
+            from ..media.render import film_grade
+            grade = film_grade("cartoon")
         self.p = subprocess.Popen(
             [config.FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
-             "-s", f"{self.w}x{self.h}", "-r", str(FPS), "-i", "-", "-vf", f"{film_grade('cartoon')}scale={ow}:{oh}:flags=lanczos",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p", str(out)],
+             "-s", f"{self.w}x{self.h}", "-r", str(FPS), "-i", "-", "-vf", f"{grade}scale={ow}:{oh}:flags=lanczos",
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
+             *(["-threads", str(threads)] if threads else []), str(out)],
             stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         self.frames = 0
 
     def write(self, img: Image.Image) -> None:
-        self.p.stdin.write(img.convert("RGB").tobytes())
+        self.p.stdin.write((img if img.mode == "RGB" else img.convert("RGB")).tobytes())
         self.frames += 1
 
     def abort(self) -> None:
@@ -610,8 +640,7 @@ def render_scene(scene: dict[str, Any], cast: dict[str, dict[str, Any]], lines: 
         if cur:
             colour = cast.get(cur["speaker"], {}).get("colour") or (255, 214, 0)
             name = cast.get(cur["speaker"], {}).get("name", "")
-            img = img.convert("RGBA")
-            img.alpha_composite(_subtitle(name, cur["text"], w, h, colour, portrait))
+            img = _overlay(img, _subtitle(name, cur["text"], w, h, colour, portrait))
         if hook_layer is not None and t < 2.4:
             img = img.convert("RGBA")
             top = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -677,3 +706,51 @@ def thumbnail(cast: list[dict[str, Any]], title: str, scene: dict[str, Any], out
         y += size * 1.18
     img.save(out, "JPEG", quality=92)
     return out
+
+
+# ------------------------------------------------------------------ parallel drawing
+
+def render_segment(job: dict[str, Any]) -> int:
+    """Draw one scene or card into its own video file (runs in a worker process). Returns its frame count."""
+    enc = Encoder(Path(job["out"]), job["fmt"], grade=job["grade"], threads=job.get("threads"))
+    try:
+        if job["what"] == "scene":
+            render_scene(job["scene"], job["cast"], job["lines"], job["fmt"], enc, job["total"], hook=job["hook"])
+        else:
+            render_card(job["text"], job["fmt"], job["seconds"], enc, **job["kw"])
+    except BaseException:
+        enc.abort()
+        raise
+    enc.close()
+    return enc.frames
+
+
+def render_segments(jobs: list[dict[str, Any]], fmt: str, out: Path) -> int:
+    """Draw every scene/card of an episode side by side — one worker process each, since drawing frames in Python
+    uses one core — then join the pieces by stream copy (same encoder settings, so no re-encode). The picture is
+    identical to drawing them one after another into a single file. Returns the total frame count."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    from .. import resources
+    from ..media import render
+    from ..media.render import film_grade
+    workers = min(resources.draw_workers(), len(jobs))
+    threads = max(1, int(resources.ffmpeg_threads()) // max(1, workers))
+    grade = film_grade("cartoon")
+    parts = [out.with_name(f"{out.stem}_part{i:03d}.mp4") for i in range(len(jobs))]
+    jobs = [{**j, "out": str(pt), "fmt": fmt, "grade": grade, "threads": threads if workers > 1 else None}
+            for j, pt in zip(jobs, parts)]
+    try:
+        if workers <= 1:
+            frames = [render_segment(j) for j in jobs]
+        else:
+            # spawn (not fork): the studio runs worker threads and SQLite, which must not be copied mid-flight
+            with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as ex:
+                frames = list(ex.map(render_segment, jobs))
+        w, h = OUT[fmt]
+        render.concat(parts, out, w=w, h=h)
+    finally:
+        for pt in parts:
+            pt.unlink(missing_ok=True)
+        out.with_suffix(".concat.txt").unlink(missing_ok=True)
+    return sum(frames)

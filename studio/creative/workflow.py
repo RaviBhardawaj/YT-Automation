@@ -202,16 +202,11 @@ def _render(p: dict[str, Any], fmt: str, scene_ids: list[int], audio_lines: dict
     """Draw and encode the scenes, build the dialogue track, mix music, mux. Returns timing info."""
     out_dir.mkdir(parents=True, exist_ok=True)
     silent = out_dir / "video_noaudio.mp4"
-    enc = cartoon.Encoder(silent, fmt)
-    try:
-        return _draw_and_mix(p, fmt, scene_ids, audio_lines, out_dir, enc, silent, title_card=title_card,
-                             end_card=end_card, hook=hook)
-    except Exception:
-        enc.abort()
-        raise
+    return _draw_and_mix(p, fmt, scene_ids, audio_lines, out_dir, silent, title_card=title_card,
+                         end_card=end_card, hook=hook)
 
 
-def _draw_and_mix(p, fmt, scene_ids, audio_lines, out_dir, enc, silent, *, title_card, end_card, hook):
+def _draw_and_mix(p, fmt, scene_ids, audio_lines, out_dir, silent, *, title_card, end_card, hook):
     pkg = p["package"]
     cast = p["episode"]["cast"]
     ch = channels.get(p["channel_id"])
@@ -221,14 +216,16 @@ def _draw_and_mix(p, fmt, scene_ids, audio_lines, out_dir, enc, silent, *, title
     scenes_t = []
     t0 = 0.0
     cast_list = [cast[k] for k in pkg["cast"] if k in cast]
+    jobs: list[dict[str, Any]] = []      # drawn side by side afterwards (cartoon.render_segments)
 
     def pad(seconds: float) -> None:
         voice.append(np.zeros(int(SR * seconds), dtype=np.int16))
 
     if title_card:
         d = 2.6
-        cartoon.render_card([(pkg["title"], 58, (255, 230, 40)), (ch["name"], 30, (255, 255, 255))], fmt, d, enc,
-                            cast=cast_list, mood=pkg["scenes"][0].get("mood", "funny"), scene=pkg["scenes"][0])
+        jobs.append({"what": "card", "text": [(pkg["title"], 58, (255, 230, 40)), (ch["name"], 30, (255, 255, 255))],
+                     "seconds": d, "kw": {"cast": cast_list, "mood": pkg["scenes"][0].get("mood", "funny"),
+                                          "scene": pkg["scenes"][0]}})
         pad(d)
         t0 += d
     for si in scene_ids:
@@ -250,7 +247,8 @@ def _draw_and_mix(p, fmt, scene_ids, audio_lines, out_dir, enc, silent, *, title
         a = np.concatenate(scene_audio)
         frames = int(round(total * cartoon.FPS))
         a = np.pad(a, (0, max(0, int(frames / cartoon.FPS * SR) - len(a))))[: int(frames / cartoon.FPS * SR)]
-        cartoon.render_scene(sc, cast, lines, fmt, enc, frames / cartoon.FPS, hook=hook if si == scene_ids[0] else "")
+        jobs.append({"what": "scene", "scene": sc, "cast": cast, "lines": lines, "total": frames / cartoon.FPS,
+                     "hook": hook if si == scene_ids[0] else ""})
         voice.append(a)
         scenes_t.append({"scene": si, "start": round(t0, 2), "end": round(t0 + frames / cartoon.FPS, 2)})
         t0 += frames / cartoon.FPS
@@ -258,12 +256,12 @@ def _draw_and_mix(p, fmt, scene_ids, audio_lines, out_dir, enc, silent, *, title
         d = 3.2
         bye = "फिर मिलेंगे अगले एपिसोड में — सब्सक्राइब करना न भूलें!" if hindi else "See you in the next episode — subscribe!"
         last_mood = pkg["scenes"][scene_ids[-1]].get("mood", "funny")
-        cartoon.render_card([(bye, 40, (255, 255, 255)), (ch["name"], 30, (255, 214, 0))], fmt, d, enc, cast=cast_list,
-                            mood=last_mood if last_mood in ("scary", "tense", "sad") else "happy")
+        jobs.append({"what": "card", "text": [(bye, 40, (255, 255, 255)), (ch["name"], 30, (255, 214, 0))],
+                     "seconds": d, "kw": {"cast": cast_list,
+                                          "mood": last_mood if last_mood in ("scary", "tense", "sad") else "happy"}})
         pad(d)
         t0 += d
-    enc.close()
-    total = enc.frames / cartoon.FPS
+    total = cartoon.render_segments(jobs, fmt, silent) / cartoon.FPS
     track = np.concatenate(voice)
     track = np.pad(track, (0, max(0, int(total * SR) - len(track))))[: int(total * SR)]
     dialog = out_dir / "dialogue.wav"

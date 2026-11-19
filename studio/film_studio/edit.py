@@ -144,7 +144,8 @@ def assemble(p: dict[str, Any]) -> dict[str, Any]:
     missing = [f"{c['scene']}.{c['shot']}" for c in tl if c["kind"] == "shot" and c["motion_type"] == "missing"]
     if missing:
         raise FileNotFoundError(f"{len(missing)} shot(s) have no take yet: {', '.join(missing[:8])}")
-    clips = [_clip_for(c, i, work, film, f"film{pid}") for i, c in enumerate(tl)]
+    # every timeline clip is independent (cached ones return at once): render several side by side
+    clips = render.run_parallel([lambda c=c, i=i: _clip_for(c, i, work, film, f"film{pid}") for i, c in enumerate(tl)])
     total = tl[-1]["end"]
     video = work / "video.mp4"
     w, h = config.frame_size("long")
