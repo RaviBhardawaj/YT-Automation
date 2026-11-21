@@ -100,6 +100,8 @@ def review(pid: int) -> dict[str, Any]:
         return {**base, "result": "skipped", "why": f"status {p['status']}"}
     if ops.stopped():
         return {**base, "result": "waiting", "why": "the emergency stop is on"}
+    if channels.paused(p.get("channel_id")):
+        return {**base, "result": "waiting", "why": "its channel is paused"}
     if req.get("hold_for_review"):
         return {**base, "result": "waiting", "why": "you held it for your own review"}
     err = p.get("error") or ""

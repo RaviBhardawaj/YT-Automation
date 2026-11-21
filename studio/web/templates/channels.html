@@ -7,7 +7,7 @@
   {% for c in channels %}
   <a class="card" href="/channels/{{ c.id }}?tab=setup" style="color:inherit;text-decoration:none">
     <div class="spread"><b style="font-size:15px">{{ c.name }}</b>
-      {% if c.status == 'active' %}<span class="chip ok">active</span>{% else %}<span class="chip warn">paused</span>{% endif %}</div>
+      {% if c.status == 'active' %}<span class="chip ok">making videos</span>{% else %}<span class="chip warn">paused</span>{% endif %}</div>
     <div class="muted small" style="margin:4px 0 8px">{{ c.niche }} · {{ c.language }} · {{ c.workflow|replace('_',' ') }}
       {% if c.youtube_handle %} · {{ c.youtube_handle }}{% endif %}{% if c.made_for_kids %} <span class="chip info">made for kids</span>{% endif %}</div>
     <div class="small" style="margin-bottom:6px">Setup {{ c.setup_done }}/{{ c.setup_total }}<div class="bar"><i style="width:{{ (c.setup_done / c.setup_total * 100)|int }}%"></i></div></div>
@@ -23,6 +23,8 @@
       <span class="muted">{{ 'monetization requirements met — apply in YouTube Studio (YouTube still reviews)' if m.tiers.full.eligible or pr.eligible else 'monetization: ' ~ pr.subscribers_pct ~ '% of the subscriber goal' }}</span></div>{% endif %}
   </a>
   <div class="row" style="margin:-8px 0 8px 4px">
+    {% if c.status == 'active' %}<button class="sm" data-post="/api/channels/{{ c.id }}" data-body='{"status":"paused"}' data-confirm="Pause video making for {{ c.name }}? No new videos are started, videos waiting in the queue are held, and a video being made right now stops after its current step. Finished videos are kept.">⏸ Pause videos</button>
+    {% else %}<button class="sm primary" data-post="/api/channels/{{ c.id }}" data-body='{"status":"active"}'>▶ Start videos</button>{% endif %}
     {% if c.uploads_enabled %}<button class="sm" data-post="/api/channels/{{ c.id }}" data-body='{"uploads_enabled": false}' data-confirm="Switch off YouTube uploads for {{ c.name }}? Videos will still be made and kept for download.">Uploads ON — switch off</button>
     {% else %}<button class="sm primary" data-post="/api/channels/{{ c.id }}" data-body='{"uploads_enabled": true}'>Uploads OFF — switch on</button>{% endif %}
     {% if not c.connected %}<a class="btn sm" href="/channels/{{ c.id }}?tab=youtube">Connect YouTube</a>{% endif %}

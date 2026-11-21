@@ -2060,12 +2060,23 @@ async def api_channel_update(request: Request, cid: int):
     data = await body(request)
     if data.get("schedule_enabled") and not plans.can(ws_id(request), "schedules"):
         return bad(f"“{plans.FEATURES['schedules']}” isn't enabled for your account.")
+    detail = None
     try:
-        channels.update(cid, data, actor=actor(request))
+        status = data.pop("status", None)
+        if status == "paused":                         # stop making videos for this channel (queue held too)
+            n = channels.pause_generation(cid, actor=actor(request))["held"]
+            detail = "Video making paused" + (f" — {n} video(s) in progress will wait" if n else "")
+        elif status == "active":
+            n = channels.resume_generation(cid, actor=actor(request))["resumed"]
+            detail = "Video making started" + (f" — {n} held video(s) carry on" if n else "")
+        elif status is not None:
+            raise ValueError("status must be active or paused")
+        if data:
+            channels.update(cid, data, actor=actor(request))
     except (ValueError, TypeError) as e:
         return bad(str(e))
     scheduler.sync_channels()
-    return ok()
+    return ok(**({"detail": detail} if detail else {}))
 
 
 @app.post("/api/channels/lookup")

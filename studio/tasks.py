@@ -169,9 +169,9 @@ def _available_ideas(fmt: str) -> list[dict[str, Any]]:
     if not niche:
         return []
     min_score = float(settings.get("production.min_topic_score", 35))
-    approved = db.q("SELECT * FROM topics WHERE niche_id=? AND channel_id IS NOT NULL AND format=? AND status='approved' ORDER BY score DESC",
+    approved = db.q("SELECT * FROM topics WHERE niche_id=? AND channel_id IN (SELECT id FROM channels WHERE status='active') AND format=? AND status='approved' ORDER BY score DESC",
                     (niche["id"], fmt))
-    auto = db.q("SELECT * FROM topics WHERE niche_id=? AND channel_id IS NOT NULL AND format=? AND status='idea' AND score>=? ORDER BY score DESC",
+    auto = db.q("SELECT * FROM topics WHERE niche_id=? AND channel_id IN (SELECT id FROM channels WHERE status='active') AND format=? AND status='idea' AND score>=? ORDER BY score DESC",
                 (niche["id"], fmt, min_score)) if settings.get("production.auto_pick_topics", True) else []
     return approved + auto
 
@@ -383,6 +383,10 @@ def _channel_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
 def _fib_lesson_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     """Generate the next lesson of the series (approval still required before any upload)."""
     from .finance import lessons
+    from . import channels
+    fin = channels.finance_channel()
+    if fin and fin["status"] != "active":
+        return {"skipped": f"channel '{fin['name']}' is paused"}
     audience = payload.get("audience", "india")
     n = lessons.next_lesson_number(audience)
     if n is None:
@@ -411,6 +415,10 @@ def _nifty_daily(payload: dict[str, Any], task: dict[str, Any]) -> Any:
     from .finance import calendar, episode, marketdata
     if not settings.get("nifty.daily_episode", True):
         return {"skipped": "daily episode switched off"}
+    from . import channels
+    fin = channels.finance_channel()
+    if fin and fin["status"] != "active":
+        return {"skipped": f"channel '{fin['name']}' is paused"}
     now = marketdata.ist_now()
     today = now.date()
     if not calendar.is_trading_day(today):

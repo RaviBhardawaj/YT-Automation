@@ -4,13 +4,13 @@
   <div><div class="muted small"><a href="/channels">← Channels</a></div><h1>{{ ch.name }}</h1>
     <div class="muted small">{{ ch.niche }} · {{ ch.language }} · {{ ch.workflow|replace('_',' ') }} · {{ ch.formats }}</div></div>
   <div class="row">
-    {% if ch.status == 'active' %}<button data-post="/api/channels/{{ ch.id }}" data-body='{"status":"paused"}' data-confirm="Pause this channel? Its schedule and auto-publishing stop.">Pause channel</button>
-    {% else %}<button class="primary" data-post="/api/channels/{{ ch.id }}" data-body='{"status":"active"}'>Resume channel</button>{% endif %}
+    {% if ch.status == 'active' %}<button data-post="/api/channels/{{ ch.id }}" data-body='{"status":"paused"}' data-confirm="Pause video making for {{ ch.name }}? No new videos are started, videos waiting in the queue are held, and a video being made right now stops after its current step. Finished videos are kept.">⏸ Pause video making</button>
+    {% else %}<button class="primary" data-post="/api/channels/{{ ch.id }}" data-body='{"status":"active"}'>▶ Start video making</button>{% endif %}
     <a class="btn" href="/ideas?channel={{ ch.id }}">Ideas ({{ ideas_n }})</a>
     <a class="btn" href="/productions?channel={{ ch.id }}">Library</a>
   </div>
 </div>
-{% if ch.status != 'active' %}<div class="note warn">This channel is paused: no scheduled videos and no auto-publishing.</div>{% endif %}
+{% if ch.status != 'active' %}<div class="note warn">Video making is paused for this channel: no new videos, held videos wait, no auto-publishing. Click <b>▶ Start video making</b> to carry on.</div>{% endif %}
 
 <div class="grid g4" style="margin-bottom:16px">
   {% for k, l in [('today','Created today'),('in_production','In production'),('review','Ready for review'),('published','Published'),('ready','Approved / uploading'),('failed','Failed'),('shorts','Shorts'),('total','Total videos')] %}

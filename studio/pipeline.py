@@ -696,6 +696,9 @@ def _run_stages(pid: int, p: dict[str, Any]) -> dict[str, Any]:
         if guard > 20:
             raise NeedsAttention("stage loop guard tripped")
         if load(pid)["status"] == "paused":            # paused while a step ran: stop here, resume picks it up
+            from . import channels
+            if channels.paused(p.get("channel_id")):
+                raise PausedByOwner(f"{channels.CHANNEL_HOLD}, before '{stage}'")
             raise PausedByOwner(f"paused before '{stage}'")
         if load(pid)["status"] == "rejected":          # rejected while running: stop, never overwrite the decision
             break
