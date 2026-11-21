@@ -21,10 +21,18 @@ def folder(pid: int) -> Path:
     return config.PRODUCTIONS_DIR / f"{pid:05d}"
 
 
+def _fsize(f: Path) -> int:
+    """Size of one file, 0 if it vanished meanwhile (a render deleting temp files) or can't be read."""
+    try:
+        return f.stat().st_size if f.is_file() else 0
+    except OSError:
+        return 0
+
+
 def size_of(path: Path) -> int:
     if path.is_file():
-        return path.stat().st_size
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) if path.exists() else 0
+        return _fsize(path)
+    return sum(_fsize(f) for f in path.rglob("*")) if path.exists() else 0
 
 
 def _is_final(f: Path, d: Path) -> bool:
@@ -36,7 +44,7 @@ def _is_final(f: Path, d: Path) -> bool:
 
 def working_bytes(pid: int) -> int:
     d = folder(pid)
-    return sum(f.stat().st_size for f in d.rglob("*") if f.is_file() and not _is_final(f, d)) if d.exists() else 0
+    return sum(_fsize(f) for f in d.rglob("*") if not _is_final(f, d)) if d.exists() else 0
 
 
 def _children(pid: int) -> list[int]:
@@ -65,7 +73,7 @@ def delete_video(pid: int) -> int:
         db.ex("DELETE FROM assets WHERE production_id=?", (i,))
         db.ex("DELETE FROM analytics WHERE production_id=?", (i,))
         db.ex("DELETE FROM productions WHERE id=?", (i,))
-    logs.event("info", "storage", f"Deleted video #{pid} '{p['title'][:60]}' and {len(ids) - 1} linked output(s): "
+    logs.event("info", "storage", f"Deleted video #{pid} '{(p['title'] or '')[:60]}' and {len(ids) - 1} linked output(s): "
                f"{freed / 1e6:.0f} MB freed" + (" (still on YouTube)" if p.get("youtube_video_id") else ""))
     return freed
 
@@ -94,7 +102,7 @@ KEEP_ON_ARCHIVE = {".srt", ".md", ".txt"}            # small records worth keepi
 def _keep_when_archived(f: Path) -> bool:
     if f.suffix in KEEP_ON_ARCHIVE or (f.suffix == ".jpg" and f.name.startswith("thumbnail")):
         return True
-    return f.suffix == ".json" and f.stat().st_size < 1_000_000     # reports, manifests, licences
+    return f.suffix == ".json" and _fsize(f) < 1_000_000     # reports, manifests, licences
 
 
 def archivable(days: int) -> list[int]:
@@ -131,7 +139,7 @@ def _media_bytes(pid: int, delete: bool = False) -> int:
         return 0
     for f in sorted(d.rglob("*"), reverse=True):
         if f.is_file() and not _keep_when_archived(f):
-            n += f.stat().st_size
+            n += _fsize(f)
             if delete:
                 f.unlink()
         elif delete and f.is_dir() and not any(f.iterdir()):

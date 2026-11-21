@@ -66,11 +66,11 @@
     <tr><th></th><th>#</th><th>Video</th><th>Status</th><th>Size</th><th>Working files</th><th></th></tr>
     {% for v in rep.videos|sort(attribute='bytes', reverse=True) %}{% if v.bytes or not v.parent_id %}
     <tr><td><input type="checkbox" class="pickdel" value="{{ v.id }}"></td><td>{{ v.id }}</td>
-      <td><a href="/productions/{{ v.id }}">{{ v.title[:70] }}</a> <span class="chip">{{ v.format }}</span>{% if v.parent_id %} <span class="chip">part of #{{ v.parent_id }}</span>{% endif %}{% if v.youtube_video_id %} <span class="chip ok">on YouTube</span>{% endif %}</td>
+      <td><a href="/productions/{{ v.id }}">{{ (v.title or 'Untitled #' ~ v.id)[:70] }}</a> <span class="chip">{{ v.format }}</span>{% if v.parent_id %} <span class="chip">part of #{{ v.parent_id }}</span>{% endif %}{% if v.youtube_video_id %} <span class="chip ok">on YouTube</span>{% endif %}</td>
       <td>{% with p=v %}{% include "_status.html" %}{% endwith %}</td>
       <td>{{ '%.0f' % (v.bytes / 1e6) }} MB</td><td>{{ '%.0f' % (v.working / 1e6) }} MB</td>
       <td class="row">{% if v.working %}<button class="sm" data-post="/api/productions/{{ v.id }}/clean">Clear working files</button>{% endif %}
-        <button class="sm danger" data-post="/api/productions/{{ v.id }}/delete" data-confirm="Delete #{{ v.id }} '{{ v.title[:40] }}' and its files{{ ' (and its Shorts/outputs)' if not v.parent_id }}? {{ 'It stays on YouTube.' if v.youtube_video_id }}">Delete</button></td></tr>
+        <button class="sm danger" data-post="/api/productions/{{ v.id }}/delete" data-confirm="Delete #{{ v.id }} '{{ (v.title or 'Untitled')[:40] }}' and its files{{ ' (and its Shorts/outputs)' if not v.parent_id }}? {{ 'It stays on YouTube.' if v.youtube_video_id }}">Delete</button></td></tr>
     {% endif %}{% else %}<tr><td colspan="7" class="empty">No videos.</td></tr>{% endfor %}
   </table>
 </div>

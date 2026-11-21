@@ -103,6 +103,7 @@ class ArchiveTests(unittest.TestCase):
         from studio import auth
         from studio.web import app as webapp
         pid = prod(status="rejected", youtube_video_id=None)
+        untitled = prod(title=None, status="awaiting_approval", youtube_video_id=None)     # once crashed the page
         if not db.q1("SELECT id FROM users WHERE email='reclaim-owner@test.local'"):
             auth.approve(auth.register("reclaim-owner@test.local", "a long enough password")["user_id"], 1)
         tok, _ = auth.login("reclaim-owner@test.local", "a long enough password")
@@ -112,6 +113,7 @@ class ArchiveTests(unittest.TestCase):
             html = c.get("/storage").text
         self.assertIn("Published and rejected videos", html)
         self.assertIn("/api/storage/reclaim", html)
+        self.assertIn(f"Untitled #{untitled}", html)
         storage.archive(pid)
 
 
