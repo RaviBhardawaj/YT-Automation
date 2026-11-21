@@ -73,6 +73,47 @@ class ArchiveTests(unittest.TestCase):
         self.assertFalse((storage.folder(pid) / "final.mp4").exists())
         self.assertTrue(json.loads(json.dumps(res))["freed_mb"] >= 0)
 
+    def test_reclaim_clears_published_and_rejected_of_any_age(self):
+        published = prod(days_ago=0.1)
+        rejected = prod(status="rejected", youtube_video_id=None)
+        waiting = prod(status="awaiting_approval", youtube_video_id=None)
+        parent = prod(status="rejected", youtube_video_id=None)
+        prod(parent_id=parent, status="queued", youtube_video_id=None)          # its Short is still being made
+        rows = {r["id"]: r for r in storage.reclaimable(1)}
+        self.assertEqual(rows[published]["bytes"], 10000)
+        self.assertIn(rejected, rows)
+        for pid in (waiting, parent):
+            self.assertNotIn(pid, rows)
+        n, freed = storage.reclaim(1)
+        self.assertGreaterEqual(n, 2)
+        self.assertGreaterEqual(freed, 20000)
+        for pid in (published, rejected):
+            left = sorted(f.name for f in storage.folder(pid).rglob("*") if f.is_file())
+            self.assertEqual(left, ["captions.srt", "report.md", "thumbnail.jpg", "timeline.json"])
+            self.assertTrue(db.q1("SELECT archived_at FROM productions WHERE id=?", (pid,))["archived_at"])
+        self.assertTrue((storage.folder(waiting) / "final.mp4").exists())
+        self.assertTrue((storage.folder(parent) / "final.mp4").exists())
+        self.assertEqual(storage.reclaimable(1), [])
+
+    def test_storage_page_offers_the_button(self):
+        from unittest import mock
+
+        from fastapi.testclient import TestClient
+
+        from studio import auth
+        from studio.web import app as webapp
+        pid = prod(status="rejected", youtube_video_id=None)
+        if not db.q1("SELECT id FROM users WHERE email='reclaim-owner@test.local'"):
+            auth.approve(auth.register("reclaim-owner@test.local", "a long enough password")["user_id"], 1)
+        tok, _ = auth.login("reclaim-owner@test.local", "a long enough password")
+        c = TestClient(webapp.app, base_url=f"http://127.0.0.1:{config.PORT}", follow_redirects=False)
+        c.cookies.set("sid", tok)
+        with mock.patch.object(webapp, "is_admin", lambda request: True):
+            html = c.get("/storage").text
+        self.assertIn("Published and rejected videos", html)
+        self.assertIn("/api/storage/reclaim", html)
+        storage.archive(pid)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,11 @@
 {% block content %}
 <div class="head"><div><h1>Storage</h1><div class="muted">Delete videos you no longer need and clear working files so the studio never fills your disk. Deleting here never removes anything from YouTube.</div></div>
   <div class="row"><button class="primary" data-post="/api/storage/clean" data-confirm="Clear the working files of all finished videos? Final videos, thumbnails and subtitles are kept; re-rendering an old video would rebuild them.">Free up space now</button></div></div>
+{% if reclaim %}{% set rb = reclaim | sum(attribute='bytes') %}{% set npub = reclaim | selectattr('status', 'equalto', 'uploaded') | list | length %}
+<div class="card" style="margin-bottom:16px"><h2>Published and rejected videos</h2>
+  <div class="muted">{{ reclaim | length }} video(s) ({{ npub }} published, {{ reclaim | length - npub }} rejected) still keep {{ '%.2f' % (rb / 1e9) }} GB of video and working files on this computer. Clearing them keeps each record, its details, thumbnail and subtitles; published ones stay on YouTube.</div>
+  <div class="row" style="margin-top:10px"><button class="danger" data-post="/api/storage/reclaim" data-confirm="Delete the video and working files of {{ reclaim | length }} published/rejected video(s) and free {{ '%.2f' % (rb / 1e9) }} GB? Records, thumbnails and subtitles stay; published videos stay on YouTube. This can't be undone.">Free {{ '%.2f' % (rb / 1e9) }} GB now</button></div></div>
+{% endif %}
 <div class="grid g4" style="margin-bottom:16px">
   <div class="card tight stat"><div class="n">{{ '%.2f' % ((rep.final_bytes + rep.working_bytes + rep.uploads_bytes) / 1e9) }} GB</div><div class="l">Used by your studio (plan: {{ lim.storage_gb }} GB)</div></div>
   <div class="card tight stat"><div class="n">{{ '%.2f' % (rep.working_bytes / 1e9) }} GB</div><div class="l">Working files (safe to clear)</div></div>
