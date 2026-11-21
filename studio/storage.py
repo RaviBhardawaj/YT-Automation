@@ -21,10 +21,18 @@ def folder(pid: int) -> Path:
     return config.PRODUCTIONS_DIR / f"{pid:05d}"
 
 
+def _fsize(f: Path) -> int:
+    """Size of one file, 0 if it vanished meanwhile (a render deleting temp files) or can't be read."""
+    try:
+        return f.stat().st_size if f.is_file() else 0
+    except OSError:
+        return 0
+
+
 def size_of(path: Path) -> int:
     if path.is_file():
-        return path.stat().st_size
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) if path.exists() else 0
+        return _fsize(path)
+    return sum(_fsize(f) for f in path.rglob("*")) if path.exists() else 0
 
 
 def _is_final(f: Path, d: Path) -> bool:
@@ -36,7 +44,7 @@ def _is_final(f: Path, d: Path) -> bool:
 
 def working_bytes(pid: int) -> int:
     d = folder(pid)
-    return sum(f.stat().st_size for f in d.rglob("*") if f.is_file() and not _is_final(f, d)) if d.exists() else 0
+    return sum(_fsize(f) for f in d.rglob("*") if not _is_final(f, d)) if d.exists() else 0
 
 
 def _children(pid: int) -> list[int]:
@@ -65,7 +73,7 @@ def delete_video(pid: int) -> int:
         db.ex("DELETE FROM assets WHERE production_id=?", (i,))
         db.ex("DELETE FROM analytics WHERE production_id=?", (i,))
         db.ex("DELETE FROM productions WHERE id=?", (i,))
-    logs.event("info", "storage", f"Deleted video #{pid} '{p['title'][:60]}' and {len(ids) - 1} linked output(s): "
+    logs.event("info", "storage", f"Deleted video #{pid} '{(p['title'] or '')[:60]}' and {len(ids) - 1} linked output(s): "
                f"{freed / 1e6:.0f} MB freed" + (" (still on YouTube)" if p.get("youtube_video_id") else ""))
     return freed
 
@@ -94,7 +102,7 @@ KEEP_ON_ARCHIVE = {".srt", ".md", ".txt"}            # small records worth keepi
 def _keep_when_archived(f: Path) -> bool:
     if f.suffix in KEEP_ON_ARCHIVE or (f.suffix == ".jpg" and f.name.startswith("thumbnail")):
         return True
-    return f.suffix == ".json" and f.stat().st_size < 1_000_000     # reports, manifests, licences
+    return f.suffix == ".json" and _fsize(f) < 1_000_000     # reports, manifests, licences
 
 
 def archivable(days: int) -> list[int]:
@@ -108,24 +116,60 @@ def archivable(days: int) -> list[int]:
 
 
 def archive(pid: int) -> int:
-    """Remove a published video's files from this Mac; the record, YouTube link, metadata, thumbnail, subtitles
-    and reports stay, so the website keeps everything but the video file. Returns bytes freed."""
+    """Remove a published or rejected video's media files from this Mac; the record, YouTube link, metadata,
+    thumbnail, subtitles and reports stay, so the website keeps everything but the video file. Returns bytes freed."""
     p = db.q1("SELECT status, youtube_video_id, archived_at, title FROM productions WHERE id=?", (pid,))
-    if not p or p["status"] != "uploaded" or not p["youtube_video_id"] or p["archived_at"] or _running(pid):
+    if not p or p["archived_at"] or _running(pid):
         return 0
-    d, freed = folder(pid), 0
-    if d.exists():
-        for f in sorted(d.rglob("*"), reverse=True):
-            if f.is_file() and not _keep_when_archived(f):
-                freed += f.stat().st_size
-                f.unlink()
-            elif f.is_dir() and not any(f.iterdir()):
-                f.rmdir()
+    if not ((p["status"] == "uploaded" and p["youtube_video_id"]) or p["status"] == "rejected"):
+        return 0
+    freed = _media_bytes(pid, delete=True)
     db.ex("DELETE FROM assets WHERE production_id=?", (pid,))
     db.update("productions", pid, {"archived_at": db.iso()})
-    logs.event("info", "storage", f"Archived #{pid} '{(p['title'] or '')[:60]}': {freed / 1e6:.0f} MB freed — "
-               f"it stays on YouTube (youtu.be/{p['youtube_video_id']})", production_id=pid)
+    where = (f"it stays on YouTube (youtu.be/{p['youtube_video_id']})" if p["status"] == "uploaded"
+             else "it was rejected; its record stays")
+    logs.event("info", "storage", f"Archived #{pid} '{(p['title'] or '')[:60]}': {freed / 1e6:.0f} MB freed — {where}",
+               production_id=pid)
     return freed
+
+
+def _media_bytes(pid: int, delete: bool = False) -> int:
+    d, n = folder(pid), 0
+    if not d.exists():
+        return 0
+    for f in sorted(d.rglob("*"), reverse=True):
+        if f.is_file() and not _keep_when_archived(f):
+            n += _fsize(f)
+            if delete:
+                f.unlink()
+        elif delete and f.is_dir() and not any(f.iterdir()):
+            f.rmdir()
+    return n
+
+
+def reclaimable(workspace_id: int | None = None) -> list[dict[str, Any]]:
+    """Every published or rejected video whose media files can leave this Mac now, whatever its age: published ones
+    must be on YouTube; none may be in use, and a long video waits until every Short cut from it is finished.
+    Each row has the bytes that would be freed."""
+    rows = db.q("SELECT id, title, status, youtube_video_id FROM productions p WHERE archived_at IS NULL AND "
+                "((status='uploaded' AND youtube_video_id IS NOT NULL) OR status='rejected') AND NOT EXISTS "
+                "(SELECT 1 FROM productions c WHERE c.parent_id=p.id AND c.status NOT IN ('uploaded','rejected','failed'))"
+                + (" AND workspace_id=?" if workspace_id else "") + " ORDER BY id",
+                (workspace_id,) if workspace_id else ())
+    out = []
+    for r in rows:
+        if _running(r["id"]):
+            continue
+        r["bytes"] = _media_bytes(r["id"])
+        if r["bytes"]:
+            out.append(r)
+    return out
+
+
+def reclaim(workspace_id: int | None = None) -> tuple[int, int]:
+    """Archive everything `reclaimable` lists. Returns (videos, bytes freed)."""
+    ids = [r["id"] for r in reclaimable(workspace_id)]
+    return len(ids), sum(archive(i) for i in ids)
 
 
 def report(workspace_id: int | None = None) -> dict[str, Any]:
@@ -291,3 +335,19 @@ def machine() -> dict[str, Any]:
     out["studio_mb"] = next((p["mb"] for p in procs if p["pid"] == os.getpid()),
                             int((run("ps", "-o", "rss=", "-p", str(os.getpid())).strip() or 0)) // 1024)
     return out
+
+
+if __name__ == "__main__":
+    import sys
+    db.migrate()
+    rows = reclaimable()
+    for r in rows:
+        print(f"#{r['id']:<5} {r['status']:<9} {r['bytes'] / 1e6:9.1f} MB  {(r['title'] or '')[:70]}")
+    total = sum(r["bytes"] for r in rows)
+    print(f"{len(rows)} video(s), {total / 1e9:.2f} GB of media files would be freed "
+          f"({sum(r['status'] == 'uploaded' for r in rows)} published, {sum(r['status'] == 'rejected' for r in rows)} rejected)")
+    if "--yes" in sys.argv[1:]:
+        n, freed = reclaim()
+        print(f"Done: {n} video(s) archived, {freed / 1e9:.2f} GB freed. Records, thumbnails and subtitles kept.")
+    else:
+        print("Nothing deleted. Run again with --yes to delete these media files.")

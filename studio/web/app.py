@@ -3038,7 +3038,8 @@ def storage_page(request: Request):
                 auto_delete=settings.get("storage.auto_delete_rejected_days"),
                 archive_days=settings.get("storage.archive_after_days") or 0,
                 housekeeping_on=bool(db.q1("SELECT 1 FROM schedules WHERE task_type='housekeeping' AND enabled=1")),
-                archived_n=db.q1("SELECT COUNT(*) AS n FROM productions WHERE archived_at IS NOT NULL")["n"])
+                archived_n=db.q1("SELECT COUNT(*) AS n FROM productions WHERE archived_at IS NOT NULL")["n"],
+                reclaim=storage.reclaimable(ws_id(request)))
 
 
 @app.post("/api/productions/{pid}/delete")
@@ -3095,6 +3096,10 @@ async def api_storage(request: Request, action: str):
         ids = storage.archivable(days)
         freed = sum(storage.archive(i) for i in ids)
         return ok(detail=f"{len(ids)} published video(s) archived, {freed / 1e6:.0f} MB freed — they stay on YouTube")
+    if action == "reclaim":
+        n, freed = storage.reclaim(ws)
+        return ok(detail=f"{n} published/rejected video(s) cleared, {freed / 1e9:.2f} GB freed — records, thumbnails "
+                         "and subtitles kept; published ones stay on YouTube")
     if action == "cache" and is_admin(request):
         freed = storage.clear_cache(int(data.get("older_than_days") or 0))
         return ok(detail=f"Download cache: {freed / 1e6:.0f} MB freed")
