@@ -228,7 +228,34 @@ def _unique_bytes(path: Path) -> int:
     return n
 
 
+_COMPONENTS_CACHE: dict[str, Any] = {"at": 0.0, "items": None}
+COMPONENTS_TTL = 600                                 # measuring model folders takes seconds; sizes barely change
+
+
 def components() -> list[dict[str, Any]]:
+    """Measured once, then served from memory so the Storage page opens at once; when the numbers are older than a
+    few minutes they are shown as they are and measured again in the background."""
+    import copy
+    import threading
+    import time
+    c = _COMPONENTS_CACHE
+    if c["items"] is None:
+        refresh_components()
+    elif time.time() - c["at"] > COMPONENTS_TTL and not c.get("busy"):
+        c["busy"] = True
+        threading.Thread(target=refresh_components, daemon=True, name="measure-components").start()
+    return copy.deepcopy(c["items"])
+
+
+def refresh_components() -> None:
+    import time
+    try:
+        _COMPONENTS_CACHE["items"], _COMPONENTS_CACHE["at"] = _measure_components(), time.time()
+    finally:
+        _COMPONENTS_CACHE["busy"] = False
+
+
+def _measure_components() -> list[dict[str, Any]]:
     """Big optional parts installed for the studio, with what each is for and its size. `required` ones have no
     Uninstall button (the studio can't make videos without them)."""
     hf = _hf_cache()
@@ -275,6 +302,7 @@ def components() -> list[dict[str, Any]]:
 
 def uninstall(key: str) -> int:
     """Delete one optional part. Returns bytes freed. Refused while a video is being made."""
+    _COMPONENTS_CACHE["items"] = None                # measure again: the size shown must be the size removed
     c = next((x for x in components() if x["key"] == key), None)
     if not c or c["required"]:
         raise ValueError("This part can't be uninstalled.")
@@ -289,6 +317,7 @@ def uninstall(key: str) -> int:
         n = _unique_bytes(p)
         shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink()
         freed += n
+    _COMPONENTS_CACHE["items"] = None
     logs.event("info", "storage", f"Uninstalled {c['name']} — {freed / 1e9:.2f} GB freed")
     from . import ops
     ops.audit("owner", "uninstalled", detail={"part": key, "bytes": freed})
