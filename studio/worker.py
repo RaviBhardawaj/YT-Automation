@@ -114,7 +114,8 @@ def _run(task: dict[str, Any]) -> None:
         _finish(task["id"], "done", result=db.dumps(result), last_error=None)
         log.info("task %s %s done in %.1fs", task["id"], task["type"], time.time() - started)
     except pipeline.PausedByOwner as e:
-        _finish(task["id"], "paused", last_error=f"paused by user ({e})")
+        from .channels import CHANNEL_HOLD
+        _finish(task["id"], "paused", last_error=str(e) if str(e).startswith(CHANNEL_HOLD) else f"paused by user ({e})")
         if pid:
             pipeline.save(pid, status="paused")
         logs.event("info", "worker", f"Paused: {e}", production_id=pid, task_id=task["id"])

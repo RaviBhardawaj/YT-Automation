@@ -178,6 +178,52 @@ def update(channel_id: int, data: dict[str, Any], actor: str = "user") -> None:
             ops.audit(actor, "channel_settings", channel_id=channel_id, detail=changed)
 
 
+CHANNEL_HOLD = "paused with channel"
+
+
+def paused(channel_id: int | None) -> bool:
+    """True when this channel's video making is paused (videos without a channel are never held)."""
+    if not channel_id:
+        return False
+    row = db.q1("SELECT status FROM channels WHERE id=?", (channel_id,))
+    return bool(row) and row["status"] != "active"
+
+
+def pause_generation(channel_id: int, actor: str = "user") -> dict[str, int]:
+    """Stop making videos for one channel. Its daily schedule stops, videos waiting in the queue are held, and a
+    video being made right now finishes the step it is on and then waits. Finished videos are not touched."""
+    update(channel_id, {"status": "paused"}, actor=actor)
+    marks = ",".join("?" * len(_HOLD_SKIP))
+    held = 0
+    for r in db.q(f"SELECT id, status FROM productions WHERE channel_id=? AND status NOT IN ({marks})",
+                  (channel_id, *_HOLD_SKIP)):
+        n = db.ex("UPDATE tasks SET status='paused', last_error=?, updated_at=? WHERE production_id=? "
+                  "AND status='pending' AND type<>'upload'", (CHANNEL_HOLD, db.iso(), r["id"]))
+        running = db.q1("SELECT 1 FROM tasks WHERE production_id=? AND status='running' AND type<>'upload'",
+                        (r["id"],))
+        if n or running:                              # a running step sees 'paused' and stops after that step
+            db.update("productions", r["id"], {"status": "paused", "updated_at": db.iso()})
+            held += 1
+    return {"held": held}
+
+
+def resume_generation(channel_id: int, actor: str = "user") -> dict[str, int]:
+    """Start making videos again: the schedule is back on and videos held by the channel pause carry on from the
+    step where they stopped. Videos the owner paused one by one stay paused."""
+    from . import jobs
+    update(channel_id, {"status": "active"}, actor=actor)
+    resumed = 0
+    for r in db.q("SELECT DISTINCT p.id FROM productions p JOIN tasks t ON t.production_id=p.id WHERE "
+                  "p.channel_id=? AND t.status='paused' AND t.last_error LIKE ?", (channel_id, CHANNEL_HOLD + "%")):
+        if jobs.resume(r["id"]):
+            resumed += 1
+    return {"resumed": resumed}
+
+
+_HOLD_SKIP = ("uploaded", "rejected", "failed", "test_passed", "awaiting_approval", "needs_review", "needs_attention",
+              "approved", "uploading", "paused", "paused_budget")
+
+
 def ensure_default() -> None:
     """First run of multi-channel: the existing setup becomes channel #1 (NIFTY), with all its history."""
     if db.q1("SELECT id FROM channels LIMIT 1"):
