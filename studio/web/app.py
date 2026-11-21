@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import secrets
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -72,6 +73,8 @@ def set_cookie(resp, name: str, value: str, max_age: int) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     bootstrap.init(start_background=True)
+    from .. import storage
+    threading.Thread(target=storage.refresh_components, daemon=True, name="measure-components").start()   # Storage opens at once
     logs.event("info", "app", f"{config.APP_NAME} started on {config.BASE_URL}")
     yield
     worker.stop()
